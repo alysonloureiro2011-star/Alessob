@@ -1,0 +1,9 @@
+flask
+requests
+pyngrok
+google-genai
+pytrends
+moviepy
+Pillow
+gTTS
+numpy
