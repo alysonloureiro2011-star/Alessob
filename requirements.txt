@@ -1,73 +1,40 @@
-
-import os
-import json
-from cryptography.fernet import Fernet
-
 # =========================================================
-# CONFIGURAÇÃO DE SEGURANÇA E CRIPTOGRAFIA
+# ACE Consolidado 2.1 - Execução + Segurança de Chaves
 # =========================================================
 
-# Caminho do arquivo que armazena a chave mestra
-FERNET_KEY_FILE = "fernet_master.key"
+# Sistema, utilitários e compatibilidade
+numpy>=1.26.0
+pandas>=2.1.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+aiohttp>=3.9.0
+Flask>=2.4.3
+gunicorn>=21.2.0
 
-# Gera a chave mestra se não existir
-if not os.path.exists(FERNET_KEY_FILE):
-    master_key = Fernet.generate_key()
-    with open(FERNET_KEY_FILE, "wb") as f:
-        f.write(master_key)
-    print("Chave mestra gerada! Guarde este valor:", master_key.decode())
-else:
-    with open(FERNET_KEY_FILE, "rb") as f:
-        master_key = f.read()
+# Processamento e automação
+beautifulsoup4>=4.13.0
+lxml>=4.9.3
+pyngrok>=5.3.0
+moviepy>=2.0.0
+Pillow>=10.0.0
+gTTS>=2.4.0
+opencv-python>=4.9.0.68
 
-fernet = Fernet(master_key)
+# Inteligência artificial e aprendizado
+torch>=2.1.0
+transformers>=4.40.0
+google-genai>=0.1.8
+pytrends>=4.11.2
 
-# =========================================================
-# SUAS CHAVES SENSÍVEIS
-# =========================================================
-# Substitua pelos valores reais uma vez, depois eles serão criptografados
-secrets_plain = {
-    "INSTAGRAM_TOKEN": "SUA_INSTAGRAM_TOKEN_AQUI",
-    "GEMINI_API_KEY": "SUA_GEMINI_KEY_AQUI",
-    "GPT_API_KEY": "SUA_GPT_KEY_AQUI",
-    "INSTAGRAM_ID": "SEU_INSTAGRAM_ID_AQUI"
-}
+# Segurança e criptografia de chaves
+cryptography>=41.0.3
+pycryptodome>=3.19.0
+fernet>=0.1.1
 
-# Arquivo que armazena chaves criptografadas
-ENCRYPTED_FILE = "secrets_encrypted.json"
+# Otimização e performance
+numba>=0.57.0
+scikit-learn>=1.3.2
 
-# Criptografa e salva automaticamente se não existir
-if not os.path.exists(ENCRYPTED_FILE):
-    encrypted = {k: fernet.encrypt(v.encode()).decode() for k, v in secrets_plain.items()}
-    with open(ENCRYPTED_FILE, "w") as f:
-        json.dump(encrypted, f, indent=4)
-    print("Chaves criptografadas e salvas em", ENCRYPTED_FILE)
-
-# =========================================================
-# LEITURA AUTOMÁTICA DAS CHAVES CRIPTOGRAFADAS
-# =========================================================
-with open(ENCRYPTED_FILE, "r") as f:
-    encrypted_data = json.load(f)
-
-# Decryptar automaticamente
-secrets = {k: fernet.decrypt(v.encode()).decode() for k, v in encrypted_data.items()}
-
-# Agora 'secrets' tem todas as chaves decodificadas, prontas para uso
-INSTAGRAM_TOKEN = secrets["INSTAGRAM_TOKEN"]
-GEMINI_API_KEY = secrets["GEMINI_API_KEY"]
-GPT_API_KEY = secrets["GPT_API_KEY"]
-INSTAGRAM_ID = secrets["INSTAGRAM_ID"]
-
-# =========================================================
-# INÍCIO DO ACE (Exemplo simplificado)
-# =========================================================
-print("\n[ACE] Inicializando com as chaves carregadas com segurança...")
-
-# Aqui você integra seu código ACE completo
-# Exemplo:
-def iniciar_ace():
-    print("[ACE] Rodando simulação com GPT_KEY:", GPT_API_KEY[:4] + "...")  # não mostrar tudo
-    # TODO: Coloque aqui todo seu código do ACE já consolidado
-    # Ele pode acessar todas as chaves via variáveis 'INSTAGRAM_TOKEN', etc.
-
-iniciar_ace()
+# Ferramentas de teste, logs e debug
+pytest>=8.2.0
+loguru>=0.7.0
