@@ -739,3 +739,22 @@ def motor_maestro():
 # ==========================================================
 threading.Thread(target=motor_maestro, daemon=True).start()
 print("MAESTRO 3.1 ACE Ω iniciado – AGI autônoma, GPT + Gemini + Instagram, consumo inteligente de APIs")
+from flask import Flask
+import os
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "ACE Ω rodando - Sistema ativo"
+
+@app.route("/status")
+def status():
+    return "Maestro ativo e operando"
+
+def iniciar_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+import threading
+threading.Thread(target=iniciar_web).start()
