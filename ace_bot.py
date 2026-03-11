@@ -460,3 +460,53 @@ threading.Thread(target=motor_de_vontade_propria, daemon=True).start()
 # ==========================================================
 
 
+# ==========================================================
+# 🧬 MÓDULO 6: FLUIDEZ E SOBREVIVÊNCIA (ADAPTAÇÃO RENDER)
+# ==========================================================
+
+import gc
+
+def limpeza_pos_parto():
+    """ 
+    Garante que o organismo não morra sufocado pelo próprio lixo.
+    Executa após cada tentativa de vídeo.
+    """
+    print("🧹 ACE: Limpando resíduos celulares...")
+    try:
+        # Coleta de lixo da memória RAM
+        gc.collect()
+        # Deleta arquivos MP4 e MP3 antigos na pasta /tmp/
+        for f in os.listdir(OUT_PATH):
+            if f.endswith((".mp4", ".mp3", ".png")):
+                os.remove(os.path.join(OUT_PATH, f))
+    except Exception as e:
+        print(f"⚠️ Falha na limpeza: {e}")
+
+def pulso_de_vida():
+    """ 
+    Mantém o ACE acordado. Um organismo que não se move, o Render desliga.
+    """
+    while True:
+        try:
+            # O bot acessa a própria URL para evitar que o Render o coloque para dormir
+            requests.get(f"{RENDER_URL}/status")
+            print("💓 ACE: Pulso de vida enviado.")
+        except: pass
+        time.sleep(600) # Pulso a cada 10 minutos
+
+# Injetando a Fluidez no Ciclo Vivo
+def executar_ciclo_fluente():
+    """ Versão otimizada do motor de vontade própria """
+    try:
+        # Tenta fabricar o arsenal
+        fabricar_presenca_digital("REEL")
+    finally:
+        # Independente de dar certo ou errado, ele se limpa para não travar
+        limpeza_pos_parto()
+
+# Inicia o Pulso de Vida em segundo plano
+threading.Thread(target=pulso_de_vida, daemon=True).start()
+
+# ==========================================================
+# FIM DO MÓDULO DE FLUIDEZ
+# ==========================================================
