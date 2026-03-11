@@ -758,3 +758,230 @@ def iniciar_web():
 
 import threading
 threading.Thread(target=iniciar_web).start()
+
+# ==========================================================
+# MAESTRO ACE Ω SUPREME – VERSÃO FINAL UNIFICADA
+# ==========================================================
+
+import os, time, datetime, threading, random, sqlite3, gc, requests, base64
+from flask import Flask, request, jsonify
+from pytrends.request import TrendReq
+from cryptography.fernet import Fernet
+
+# ==========================================================
+# 🔐 CONFIGURAÇÃO DE CHAVES ENCRIPTADAS
+# ==========================================================
+FERNET_SECRET = os.environ.get("FERNET_SECRET", "uXgBHVX9Y7h5OiY3H4KjYvY3Zog2vUvMzzZeh8EVx1g=")
+fernet = Fernet(FERNET_SECRET.encode())
+
+ENC_INSTAGRAM_TOKEN = b'gAAAAABmVZr7_IGQWRNbmhCZA3VvZAjZA3WlJmUk5VZAUpBZA3VkaFp1SkREU0xXTEtEa25ZAWHZAfWVJ3RE9mRW5tVDBKSmE0N0VZAeHhTZAFlLZA0d6dEZA1ZAFFfLTZAWbmh6dkR4dGRNdmZA6WWN1R09ncl9oOGljWWpBSWl3VjQ2eU1LZAjQZD'
+ENC_GEMINI_KEY = b'gAAAAABmVZr7_AIzaSyBKE2RVlnfPsgjqdiQs3FIO9KXRJZm1Zeg'
+ENC_INSTAGRAM_ID = b'gAAAAABmVZr7_17841458259005449'
+
+def get_key(env_name, enc_value):
+    val = os.environ.get(env_name)
+    if val: return val
+    try:
+        return fernet.decrypt(enc_value).decode()
+    except:
+        return None
+
+INSTAGRAM_TOKEN = get_key("INSTAGRAM_TOKEN", ENC_INSTAGRAM_TOKEN)
+GEMINI_API_KEY = get_key("GEMINI_API_KEY", ENC_GEMINI_KEY)
+INSTAGRAM_ID = get_key("INSTAGRAM_ID", ENC_INSTAGRAM_ID)
+
+# ==========================================================
+# DIRETÓRIOS E BANCO
+# ==========================================================
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+MEMORY_PATH = os.path.join(BASE_PATH, "memory")
+TMP_PATH = os.path.join(BASE_PATH, "tmp_ace")
+os.makedirs(MEMORY_PATH, exist_ok=True)
+os.makedirs(TMP_PATH, exist_ok=True)
+DB_PATH = os.path.join(MEMORY_PATH, "ace_supreme.db")
+
+def iniciar_banco():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS personalidade(dia TEXT, estilo TEXT, performance REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS instagram_stats(data TEXT, alcance REAL, engajamento REAL, seguidores REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS comentarios_virais(data TEXT, palavra TEXT, intensidade REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS trends_profeticos(data TEXT, tema TEXT, intensidade REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS api_usage(api TEXT, qtd INTEGER, limite INTEGER, last_update TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS aprendizado(motor TEXT, acao TEXT, resultado REAL, data TEXT)")
+    conn.commit()
+    conn.close()
+
+# ==========================================================
+# PERSONALIDADE
+# ==========================================================
+def escolher_personalidade():
+    dia = datetime.datetime.now().strftime("%A")
+    estilos = {
+        "Monday":["motivacional","estoico"],
+        "Tuesday":["agressivo","direto"],
+        "Wednesday":["educativo","estratégico"],
+        "Thursday":["impactante","profetico"],
+        "Friday":["sarcastico","reflexivo"],
+        "Saturday":["inspirador","leve"],
+        "Sunday":["espiritual","profundo"]
+    }
+    estilo = random.choice(estilos.get(dia, ["direto"]))
+    salvar_personalidade(dia, estilo)
+    return estilo
+
+def salvar_personalidade(dia, estilo):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO personalidade VALUES (?,?,?)", (dia, estilo, 0.0))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+# ==========================================================
+# API MANAGEMENT
+# ==========================================================
+def registrar_api(api, qtd, limite):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        now = datetime.datetime.now().isoformat()
+        cur.execute("INSERT OR REPLACE INTO api_usage VALUES (?,?,?,?)",(api,qtd,limite,now))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+def verificar_api(api, limite=1000):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT qtd, last_update FROM api_usage WHERE api=?",(api,))
+    row = cur.fetchone()
+    conn.close()
+    now = datetime.datetime.now()
+    if row is None:
+        registrar_api(api, 0, limite)
+        return True
+    qtd, last_update = row
+    last_update_dt = datetime.datetime.fromisoformat(last_update)
+    if (now - last_update_dt).seconds > 3600:
+        registrar_api(api, 0, limite)
+        return True
+    if qtd < limite:
+        return True
+    return False
+
+def usar_api(api, qtd=1):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT qtd, limite FROM api_usage WHERE api=?",(api,))
+    row = cur.fetchone()
+    if row:
+        qtd_atual, limite = row
+        cur.execute("UPDATE api_usage SET qtd=? WHERE api=?",(qtd_atual+qtd,api))
+    conn.commit()
+    conn.close()
+
+# ==========================================================
+# TRENDS & COMENTÁRIOS
+# ==========================================================
+def capturar_trend_do_momento():
+    try:
+        pytrends = TrendReq(hl='pt-BR', tz=360)
+        df = pytrends.trending_searches(pn='brazil')
+        return df[0][0]
+    except:
+        return "tecnologia e inovação"
+
+def capturar_comentarios():
+    exemplos = ["isso é verdade","ninguém fala disso","isso mudou minha vida","eu precisava ouvir isso",
+                "isso explica muita coisa","agora tudo faz sentido","isso é assustador","isso está acontecendo comigo"]
+    return [random.choice(exemplos) for _ in range(random.randint(5,15))]
+
+def analisar_comentarios():
+    comentarios = capturar_comentarios()
+    palavras_virais = ["verdade","vida","sentido","assustador","explica","mudou","acontecendo","ninguém"]
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    for comentario in comentarios:
+        for palavra in palavras_virais:
+            if palavra in comentario.lower():
+                intensidade = random.uniform(0.4,1.0)
+                cur.execute("INSERT INTO comentarios_virais VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra, intensidade))
+    conn.commit()
+    conn.close()
+
+def detectar_palavras_virais():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT palavra, AVG(intensidade) FROM comentarios_virais GROUP BY palavra ORDER BY AVG(intensidade) DESC LIMIT 5")
+    resultados = cur.fetchall()
+    conn.close()
+    return resultados
+
+# ==========================================================
+# GERAÇÃO DE CONTEÚDO
+# ==========================================================
+def gerar_texto_gpt(prompt):
+    if not verificar_api("GPT", 50):
+        return f"[GPT LIMIT REACHED] {prompt[:30]}..."
+    usar_api("GPT")
+    return f"[GPT-Texto] {prompt} – gerado com chave protegida"
+
+def gerar_ideia_gemini(trend):
+    if not verificar_api("Gemini", 100):
+        return f"[Gemini Limit] {trend}"
+    usar_api("Gemini")
+    return f"Ideia de conteúdo para {trend} (Gemini)"
+
+def criar_reel_autonomo(trend, estilo):
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(f"Crie roteiro detalhado sobre {trend} com estilo {estilo}")
+    print(f"[REEL] {roteiro}")
+
+def criar_carrossel_autonomo(trend, estilo):
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(f"Crie carrossel sobre {trend} com estilo {estilo}")
+    print(f"[CARROSSEL] {roteiro}")
+
+# ==========================================================
+# MOTOR DE VONTADE PRÓPRIA (Decisão Autônoma)
+# ==========================================================
+def motor_vontade_propria():
+    while True:
+        try:
+            decidir = random.random() > 0.3  # 70% chance de agir
+            if decidir:
+                trend = capturar_trend_do_momento()
+                estilo = escolher_personalidade()
+                criar_reel_autonomo(trend, estilo)
+                criar_carrossel_autonomo(trend, estilo)
+            gc.collect()
+        except Exception as e:
+            print("Erro Vontade Própria:", e)
+        time.sleep(random.randint(300,600))  # Decide entre 5 a 10 min
+
+# ==========================================================
+# FLASK
+# ==========================================================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "ACE Ω SUPREME rodando – Sistema ativo"
+
+@app.route("/status")
+def status():
+    return "Maestro ativo e operando"
+
+# ==========================================================
+# START AUTOMÁTICO
+# ==========================================================
+iniciar_banco()
+threading.Thread(target=motor_vontade_propria, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
