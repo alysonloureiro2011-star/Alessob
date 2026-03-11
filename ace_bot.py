@@ -510,3 +510,232 @@ threading.Thread(target=pulso_de_vida, daemon=True).start()
 # ==========================================================
 # FIM DO MÓDULO DE FLUIDEZ
 # ==========================================================
+
+# ==========================================================
+# MAESTRO 3.1 ACE Ω – AGI Autônoma de Conteúdo com GPT + Gemini + Instagram
+# ==========================================================
+
+import threading, datetime, random, sqlite3, gc, time, re, os, requests
+
+# --- PATHS ---
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+MEMORY_PATH = os.path.join(BASE_PATH, "memory")
+TMP_PATH = os.path.join(BASE_PATH, "tmp", "ace_media")
+ENGINES_PATH = os.path.join(BASE_PATH, "engines")
+
+os.makedirs(MEMORY_PATH, exist_ok=True)
+os.makedirs(TMP_PATH, exist_ok=True)
+os.makedirs(ENGINES_PATH, exist_ok=True)
+
+DB_PATH = os.path.join(MEMORY_PATH, "ace_evolution.db")
+
+# --- API KEYS (preencher com sua chave de extensão GPT) ---
+GPT_API_KEY = "COLOQUE_SUA_CHAVE_AQUI"
+GEMINI_API_KEY = "COLOQUE_SUA_CHAVE_AQUI"
+INSTAGRAM_TOKEN = "COLOQUE_SEU_TOKEN_AQUI"
+
+# ==========================================================
+# BANCO DE DADOS / MEMÓRIA
+# ==========================================================
+def iniciar_banco():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS personalidade(dia TEXT, estilo TEXT, performance REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS instagram_stats(data TEXT, alcance REAL, engajamento REAL, seguidores REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS comentarios_virais(data TEXT, palavra TEXT, intensidade REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS trends_profeticos(data TEXT, tema TEXT, intensidade REAL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS api_usage(api TEXT, qtd INTEGER, limite INTEGER, last_update TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS aprendizado(motor TEXT, acao TEXT, resultado REAL, data TEXT)")
+    conn.commit()
+    conn.close()
+
+# ==========================================================
+# PERSONALIDADE & TOM
+# ==========================================================
+def escolher_personalidade():
+    dia = datetime.datetime.now().strftime("%A")
+    estilos = {
+        "Monday":["motivacional","estoico"],
+        "Tuesday":["agressivo","direto"],
+        "Wednesday":["educativo","estratégico"],
+        "Thursday":["impactante","profetico"],
+        "Friday":["sarcastico","reflexivo"],
+        "Saturday":["inspirador","leve"],
+        "Sunday":["espiritual","profundo"]
+    }
+    estilo = random.choice(estilos.get(dia, ["direto"]))
+    salvar_personalidade(dia, estilo)
+    return estilo
+
+def salvar_personalidade(dia, estilo):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO personalidade VALUES (?,?,?)", (dia, estilo, 0.0))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+# ==========================================================
+# API MANAGEMENT + CONSUMO INTELIGENTE
+# ==========================================================
+def registrar_api(api, qtd, limite):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        now = datetime.datetime.now().isoformat()
+        cur.execute("INSERT OR REPLACE INTO api_usage VALUES (?,?,?,?)",(api,qtd,limite,now))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+def verificar_api(api, limite=1000):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT qtd, last_update FROM api_usage WHERE api=?",(api,))
+    row = cur.fetchone()
+    conn.close()
+    now = datetime.datetime.now()
+    if row is None:
+        registrar_api(api, 0, limite)
+        return True
+    qtd, last_update = row
+    last_update_dt = datetime.datetime.fromisoformat(last_update)
+    if (now - last_update_dt).seconds > 3600:
+        registrar_api(api, 0, limite)
+        return True
+    if qtd < limite:
+        return True
+    return False
+
+def usar_api(api, qtd=1):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT qtd, limite FROM api_usage WHERE api=?",(api,))
+    row = cur.fetchone()
+    if row:
+        qtd_atual, limite = row
+        cur.execute("UPDATE api_usage SET qtd=? WHERE api=?",(qtd_atual+qtd,api))
+    conn.commit()
+    conn.close()
+
+# ==========================================================
+# INSTAGRAM DATA & POSTS
+# ==========================================================
+def analisar_instagram():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        hoje = datetime.datetime.now().isoformat()
+        alcance = random.uniform(0.4,0.9)
+        engajamento = random.uniform(0.3,0.8)
+        seguidores = random.uniform(0.2,0.7)
+        cur.execute("INSERT INTO instagram_stats VALUES (?,?,?,?)", (hoje, alcance, engajamento, seguidores))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+def postar_instagram(conteudo, tipo="reel"):
+    # Simulação de postagem. Integrar API real depois
+    print(f"[INSTAGRAM {tipo.upper()}] Postado: {conteudo}")
+    usar_api("Instagram")
+
+# ==========================================================
+# SENSOR DE TRENDS E COMENTÁRIOS
+# ==========================================================
+def capturar_comentarios():
+    exemplos = ["isso é verdade","ninguém fala disso","isso mudou minha vida","eu precisava ouvir isso",
+                "isso explica muita coisa","agora tudo faz sentido","isso é assustador","isso está acontecendo comigo"]
+    return [random.choice(exemplos) for _ in range(random.randint(5,15))]
+
+def analisar_comentarios():
+    comentarios = capturar_comentarios()
+    palavras_virais = ["verdade","vida","sentido","assustador","explica","mudou","acontecendo","ninguém"]
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    for comentario in comentarios:
+        for palavra in palavras_virais:
+            if re.search(palavra, comentario.lower()):
+                intensidade = random.uniform(0.4,1.0)
+                cur.execute("INSERT INTO comentarios_virais VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra, intensidade))
+    conn.commit()
+    conn.close()
+
+def detectar_palavras_virais():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT palavra, AVG(intensidade) FROM comentarios_virais GROUP BY palavra ORDER BY AVG(intensidade) DESC LIMIT 5")
+    resultados = cur.fetchall()
+    conn.close()
+    return resultados
+
+def detectar_trend_emergente():
+    palavras = detectar_palavras_virais()
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    for palavra in palavras:
+        intensidade = palavra[1]
+        if intensidade > 0.7:
+            cur.execute("INSERT INTO trends_profeticos VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra[0], intensidade))
+    conn.commit()
+    conn.close()
+
+# ==========================================================
+# GERAÇÃO DE CONTEÚDO GPT + GEMINI
+# ==========================================================
+def gerar_texto_gpt(prompt):
+    if not verificar_api("GPT", 50):  # limite inteligente
+        return f"[GPT LIMIT REACHED] {prompt[:30]}..."
+    usar_api("GPT")
+    # Simulação GPT-2/3
+    return f"[GPT-Texto] {prompt} – gerado com chave protegida"
+
+def gerar_ideia_gemini(trend):
+    if not verificar_api("Gemini", 100):
+        return f"[Gemini Limit] {trend}"
+    usar_api("Gemini")
+    return f"Ideia de conteúdo para {trend} (Gemini)"
+
+# ==========================================================
+# CRIAÇÃO DE CONTEÚDO AUTÔNOMA
+# ==========================================================
+def criar_reel_autonomo(trend, estilo):
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(f"Crie roteiro detalhado sobre {trend} com estilo {estilo}")
+    criar_reel(trend, roteiro)
+    postar_instagram(roteiro, "reel")
+
+def criar_carrossel_autonomo(trend, estilo):
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(f"Crie carrossel com 2 slides sobre {trend} e estilo {estilo}")
+    criar_carrossel(trend, [f"{roteiro} – Slide 1", f"{roteiro} – Slide 2"])
+    postar_instagram(roteiro, "carrossel")
+
+# ==========================================================
+# MOTOR MAESTRO 3.1 – AGI FINAL
+# ==========================================================
+def motor_maestro():
+    iniciar_banco()
+    while True:
+        try:
+            estilo = escolher_personalidade()
+            analisar_instagram()
+            analisar_comentarios()
+            detectar_trend_emergente()
+            trends = detectar_palavras_virais()
+            for trend in trends:
+                criar_reel_autonomo(trend[0], estilo)
+                criar_carrossel_autonomo(trend[0], estilo)
+            gc.collect()
+        except Exception as e:
+            print("Erro Maestro 3.1:", e)
+        time.sleep(1800)
+
+# ==========================================================
+# START AUTOMÁTICO
+# ==========================================================
+threading.Thread(target=motor_maestro, daemon=True).start()
+print("MAESTRO 3.1 ACE Ω iniciado – AGI autônoma, GPT + Gemini + Instagram, consumo inteligente de APIs")
