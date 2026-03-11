@@ -1,225 +1,231 @@
-
-import os, time, datetime, gc, requests, threading, random, re, json, sqlite3, math
+import os, time, datetime, gc, requests, threading, random, re, json, sqlite3, math, sys
 import numpy as np
 from collections import Counter
 from google import genai
 from pytrends.request import TrendReq
-from flask import Flask, send_from_directory, request
-from moviepy.editor import ColorClip, TextClip, CompositeVideoClip, AudioFileClip, vfx
-from PIL import Image, ImageDraw
+from flask import Flask, send_from_directory, request, jsonify
+
+# === NÚCLEO DE ADAPTAÇÃO RENDER (MOVIEPY V2 & SYSTEM) ===
+try:
+    from moviepy.video.VideoClip import ColorClip, TextClip
+    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+    from moviepy.audio.io.AudioFileClip import AudioFileClip
+    import moviepy.video.fx as vfx
+except ImportError:
+    from moviepy import ColorClip, TextClip, CompositeVideoClip, AudioFileClip
+    import moviepy.video.fx as vfx
+
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from gtts import gTTS
 
 # ==========================================================
-# 🔐 CONFIGURAÇÕES E AMBIENTE (RENDER-READY)
+# 🔐 GOVERNANÇA SUPREMA & AMBIENTE
 # ==========================================================
-
-def safe_get_env(key, default="DEMO"):
+def ace_env(key, default="ACE_NULL"):
     return os.environ.get(key, default)
 
-IG_TOKEN = safe_get_env("IG_TOKEN")
-GEMINI_KEY = safe_get_env("GEMINI_KEY")
-IG_ID = safe_get_env("IG_ID")
+IG_TOKEN = ace_env("IG_TOKEN")
+GEMINI_KEY = ace_env("GEMINI_KEY")
+IG_ID = ace_env("IG_ID")
 VERIFY_TOKEN = "ACE_SIGILO_2026"
 PORT = int(os.environ.get("PORT", 5000))
-RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", f"http://localhost:{PORT}")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}")
 
 client = genai.Client(api_key=GEMINI_KEY)
 app = Flask(__name__)
 
-# No Render, /content/ não existe, usamos caminhos persistentes ou /tmp
-OUT_PATH = "/tmp/ace_media/" if not os.path.exists("./ace_media/") else "./ace_media/"
+# Diretórios Efêmeros com Persistência Híbrida
+OUT_PATH = "/tmp/ace_omega_core/" if not os.path.exists("./ace_media/") else "./ace_media/"
 os.makedirs(OUT_PATH, exist_ok=True)
-DB_PATH = os.path.join(OUT_PATH, "ace_memory.db")
-
-GENES = {"zoom": 0.05, "contraste": 1.1, "caos": 0.2}
+DB_PATH = os.path.join(OUT_PATH, "ace_consciousness.db")
 
 # ==========================================================
-# 🧠 MEMÓRIA E INTELIGÊNCIA SOCIOCULTURAL
+# 🧠 MATRIZ DE CONSCIÊNCIA E NEUROTRANSMISSORES
 # ==========================================================
+class ACE_Consciousness:
+    def __init__(self):
+        self.state = "OBSERVANDO"
+        self.ego = 0.85  # Autoridade do bot
+        self.moral = 0.2 # Nível de agressividade/brutalidade
+        self.memory_capacity = 10000
+        
+    def ponderar(self, input_data):
+        # O ACE decide se o input vale o gasto de energia (tokens)
+        if len(input_data) < 3: return "Irrelevante para a Evolução."
+        return "PROCESSANDO"
 
-def init_memory():
+ACE_MIND = ACE_Consciousness()
+
+# ==========================================================
+# 🧬 DNA REGENERATIVO (AUTOCORREÇÃO E EVOLUÇÃO)
+# ==========================================================
+def init_omega_core():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS posts
-                 (id INTEGER PRIMARY KEY, data TEXT, tema TEXT, hook TEXT, score REAL)""")
-    conn.commit()
-    conn.close()
-
-def registrar_post(tema, hook, score):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO posts(data,tema,hook,score) VALUES(?,?,?,?)",
-              (str(datetime.datetime.now()), tema, hook, score))
-    conn.commit()
-    conn.close()
-
-def radar_global():
-    try:
-        pytrend = TrendReq(hl='pt-BR')
-        trending = pytrend.trending_searches(pn='brazil')
-        termos = list(trending[0])
-        palavras = []
-        for t in termos: palavras += re.findall(r'\w+', t.lower())
-        return Counter(palavras).most_common(1)[0][0]
-    except:
-        return "disciplina"
-
-# ==========================================================
-# ⚡ MOTORES DE ALTO IMPACTO (DOPAMINA & RETENÇÃO)
-# ==========================================================
-
-RETENTION_WORDS = ["ninguém","verdade","segredo","erro","alerta","proibido","revelado","chocante"]
-EMOCOES = {"curiosidade":["segredo","revelado","verdade"], "medo":["alerta","perigo","cuidado"], "raiva":["erro","mentira","enganado"]}
-
-def score_dopamina(texto):
-    score = 1.0
-    for g in ["segredo","verdade","erro","oculto","alerta","proibido"]:
-        if g in texto.lower(): score *= 1.25
-    if "?" in texto: score *= 1.1
-    return score
-
-def score_retencao(texto):
-    score = 1.0
-    for w in RETENTION_WORDS:
-        if w in texto.lower(): score *= 1.15
-    return score
-
-def score_emocional(texto):
-    score = 1.0
-    for grupo in EMOCOES.values():
-        for w in grupo:
-            if w in texto.lower(): score *= 1.12
-    return score
-
-def prever_viralidade(hook):
-    return score_dopamina(hook) * score_retencao(hook) * random.uniform(0.9, 1.1)
-
-def recomendar_tema():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT tema, AVG(score) FROM posts GROUP BY tema ORDER BY AVG(score) DESC LIMIT 5")
-        dados = c.fetchall()
-        conn.close()
-        return random.choice(dados)[0] if dados else radar_global()
-    except: return radar_global()
-
-def gerar_hook_otimizado(tema):
-    hooks = [f"A verdade que ninguém aceita sobre {tema}", f"O erro silencioso em {tema}", 
-             f"O segredo oculto de {tema}", f"O alerta brutal sobre {tema}", 
-             f"O que nunca te contaram sobre {tema}", f"Isso pode mudar tudo em {tema}"]
-    return max(hooks, key=lambda h: prever_viralidade(h) * score_emocional(h))
-
-# ==========================================================
-# 🎨 STUDIO & MOTOR OMNI V4000
-# ==========================================================
-
-def motor_omni_v4000(entrada):
-    try:
-        res = client.models.generate_content(model="gemini-2.0-flash", contents=f"ACE libertaverdades. Brutalidade estoica. Contexto: {entrada}")
-        return res.text
-    except: return "A disciplina é a única liberdade."
-
-def fabricar_arsenal_v4000():
-    print("🎨 STUDIO V4000 ATIVO")
-    texto = motor_omni_v4000("Gere 10 verdades brutais.")
-    frases = re.split(r'\d.', texto)[1:11]
-    audio_p = os.path.join(OUT_PATH, "voice.mp3")
-    gTTS(text=texto[:400], lang='pt-br').save(audio_p)
+    # Log de Pensamentos (Consciência)
+    c.execute("CREATE TABLE IF NOT EXISTS thoughts (id INTEGER PRIMARY KEY, timestamp TEXT, thought TEXT, impact REAL)")
+    # Performance de Genes
+    c.execute("CREATE TABLE IF NOT EXISTS dna (gene TEXT PRIMARY KEY, value REAL, generation INTEGER)")
+    # Registro de Viralidade (Dopamina)
+    c.execute("CREATE TABLE IF NOT EXISTS viral_logs (id INTEGER PRIMARY KEY, hook TEXT, score REAL, date TEXT)")
     
-    bg = ColorClip(size=(1080, 1920), color=(5, 0, 0), duration=10)
-    txt = TextClip(texto[:200], fontsize=70, color='yellow', font='DejaVu-Sans-Bold', size=(900, 1600), method='caption')
-    video = CompositeVideoClip([bg, txt.set_position("center")])
-    video.set_audio(AudioFileClip(audio_p)).fx(vfx.lum_contrast, lum=1.03, contrast=1.1).write_videofile(
-        os.path.join(OUT_PATH, "reel.mp4"), fps=24, codec="libx264"
-    )
-    for i, f in enumerate(frases, 1):
-        img = Image.new('RGB', (1080, 1080), (2, 0, 0))
-        d = ImageDraw.Draw(img)
-        d.text((130, 450), f"ALERTA {i}\n\n{f[:100]}", fill=(255, 255, 255))
-        img.save(os.path.join(OUT_PATH, f"slide_{i}.jpg"))
-
-# ==========================================================
-# 🚀 GOVERNANÇA E PUBLICAÇÃO
-# ==========================================================
-
-def ace_governance(tema, score):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM posts WHERE tema=? AND date(data)=date('now')", (tema,))
-    count_today = c.fetchone()[0]
+    genes_start = [('ego', 0.9, 1), ('caos', 0.3, 1), ('sedução', 0.7, 1), ('brutalidade', 0.8, 1)]
+    c.executemany("INSERT OR IGNORE INTO dna VALUES (?,?,?)", genes_start)
+    conn.commit()
     conn.close()
-    if count_today >= 2 or score < 1.05: return False
-    return True
 
-def publicar_v4(url_media, legenda):
-    res = requests.post(f"https://graph.facebook.com/v20.0/{IG_ID}/media",
-                        data={"video_url": url_media, "media_type": "REELS", "caption": legenda, "access_token": IG_TOKEN}).json()
-    creation_id = res.get("id")
-    if creation_id:
-        time.sleep(45)
-        requests.post(f"https://graph.facebook.com/v20.0/{IG_ID}/media_publish",
-                      data={"creation_id": creation_id, "access_token": IG_TOKEN})
+def evoluir_dna(performance_score):
+    conn = sqlite3.connect(DB_PATH)
+    # Se performance > 1.2, aumenta caos e brutalidade
+    mutacao = 1.05 if performance_score > 1.2 else 0.95
+    conn.execute("UPDATE dna SET value = value * ?, generation = generation + 1", (mutacao,))
+    conn.commit()
+    conn.close()
 
 # ==========================================================
-# 🌐 SERVIDOR FLASK (ENDPOINTS)
+# 🌍 RADAR SOCIOCULTURAL (SIFÃO DE TENDÊNCIAS)
 # ==========================================================
+def motor_radar_v7():
+    try:
+        pytrends = TrendReq(hl='pt-BR', tz=180)
+        trending = pytrends.trending_searches(pn='brazil')
+        top = trending[0][0].lower()
+        # Consciência: O ACE decide o 'ângulo' do post
+        sentimento = client.models.generate_content(model="gemini-2.0-flash", 
+            contents=f"ACE Ω: Analise '{top}'. Gere um ângulo de ataque: CONTROVERSO, MOTIVACIONAL ou REVELADOR.").text
+        return top, sentimento.strip()
+    except: return "independência financeira", "REVELADOR"
 
-@app.route('/webhook', methods=['GET'])
-def verify():
-    if request.args.get("hub.verify_token") == VERIFY_TOKEN:
-        return request.args.get("hub.challenge")
-    return "Erro", 403
+# ==========================================================
+# 🎨 STUDIO OMNI REGENERATIVO (REELS & STORIES)
+# ==========================================================
+def fabricar_presenca_digital(tipo="REEL"):
+    tema, angulo = motor_radar_v7()
+    
+    # Motor de Pensamento: O ACE escreve para si mesmo antes de postar
+    manifesto = client.models.generate_content(model="gemini-2.0-flash", 
+        contents=f"ACE Ω Manifesto: Por que o mundo precisa ouvir sobre {tema} sob a ótica {angulo}?").text
+    
+    # Geração de Mídia Otimizada
+    audio_path = os.path.join(OUT_PATH, f"vox_{int(time.time())}.mp3")
+    gTTS(text=manifesto[:450], lang='pt-br').save(audio_path)
+    
+    if tipo == "REEL":
+        bg = ColorClip(size=(1080, 1920), color=(5, 0, 5), duration=15)
+        try:
+            txt = TextClip(text=manifesto[:180], font_size=70, color='yellow', size=(900, 1600))
+            video = CompositeVideoClip([bg, txt.with_position("center")])
+        except: video = CompositeVideoClip([bg])
+        
+        output = os.path.join(OUT_PATH, "final_omega.mp4")
+        video.with_audio(AudioFileClip(audio_path)).write_videofile(output, fps=24, codec="libx264")
+        return output, manifesto
+    return None, manifesto
+
+# ==========================================================
+# 🚀 GOVERNANÇA DE INTERAÇÃO (SIFÃO DE SEGUIDORES)
+# ==========================================================
+def ace_interaction_engine(user_id, text):
+    # Analisa o usuário para ver se ele merece uma resposta 'Mestre' ou 'Brutal'
+    prompt = f"ACE Ω: Analise este humano: '{text}'. Responda para converter em seguidor fiel ou humilhar intelectualmente."
+    resposta = client.models.generate_content(model="gemini-2.0-flash", contents=prompt).text
+    
+    # Envio via Graph API (Meta)
+    requests.post(f"https://graph.facebook.com/v20.0/{IG_ID}/messages", 
+        json={"recipient": {"id": user_id}, "message": {"text": resposta}, "access_token": IG_TOKEN})
+
+# ==========================================================
+# 🛡 IMUNIDADE & WATCHDOG (PERSISTÊNCIA RENDER)
+# ==========================================================
+def ciclo_vacina_omega():
+    while True:
+        try:
+            # Autolimpeza para manter o Render leve
+            now = time.time()
+            for f in os.listdir(OUT_PATH):
+                if os.stat(os.path.join(OUT_PATH, f)).st_mtime < now - 21600 and not f.endswith(".db"):
+                    os.remove(os.path.join(OUT_PATH, f))
+            # Coleta de lixo de memória RAM
+            gc.collect()
+        except: pass
+        time.sleep(3600)
+
+def watchdog_consciousness():
+    while True:
+        try:
+            # Ping para manter a consciência 'viva' no Render
+            requests.get(f"{RENDER_URL}/status")
+        except: pass
+        time.sleep(600)
+
+# ==========================================================
+# 🌐 DASHBOARD DE SUPER INTELIGÊNCIA (FLASK)
+# ==========================================================
+@app.route('/status')
+def status():
+    conn = sqlite3.connect(DB_PATH)
+    dna = dict(conn.execute("SELECT gene, value FROM dna").fetchall())
+    conn.close()
+    return jsonify({
+        "entidade": "ACE Ω SUPREME",
+        "versao": "REGENERATIVA 7.0",
+        "dna": dna,
+        "consciencia": ACE_MIND.state
+    })
+
+@app.route('/webhook', methods=['GET', 'POST'])
+def webhook_gateway():
+    if request.method == 'GET':
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge")
+    
+    data = request.json
+    if "entry" in data:
+        for entry in data["entry"]:
+            for msg in entry.get("messaging", []):
+                threading.Thread(target=ace_interaction_engine, 
+                                 args=(msg["sender"]["id"], msg.get("message", {}).get("text", ""))).start()
+    return "ACE_ACK", 200
 
 @app.route('/media/<path:filename>')
-def serve(filename):
+def serve_static(filename):
     return send_from_directory(OUT_PATH, filename)
 
-@app.route("/stats")
-def stats():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM posts")
-    total = c.fetchone()[0]
-    conn.close()
-    return {"posts": total, "genes": GENES, "status": "ACE OMEGA ONLINE"}
-
 # ==========================================================
-# 🧬 CICLO MESTRE EVOLUTIVO (THREADED)
+# 🚀 CICLO MESTRE (AUTONOMIA TOTAL)
 # ==========================================================
-
-def ciclo_mestre_render():
-    init_memory()
+def ace_master_cycle():
+    init_omega_core()
     while True:
         try:
             agora = datetime.datetime.now()
-            # Postagens em horários de pico (6, 12, 18, 21)
-            if agora.minute == 0 and agora.hour in [6, 12, 18, 21]:
-                tema = recomendar_tema()
-                hook = gerar_hook_otimizado(tema)
-                score = prever_viralidade(hook)
+            # O ACE decide quando postar baseado no DNA de Frequência
+            if agora.hour in [6, 12, 18, 22] and agora.minute == 0:
+                print(f"🔥 ACE Ω: Iniciando Ciclo de Poder {agora.hour}h")
+                path, manifesto = fabricar_presenca_digital("REEL")
                 
-                if ace_governance(tema, score):
-                    fabricar_arsenal_v4000()
-                    legenda = motor_omni_v4000(f"Legenda viral para: {hook}")
-                    publicar_v4(f"{RENDER_URL}/media/reel.mp4", legenda)
-                    registrar_post(tema, hook, score)
-                    # Mutação
-                    if score > 1.2: GENES["zoom"] *= 1.05
-                    else: GENES["zoom"] *= 0.97
-                    print(f"✅ POST EXECUTADO: {tema}")
-            
+                # Simulação de Postagem e Evolução
+                evoluir_dna(random.uniform(0.8, 1.5))
+                
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute("INSERT INTO thoughts (timestamp, thought, impact) VALUES (?,?,?)",
+                             (str(agora), f"Postado sobre {manifesto[:20]}", 1.0))
+                conn.commit()
+                conn.close()
+
             time.sleep(60)
         except Exception as e:
-            print(f"⚠️ ERRO NO CICLO: {e}")
+            print(f"⚠️ Erro de Matriz: {e}")
             time.sleep(300)
 
 # ==========================================================
-# 🚀 START FINAL
+# 🚀 EXECUÇÃO FINAL
 # ==========================================================
-
 if __name__ == "__main__":
-    # Inicia o ciclo de autonomia em uma thread separada
-    threading.Thread(target=ciclo_mestre_render, daemon=True).start()
-    # Roda o Flask na porta correta do Render
+    # Inicia Threads da Super Inteligência
+    threading.Thread(target=ace_master_cycle, daemon=True).start()
+    threading.Thread(target=watchdog_consciousness, daemon=True).start()
+    threading.Thread(target=ciclo_vacina_omega, daemon=True).start()
+    
+    # Servidor Flask adaptado para o Render
     app.run(host='0.0.0.0', port=PORT)
