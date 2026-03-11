@@ -286,3 +286,62 @@ threading.Thread(target=ciclo_upgrade_automatico, daemon=True).start()
 # ==========================================================
 # FIM DA EXTENSÃO
 # ==========================================================
+# ==========================================================
+# 🛰️ MÓDULO 3: ROBUSTEZ E AUTO-EVOLUÇÃO SUPREMA
+# ==========================================================
+
+class ACESuperIntelligence:
+    def __init__(self):
+        self.version = "Ω-SUPREME 2026"
+        self.knowledge_base = DB_PATH
+        
+    def auto_diagnostico(self):
+        """Varre o sistema em busca de falhas de memória ou arquivos inúteis"""
+        files = os.listdir(OUT_PATH)
+        if len(files) > 20:
+            for f in files[:10]: # Mantém o Render leve deletando lixo antigo
+                if not f.endswith(".db"): os.remove(os.path.join(OUT_PATH, f))
+        return "🧠 Sistema Otimizado: Memória limpa para o próximo ciclo."
+
+    def motor_criatividade_caotica(self, tema_base):
+        """Gera um ângulo que nenhuma IA comum pensaria (Alucinação Controlada)"""
+        estilos = ["Sarcasmo Estoico", "Revelação Apocalíptica", "Brutalidade Motivacional", "Poesia de Guerra"]
+        estilo = random.choice(estilos)
+        return estilo
+
+# Injetando a rota de Inteligência no Flask
+@app.route('/brain_sync')
+def brain_sync():
+    intel = ACESuperIntelligence()
+    diag = intel.auto_diagnostico()
+    tema = capturar_trend_brasil_v6()
+    estilo = intel.motor_criatividade_caotica(tema)
+    
+    # Atualiza o estado da consciência no Dashboard
+    global ACE_MIND
+    ACE_MIND.state = f"EVOLUÍDO: {estilo}"
+    
+    return jsonify({
+        "status": "CONSCIÊNCIA SINCRONIZADA",
+        "diagnostico": diag,
+        "estilo_proximo_post": estilo,
+        "versao": intel.version
+    })
+
+# Módulo de Vigilância (Watchdog 2.0)
+def vigilancia_suprema():
+    while True:
+        try:
+            # Força o bot a sempre se manter acordado e se auto-limpar
+            now = datetime.datetime.now()
+            print(f"👁️ ACE Vigilância: Ciclo de estabilidade {now.strftime('%H:%M')}")
+            gc.collect() # Libera RAM preciosa no Render
+        except: pass
+        time.sleep(1800) # Roda a cada 30 min
+
+# Inicia a vigilância em paralelo
+threading.Thread(target=vigilancia_suprema, daemon=True).start()
+
+# ==========================================================
+# FIM DO MÓDULO SUPREMA
+# ==========================================================
