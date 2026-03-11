@@ -330,3 +330,151 @@ if __name__=="__main__":
     threading.Thread(target=lambda:app.run(port=5000),daemon=True).start()
     threading.Thread(target=watchdog,daemon=True).start()
     ciclo_mestre()
+# ==========================================================
+# ACE Ω EVOLUTIVO — GOVERNANÇA + INTELIGÊNCIA SOCIOCULTURAL
+# ==========================================================
+
+# ----------------------------------------------------------
+# GOVERNANÇA DE POSTAGENS
+# ----------------------------------------------------------
+
+def ace_governance(tema, hook, score):
+    """
+    Avalia riscos e prioridades antes de postar
+    """
+    # evitar excesso de posts similares
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM posts WHERE tema=? AND date(data)=date('now')", (tema,))
+    count_today = c.fetchone()[0]
+    conn.close()
+
+    # se já postou 2 vezes hoje sobre o mesmo tema, espera
+    if count_today >= 2:
+        print("Governança: Tema já postado hoje, adiando...")
+        return False
+
+    # checa genes e score mínimo
+    if score < 1.05:
+        print("Governança: Hook score baixo, segurando publicação...")
+        return False
+
+    return True
+
+# ----------------------------------------------------------
+# INTELIGÊNCIA EVOLUTIVA
+# ----------------------------------------------------------
+
+def ace_evolve_timing():
+    """
+    Ajusta horários de postagem com base em engajamento histórico
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT strftime('%H', data) as hour, AVG(score) FROM posts GROUP BY hour")
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        return [6,8,10,12,14,16,18,20,22]  # padrão
+
+    # seleciona horas com maior score médio
+    rows.sort(key=lambda x: x[1], reverse=True)
+    top_hours = [int(h) for h,_ in rows[:5]]
+    return top_hours
+
+# ----------------------------------------------------------
+# TERMÔMETRO SOCIOCULTURAL
+# ----------------------------------------------------------
+
+def ace_sociocultural_thermometer():
+    """
+    Detecta trends, sentimento e timing ideal
+    """
+    tema = ace_trend_radar()
+
+    # analisar sentimento do hook
+    hook, score = ace_generate_viral_hook(tema)
+    emo_score = score_emocional(hook)
+
+    # timing baseado em genes + score + horário atual
+    agora = datetime.datetime.now()
+    hour_factor = math.cos((agora.hour-12)/12*math.pi) + 1  # pico meio-dia e 20h
+    timing_score = score * emo_score * hour_factor
+
+    return tema, hook, timing_score
+
+# ----------------------------------------------------------
+# DECISÃO DE POSTAGEM INTELIGENTE
+# ----------------------------------------------------------
+
+def ace_intelligent_post():
+
+    try:
+        tema, hook, score = ace_sociocultural_thermometer()
+
+        if not ace_governance(tema, hook, score):
+            return
+
+        # gerar conteúdo
+        fabricar_arsenal_v4000()
+        legenda = motor_omni_v4000(f"Legenda viral: {hook}")
+
+        # publicar
+        public_url = ngrok.connect(5000).public_url
+        ace_post_reel(f"{public_url}/media/reel.mp4", legenda)
+
+        # registrar
+        registrar_post(tema, hook, score)
+        mutacao(score)
+
+        print("INTELLIGENT POST DONE:", tema, hook, score)
+
+    except Exception as e:
+        print("INTELLIGENT POST ERROR:", e)
+
+# ----------------------------------------------------------
+# ULTRA MANAGER LOOP COM GOVERNANÇA E TIMING
+# ----------------------------------------------------------
+
+def ace_ultra_manager_loop_v2():
+
+    while True:
+        try:
+            top_hours = ace_evolve_timing()
+            agora = datetime.datetime.now()
+
+            # decidir se é hora de postar
+            if agora.hour in top_hours and agora.minute == 0:
+                ace_intelligent_post()
+
+            # stories reflexivos em horários estratégicos
+            if agora.hour in [7,19,22] and agora.minute == 30:
+                public_url = ngrok.connect(5000).public_url
+                ace_post_story(f"{public_url}/media/slide_1.jpg")
+
+            ace_learn_from_posts()
+            time.sleep(60)
+
+        except Exception as e:
+            print("ULTRA MANAGER LOOP V2 ERROR:", e)
+            time.sleep(60)
+
+# ----------------------------------------------------------
+# START ULTRA MANAGER V2
+# ----------------------------------------------------------
+
+def ace_start_ultra_manager_v2():
+
+    try:
+        threading.Thread(target=ace_ultra_manager_loop_v2, daemon=True).start()
+        threading.Thread(target=ace_dm_loop, daemon=True).start()
+        print("ACE ULTRA MANAGER V2 ONLINE")
+    except Exception as e:
+        print("ULTRA MANAGER V2 START ERROR:", e)
+
+# auto-start
+try:
+    ace_start_ultra_manager_v2()
+except:
+    pass
