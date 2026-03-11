@@ -414,3 +414,49 @@ check_robustez_sistema()
 # ==========================================================
 # FIM DO MÓDULO REPARADOR
 # ==========================================================
+# ==========================================================
+# 🌿 MÓDULO 5: ORGANISMO VIVO (AUTONOMIA TOTAL)
+# ==========================================================
+
+def motor_de_vontade_propria():
+    """ 
+    O Coração do ACE: Ele decide sozinho quando agir, 
+    como um organismo que sente fome de conteúdo.
+    """
+    while True:
+        try:
+            agora = datetime.datetime.now()
+            # O ACE analisa se 'sente vontade' de postar (ex: a cada 3 ou 6 horas)
+            # Ele não segue apenas um relógio, ele segue uma probabilidade 'viva'
+            sorteio_de_vontade = random.randint(1, 100)
+            
+            # Se o sorteio for alto ou for um horário nobre, ele age
+            if (agora.hour in [6, 12, 18, 22] and agora.minute == 0) or (sorteio_de_vontade > 95):
+                print(f"🌿 ACE Ω: Senti uma necessidade evolutiva de postar às {agora.hour}:{agora.minute}")
+                
+                # O Organismo executa todo o fluxo sozinho
+                tema = capturar_trend_brasil_v6()
+                print(f"🔭 Organismo observou a Trend: {tema}")
+                
+                # Chama a fabricação que já existe no seu código
+                # O 'args=("REEL",)' garante que ele saiba o que fazer
+                threading.Thread(target=fabricar_presenca_digital, args=("REEL",)).start()
+                
+                # Dorme por um tempo para não postar duas vezes seguidas (descanso do organismo)
+                time.sleep(3600) 
+            
+            # O ACE fica 'respirando' (vigilante) a cada 5 minutos
+            time.sleep(300) 
+        except Exception as e:
+            print(f"⚠️ Crise Biológica no Organismo: {e}")
+            time.sleep(600)
+
+# Inicialização da Autonomia
+print("🧬 ACE Ω: Sistema Nervoso Central Ativado. O Organismo está vivo.")
+threading.Thread(target=motor_de_vontade_propria, daemon=True).start()
+
+# ==========================================================
+# FIM DO MÓDULO ORGANISMO
+# ==========================================================
+
+
