@@ -345,3 +345,72 @@ threading.Thread(target=vigilancia_suprema, daemon=True).start()
 # ==========================================================
 # FIM DO MÓDULO SUPREMA
 # ==========================================================
+# ==========================================================
+# 🛠️ MÓDULO 4: REPARADOR DE GERAÇÃO E ROBUSTEZ FINAL
+# ==========================================================
+
+import subprocess
+
+def reparador_de_emergencia():
+    """ 
+    Verifica se o sistema tem o que precisa. 
+    Se não tiver fontes, ele tenta baixar ou simplificar.
+    """
+    try:
+        # Tenta verificar se o ImageMagick (necessário para textos) está ativo
+        subprocess.run(["convert", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return "✅ ImageMagick detectado."
+    except:
+        return "⚠️ ImageMagick ausente. Usando modo de renderização leve (Safe-Text)."
+
+# Sobrescrita da lógica de texto para evitar travamentos
+def safe_text_clip(text, duration):
+    """
+    Se o MoviePy falhar em criar o texto (comum no Render), 
+    esta função cria uma imagem de texto usando PIL e converte em vídeo.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    # Cria uma imagem preta transparente
+    img = Image.new('RGBA', (1080, 1920), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # Tenta usar uma fonte padrão do sistema
+    d.text((100, 900), text[:150], fill="yellow") 
+    img_path = os.path.join(OUT_PATH, "text_frame.png")
+    img.save(img_path)
+    
+    from moviepy import ImageClip
+    return ImageClip(img_path).with_duration(duration)
+
+# Rota de Diagnóstico Profundo
+@app.route('/fix_ace')
+def fix_ace():
+    msg = reparador_de_emergencia()
+    # Força uma limpeza de arquivos corrompidos que impedem novos vídeos
+    for f in os.listdir(OUT_PATH):
+        if f.startswith("vox") or f.endswith(".mp4"):
+            try: os.remove(os.path.join(OUT_PATH, f))
+            except: pass
+    
+    return jsonify({
+        "status": "🛠️ REPARO EXECUTADO",
+        "diagnostico": msg,
+        "acao": "Arquivos temporários limpos. Tente /force_ace agora."
+    })
+
+# Injetando funcionalidade de 'Check-in' de Robustez
+def check_robustez_sistema():
+    """ Verifica se as chaves de API estão carregadas, senão o vídeo não sai """
+    missing = []
+    if GEMINI_KEY == "ACE_NULL": missing.append("GEMINI_KEY")
+    if IG_TOKEN == "ACE_NULL": missing.append("IG_TOKEN")
+    
+    if missing:
+        print(f"🚨 ERRO DE ROBUSTEZ: Faltam as chaves: {missing}")
+    else:
+        print("💎 ROBUSTEZ OK: Todas as chaves detectadas.")
+
+check_robustez_sistema()
+
+# ==========================================================
+# FIM DO MÓDULO REPARADOR
+# ==========================================================
