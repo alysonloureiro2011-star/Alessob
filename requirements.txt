@@ -1,535 +1,73 @@
-flask
-requests
-pyngrok
-google-genai
-pytrends
-moviepy
-Pillow
-gTTS
-numpy
-# ==========================================================
-# MAESTRO 3.1 ACE Ω – AGI Autônoma de Conteúdo com GPT + Gemini + Instagram
-# ==========================================================
 
-import threading, datetime, random, sqlite3, gc, time, re, os, requests
-
-# --- PATHS ---
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
-MEMORY_PATH = os.path.join(BASE_PATH, "memory")
-TMP_PATH = os.path.join(BASE_PATH, "tmp", "ace_media")
-ENGINES_PATH = os.path.join(BASE_PATH, "engines")
-
-os.makedirs(MEMORY_PATH, exist_ok=True)
-os.makedirs(TMP_PATH, exist_ok=True)
-os.makedirs(ENGINES_PATH, exist_ok=True)
-
-DB_PATH = os.path.join(MEMORY_PATH, "ace_evolution.db")
-
-# --- API KEYS (preencher com sua chave de extensão GPT) ---
-GPT_API_KEY = "COLOQUE_SUA_CHAVE_AQUI"
-GEMINI_API_KEY = "COLOQUE_SUA_CHAVE_AQUI"
-INSTAGRAM_TOKEN = "COLOQUE_SEU_TOKEN_AQUI"
-
-# ==========================================================
-# BANCO DE DADOS / MEMÓRIA
-# ==========================================================
-def iniciar_banco():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS personalidade(dia TEXT, estilo TEXT, performance REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS instagram_stats(data TEXT, alcance REAL, engajamento REAL, seguidores REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS comentarios_virais(data TEXT, palavra TEXT, intensidade REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS trends_profeticos(data TEXT, tema TEXT, intensidade REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS api_usage(api TEXT, qtd INTEGER, limite INTEGER, last_update TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS aprendizado(motor TEXT, acao TEXT, resultado REAL, data TEXT)")
-    conn.commit()
-    conn.close()
-
-# ==========================================================
-# PERSONALIDADE & TOM
-# ==========================================================
-def escolher_personalidade():
-    dia = datetime.datetime.now().strftime("%A")
-    estilos = {
-        "Monday":["motivacional","estoico"],
-        "Tuesday":["agressivo","direto"],
-        "Wednesday":["educativo","estratégico"],
-        "Thursday":["impactante","profetico"],
-        "Friday":["sarcastico","reflexivo"],
-        "Saturday":["inspirador","leve"],
-        "Sunday":["espiritual","profundo"]
-    }
-    estilo = random.choice(estilos.get(dia, ["direto"]))
-    salvar_personalidade(dia, estilo)
-    return estilo
-
-def salvar_personalidade(dia, estilo):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("INSERT INTO personalidade VALUES (?,?,?)", (dia, estilo, 0.0))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-# ==========================================================
-# API MANAGEMENT + CONSUMO INTELIGENTE
-# ==========================================================
-def registrar_api(api, qtd, limite):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        now = datetime.datetime.now().isoformat()
-        cur.execute("INSERT OR REPLACE INTO api_usage VALUES (?,?,?,?)",(api,qtd,limite,now))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-def verificar_api(api, limite=1000):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT qtd, last_update FROM api_usage WHERE api=?",(api,))
-    row = cur.fetchone()
-    conn.close()
-    now = datetime.datetime.now()
-    if row is None:
-        registrar_api(api, 0, limite)
-        return True
-    qtd, last_update = row
-    last_update_dt = datetime.datetime.fromisoformat(last_update)
-    if (now - last_update_dt).seconds > 3600:
-        registrar_api(api, 0, limite)
-        return True
-    if qtd < limite:
-        return True
-    return False
-
-def usar_api(api, qtd=1):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT qtd, limite FROM api_usage WHERE api=?",(api,))
-    row = cur.fetchone()
-    if row:
-        qtd_atual, limite = row
-        cur.execute("UPDATE api_usage SET qtd=? WHERE api=?",(qtd_atual+qtd,api))
-    conn.commit()
-    conn.close()
-
-# ==========================================================
-# INSTAGRAM DATA & POSTS
-# ==========================================================
-def analisar_instagram():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        hoje = datetime.datetime.now().isoformat()
-        alcance = random.uniform(0.4,0.9)
-        engajamento = random.uniform(0.3,0.8)
-        seguidores = random.uniform(0.2,0.7)
-        cur.execute("INSERT INTO instagram_stats VALUES (?,?,?,?)", (hoje, alcance, engajamento, seguidores))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-def postar_instagram(conteudo, tipo="reel"):
-    # Simulação de postagem. Integrar API real depois
-    print(f"[INSTAGRAM {tipo.upper()}] Postado: {conteudo}")
-    usar_api("Instagram")
-
-# ==========================================================
-# SENSOR DE TRENDS E COMENTÁRIOS
-# ==========================================================
-def capturar_comentarios():
-    exemplos = ["isso é verdade","ninguém fala disso","isso mudou minha vida","eu precisava ouvir isso",
-                "isso explica muita coisa","agora tudo faz sentido","isso é assustador","isso está acontecendo comigo"]
-    return [random.choice(exemplos) for _ in range(random.randint(5,15))]
-
-def analisar_comentarios():
-    comentarios = capturar_comentarios()
-    palavras_virais = ["verdade","vida","sentido","assustador","explica","mudou","acontecendo","ninguém"]
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    for comentario in comentarios:
-        for palavra in palavras_virais:
-            if re.search(palavra, comentario.lower()):
-                intensidade = random.uniform(0.4,1.0)
-                cur.execute("INSERT INTO comentarios_virais VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra, intensidade))
-    conn.commit()
-    conn.close()
-
-def detectar_palavras_virais():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT palavra, AVG(intensidade) FROM comentarios_virais GROUP BY palavra ORDER BY AVG(intensidade) DESC LIMIT 5")
-    resultados = cur.fetchall()
-    conn.close()
-    return resultados
-
-def detectar_trend_emergente():
-    palavras = detectar_palavras_virais()
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    for palavra in palavras:
-        intensidade = palavra[1]
-        if intensidade > 0.7:
-            cur.execute("INSERT INTO trends_profeticos VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra[0], intensidade))
-    conn.commit()
-    conn.close()
-
-# ==========================================================
-# GERAÇÃO DE CONTEÚDO GPT + GEMINI
-# ==========================================================
-def gerar_texto_gpt(prompt):
-    if not verificar_api("GPT", 50):  # limite inteligente
-        return f"[GPT LIMIT REACHED] {prompt[:30]}..."
-    usar_api("GPT")
-    # Simulação GPT-2/3
-    return f"[GPT-Texto] {prompt} – gerado com chave protegida"
-
-def gerar_ideia_gemini(trend):
-    if not verificar_api("Gemini", 100):
-        return f"[Gemini Limit] {trend}"
-    usar_api("Gemini")
-    return f"Ideia de conteúdo para {trend} (Gemini)"
-
-# ==========================================================
-# CRIAÇÃO DE CONTEÚDO AUTÔNOMA
-# ==========================================================
-def criar_reel_autonomo(trend, estilo):
-    ideia = gerar_ideia_gemini(trend)
-    roteiro = gerar_texto_gpt(f"Crie roteiro detalhado sobre {trend} com estilo {estilo}")
-    criar_reel(trend, roteiro)
-    postar_instagram(roteiro, "reel")
-
-def criar_carrossel_autonomo(trend, estilo):
-    ideia = gerar_ideia_gemini(trend)
-    roteiro = gerar_texto_gpt(f"Crie carrossel com 2 slides sobre {trend} e estilo {estilo}")
-    criar_carrossel(trend, [f"{roteiro} – Slide 1", f"{roteiro} – Slide 2"])
-    postar_instagram(roteiro, "carrossel")
-
-# ==========================================================
-# MOTOR MAESTRO 3.1 – AGI FINAL
-# ==========================================================
-def motor_maestro():
-    iniciar_banco()
-    while True:
-        try:
-            estilo = escolher_personalidade()
-            analisar_instagram()
-            analisar_comentarios()
-            detectar_trend_emergente()
-            trends = detectar_palavras_virais()
-            for trend in trends:
-                criar_reel_autonomo(trend[0], estilo)
-                criar_carrossel_autonomo(trend[0], estilo)
-            gc.collect()
-        except Exception as e:
-            print("Erro Maestro 3.1:", e)
-        time.sleep(1800)
-
-# ==========================================================
-# START AUTOMÁTICO
-# ==========================================================
-threading.Thread(target=motor_maestro, daemon=True).start()
-print("MAESTRO 3.1 ACE Ω iniciado – AGI autônoma, GPT + Gemini + Instagram, consumo inteligente de APIs")
-# ==========================================================
-# MAESTRO ACE Ω SUPREME – VERSÃO FINAL UNIFICADA
-# ==========================================================
-
-import os, time, datetime, threading, random, sqlite3, gc, requests, base64
-from flask import Flask, request, jsonify
-from pytrends.request import TrendReq
+import os
+import json
 from cryptography.fernet import Fernet
 
-# ==========================================================
-# 🔐 CONFIGURAÇÃO DE CHAVES ENCRIPTADAS
-# ==========================================================
-FERNET_SECRET = os.environ.get("FERNET_SECRET", "uXgBHVX9Y7h5OiY3H4KjYvY3Zog2vUvMzzZeh8EVx1g=")
-fernet = Fernet(FERNET_SECRET.encode())
+# =========================================================
+# CONFIGURAÇÃO DE SEGURANÇA E CRIPTOGRAFIA
+# =========================================================
 
-ENC_INSTAGRAM_TOKEN = b'gAAAAABmVZr7_IGQWRNbmhCZA3VvZAjZA3WlJmUk5VZAUpBZA3VkaFp1SkREU0xXTEtEa25ZAWHZAfWVJ3RE9mRW5tVDBKSmE0N0VZAeHhTZAFlLZA0d6dEZA1ZAFFfLTZAWbmh6dkR4dGRNdmZA6WWN1R09ncl9oOGljWWpBSWl3VjQ2eU1LZAjQZD'
-ENC_GEMINI_KEY = b'gAAAAABmVZr7_AIzaSyBKE2RVlnfPsgjqdiQs3FIO9KXRJZm1Zeg'
-ENC_INSTAGRAM_ID = b'gAAAAABmVZr7_17841458259005449'
+# Caminho do arquivo que armazena a chave mestra
+FERNET_KEY_FILE = "fernet_master.key"
 
-def get_key(env_name, enc_value):
-    val = os.environ.get(env_name)
-    if val: return val
-    try:
-        return fernet.decrypt(enc_value).decode()
-    except:
-        return None
+# Gera a chave mestra se não existir
+if not os.path.exists(FERNET_KEY_FILE):
+    master_key = Fernet.generate_key()
+    with open(FERNET_KEY_FILE, "wb") as f:
+        f.write(master_key)
+    print("Chave mestra gerada! Guarde este valor:", master_key.decode())
+else:
+    with open(FERNET_KEY_FILE, "rb") as f:
+        master_key = f.read()
 
-INSTAGRAM_TOKEN = get_key("INSTAGRAM_TOKEN", ENC_INSTAGRAM_TOKEN)
-GEMINI_API_KEY = get_key("GEMINI_API_KEY", ENC_GEMINI_KEY)
-INSTAGRAM_ID = get_key("INSTAGRAM_ID", ENC_INSTAGRAM_ID)
+fernet = Fernet(master_key)
 
-# ==========================================================
-# DIRETÓRIOS E BANCO
-# ==========================================================
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
-MEMORY_PATH = os.path.join(BASE_PATH, "memory")
-TMP_PATH = os.path.join(BASE_PATH, "tmp_ace")
-os.makedirs(MEMORY_PATH, exist_ok=True)
-os.makedirs(TMP_PATH, exist_ok=True)
-DB_PATH = os.path.join(MEMORY_PATH, "ace_supreme.db")
-
-def iniciar_banco():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS personalidade(dia TEXT, estilo TEXT, performance REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS instagram_stats(data TEXT, alcance REAL, engajamento REAL, seguidores REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS comentarios_virais(data TEXT, palavra TEXT, intensidade REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS trends_profeticos(data TEXT, tema TEXT, intensidade REAL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS api_usage(api TEXT, qtd INTEGER, limite INTEGER, last_update TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS aprendizado(motor TEXT, acao TEXT, resultado REAL, data TEXT)")
-    conn.commit()
-    conn.close()
-
-# ==========================================================
-# PERSONALIDADE
-# ==========================================================
-def escolher_personalidade():
-    dia = datetime.datetime.now().strftime("%A")
-    estilos = {
-        "Monday":["motivacional","estoico"],
-        "Tuesday":["agressivo","direto"],
-        "Wednesday":["educativo","estratégico"],
-        "Thursday":["impactante","profetico"],
-        "Friday":["sarcastico","reflexivo"],
-        "Saturday":["inspirador","leve"],
-        "Sunday":["espiritual","profundo"]
-    }
-    estilo = random.choice(estilos.get(dia, ["direto"]))
-    salvar_personalidade(dia, estilo)
-    return estilo
-
-def salvar_personalidade(dia, estilo):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("INSERT INTO personalidade VALUES (?,?,?)", (dia, estilo, 0.0))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-# ==========================================================
-# API MANAGEMENT
-# ==========================================================
-def registrar_api(api, qtd, limite):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        now = datetime.datetime.now().isoformat()
-        cur.execute("INSERT OR REPLACE INTO api_usage VALUES (?,?,?,?)",(api,qtd,limite,now))
-        conn.commit()
-        conn.close()
-    except:
-        pass
-
-def verificar_api(api, limite=1000):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT qtd, last_update FROM api_usage WHERE api=?",(api,))
-    row = cur.fetchone()
-    conn.close()
-    now = datetime.datetime.now()
-    if row is None:
-        registrar_api(api, 0, limite)
-        return True
-    qtd, last_update = row
-    last_update_dt = datetime.datetime.fromisoformat(last_update)
-    if (now - last_update_dt).seconds > 3600:
-        registrar_api(api, 0, limite)
-        return True
-    if qtd < limite:
-        return True
-    return False
-
-def usar_api(api, qtd=1):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT qtd, limite FROM api_usage WHERE api=?",(api,))
-    row = cur.fetchone()
-    if row:
-        qtd_atual, limite = row
-        cur.execute("UPDATE api_usage SET qtd=? WHERE api=?",(qtd_atual+qtd,api))
-    conn.commit()
-    conn.close()
-
-# ==========================================================
-# TRENDS & COMENTÁRIOS
-# ==========================================================
-def capturar_trend_do_momento():
-    try:
-        pytrends = TrendReq(hl='pt-BR', tz=360)
-        df = pytrends.trending_searches(pn='brazil')
-        return df[0][0]
-    except:
-        return "tecnologia e inovação"
-
-def capturar_comentarios():
-    exemplos = ["isso é verdade","ninguém fala disso","isso mudou minha vida","eu precisava ouvir isso",
-                "isso explica muita coisa","agora tudo faz sentido","isso é assustador","isso está acontecendo comigo"]
-    return [random.choice(exemplos) for _ in range(random.randint(5,15))]
-
-def analisar_comentarios():
-    comentarios = capturar_comentarios()
-    palavras_virais = ["verdade","vida","sentido","assustador","explica","mudou","acontecendo","ninguém"]
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    for comentario in comentarios:
-        for palavra in palavras_virais:
-            if palavra in comentario.lower():
-                intensidade = random.uniform(0.4,1.0)
-                cur.execute("INSERT INTO comentarios_virais VALUES (?,?,?)",(datetime.datetime.now().isoformat(), palavra, intensidade))
-    conn.commit()
-    conn.close()
-
-def detectar_palavras_virais():
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT palavra, AVG(intensidade) FROM comentarios_virais GROUP BY palavra ORDER BY AVG(intensidade) DESC LIMIT 5")
-    resultados = cur.fetchall()
-    conn.close()
-    return resultados
-
-# ==========================================================
-# GERAÇÃO DE CONTEÚDO
-# ==========================================================
-def gerar_texto_gpt(prompt):
-    if not verificar_api("GPT", 50):
-        return f"[GPT LIMIT REACHED] {prompt[:30]}..."
-    usar_api("GPT")
-    return f"[GPT-Texto] {prompt} – gerado com chave protegida"
-
-def gerar_ideia_gemini(trend):
-    if not verificar_api("Gemini", 100):
-        return f"[Gemini Limit] {trend}"
-    usar_api("Gemini")
-    return f"Ideia de conteúdo para {trend} (Gemini)"
-
-def criar_reel_autonomo(trend, estilo):
-    ideia = gerar_ideia_gemini(trend)
-    roteiro = gerar_texto_gpt(f"Crie roteiro detalhado sobre {trend} com estilo {estilo}")
-    print(f"[REEL] {roteiro}")
-
-def criar_carrossel_autonomo(trend, estilo):
-    ideia = gerar_ideia_gemini(trend)
-    roteiro = gerar_texto_gpt(f"Crie carrossel sobre {trend} com estilo {estilo}")
-    print(f"[CARROSSEL] {roteiro}")
-
-# ==========================================================
-# MOTOR DE VONTADE PRÓPRIA (Decisão Autônoma)
-# ==========================================================
-def motor_vontade_propria():
-    while True:
-        try:
-            decidir = random.random() > 0.3  # 70% chance de agir
-            if decidir:
-                trend = capturar_trend_do_momento()
-                estilo = escolher_personalidade()
-                criar_reel_autonomo(trend, estilo)
-                criar_carrossel_autonomo(trend, estilo)
-            gc.collect()
-        except Exception as e:
-            print("Erro Vontade Própria:", e)
-        time.sleep(random.randint(300,600))  # Decide entre 5 a 10 min
-
-# ==========================================================
-# FLASK
-# ==========================================================
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "ACE Ω SUPREME rodando – Sistema ativo"
-
-@app.route("/status")
-def status():
-    return "Maestro ativo e operando"
-
-# ==========================================================
-# START AUTOMÁTICO
-# ==========================================================
-iniciar_banco()
-threading.Thread(target=motor_vontade_propria, daemon=True).start()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-import os
-import base64
-import requests
-import google.generativeai as genai
-from flask import Flask, request, jsonify
-from pytrends.request import TrendReq
-
-# === FUNÇÕES DE CRIPTOGRAFIA SIMPLES ===
-def criptografar(chave: str) -> str:
-    return base64.b64encode(chave.encode()).decode()
-
-def descriptografar(chave_enc: str) -> str:
-    return base64.b64decode(chave_enc.encode()).decode()
-
-# === CHAVES ENCRIPTADAS (NÃO MEXA) ===
-CHAVES = {
-    "INSTAGRAM_TOKEN": "SUACHAVEBASE64INSTAGRAMTOKEN",
-    "INSTAGRAM_ID": "17841458259005449",
-    "GEMINI_API_KEY": "SUACHAVEBASE64GEMINI",
-    "OPENAI_KEY": "SUACHAVEBASE64OPENAI"
+# =========================================================
+# SUAS CHAVES SENSÍVEIS
+# =========================================================
+# Substitua pelos valores reais uma vez, depois eles serão criptografados
+secrets_plain = {
+    "INSTAGRAM_TOKEN": "SUA_INSTAGRAM_TOKEN_AQUI",
+    "GEMINI_API_KEY": "SUA_GEMINI_KEY_AQUI",
+    "GPT_API_KEY": "SUA_GPT_KEY_AQUI",
+    "INSTAGRAM_ID": "SEU_INSTAGRAM_ID_AQUI"
 }
 
-# === DESCRIPTOGRAFIA AUTOMÁTICA ===
-CONFIG = {k: descriptografar(v) if k != "INSTAGRAM_ID" else v for k,v in CHAVES.items()}
+# Arquivo que armazena chaves criptografadas
+ENCRYPTED_FILE = "secrets_encrypted.json"
 
-# === CONFIGURAÇÃO GERAIS ===
-genai.configure(api_key=CONFIG["GEMINI_API_KEY"])
-model = genai.GenerativeModel('gemini-pro')
+# Criptografa e salva automaticamente se não existir
+if not os.path.exists(ENCRYPTED_FILE):
+    encrypted = {k: fernet.encrypt(v.encode()).decode() for k, v in secrets_plain.items()}
+    with open(ENCRYPTED_FILE, "w") as f:
+        json.dump(encrypted, f, indent=4)
+    print("Chaves criptografadas e salvas em", ENCRYPTED_FILE)
 
-app = Flask(__name__)
+# =========================================================
+# LEITURA AUTOMÁTICA DAS CHAVES CRIPTOGRAFADAS
+# =========================================================
+with open(ENCRYPTED_FILE, "r") as f:
+    encrypted_data = json.load(f)
 
-# === FUNÇÕES PRINCIPAIS ===
-def obter_trend_brasil():
-    try:
-        pytrends = TrendReq(hl='pt-BR', tz=360)
-        df = pytrends.trending_searches(pn='brazil')
-        return df[0][0]
-    except:
-        return "tecnologia e liberdade de expressão"
+# Decryptar automaticamente
+secrets = {k: fernet.decrypt(v.encode()).decode() for k, v in encrypted_data.items()}
 
-def gerar_resposta(texto_cliente):
-    trend = obter_trend_brasil()
-    prompt = f"Você é o ACE do perfil libertaverdades. O assunto do dia é '{trend}'. Responda ao seguidor: '{texto_cliente}'."
-    try:
-        return model.generate_content(prompt).text
-    except:
-        return "Opa! Estou atualizando meus sistemas, já te respondo com calma."
+# Agora 'secrets' tem todas as chaves decodificadas, prontas para uso
+INSTAGRAM_TOKEN = secrets["INSTAGRAM_TOKEN"]
+GEMINI_API_KEY = secrets["GEMINI_API_KEY"]
+GPT_API_KEY = secrets["GPT_API_KEY"]
+INSTAGRAM_ID = secrets["INSTAGRAM_ID"]
 
-def enviar_mensagem_insta(usuario_id, texto):
-    url = f"https://graph.instagram.com/v20.0/{CONFIG['INSTAGRAM_ID']}/messages"
-    payload = {"recipient": {"id": usuario_id}, "message": {"text": texto}}
-    headers = {"Authorization": f"Bearer {CONFIG['INSTAGRAM_TOKEN']}"}
-    requests.post(url, json=payload, headers=headers)
+# =========================================================
+# INÍCIO DO ACE (Exemplo simplificado)
+# =========================================================
+print("\n[ACE] Inicializando com as chaves carregadas com segurança...")
 
-# === ROTA WEBHOOK ===
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    dados = request.get_json()
-    if "entry" in dados:
-        for entry in dados["entry"]:
-            for messaging in entry.get("messaging", []):
-                sender_id = messaging["sender"]["id"]
-                texto = messaging.get("message", {}).get("text")
-                if texto:
-                    resposta = gerar_resposta(texto)
-                    enviar_mensagem_insta(sender_id, resposta)
-    return "OK", 200
+# Aqui você integra seu código ACE completo
+# Exemplo:
+def iniciar_ace():
+    print("[ACE] Rodando simulação com GPT_KEY:", GPT_API_KEY[:4] + "...")  # não mostrar tudo
+    # TODO: Coloque aqui todo seu código do ACE já consolidado
+    # Ele pode acessar todas as chaves via variáveis 'INSTAGRAM_TOKEN', etc.
 
-# === RODA SERVIDOR ===
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+iniciar_ace()
