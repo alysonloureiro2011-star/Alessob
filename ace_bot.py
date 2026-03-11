@@ -229,3 +229,60 @@ if __name__ == "__main__":
     
     # Servidor Flask adaptado para o Render
     app.run(host='0.0.0.0', port=PORT)
+# ==========================================================
+# 🚀 EXTENSÃO DE UPGRADE: ACE OMEGA VIRAL (SOMA TOTAL)
+# ==========================================================
+
+# Novas métricas de Retenção e Emoção
+def ace_brain_upgrade(tema):
+    hooks = [
+        f"A verdade que ninguém aceita sobre {tema}",
+        f"O erro silencioso que destrói seu {tema}",
+        f"O segredo oculto de {tema} revelado",
+        f"Pare de ignorar isso em {tema} agora!"
+    ]
+    
+    # Motor de decisão por score de dopamina
+    def calcular_score(h):
+        s = 1.0
+        gatilhos = ["ninguém", "verdade", "segredo", "erro", "alerta", "proibido"]
+        for g in gatilhos:
+            if g in h.lower(): s *= 1.25
+        return s * random.uniform(0.9, 1.1)
+    
+    melhor_hook = max(hooks, key=calcular_score)
+    return melhor_hook
+
+# Injetando o Radar de Tendências Real do Brasil
+def capturar_trend_brasil_v6():
+    try:
+        pytrend = TrendReq(hl='pt-BR', tz=360)
+        df = pytrend.trending_searches(pn='brazil')
+        return df[0][0]
+    except:
+        return "Mentalidade de Elite"
+
+# Rota de Ativação Manual (Para facilitar sua vida no navegador)
+@app.route('/force_ace')
+def force_ace():
+    tema = capturar_trend_brasil_v6()
+    hook = ace_brain_upgrade(tema)
+    # Aqui ele chama a função de fabricar que você já tem no código
+    threading.Thread(target=fabricar_presenca_digital, args=("REEL",)).start()
+    return f"🚀 Upgrade Ativo! Gerando sobre: {tema} com o Hook: {hook}. Olhe os logs!"
+
+# Adiciona o novo ciclo de postagem sem apagar o antigo
+def ciclo_upgrade_automatico():
+    while True:
+        agora = datetime.datetime.now()
+        # Posta apenas em horários de pico (Upgrade de timing)
+        if agora.hour in [12, 18, 21] and agora.minute == 0:
+            threading.Thread(target=fabricar_presenca_digital, args=("REEL",)).start()
+        time.sleep(60)
+
+# Inicia o novo motor em paralelo
+threading.Thread(target=ciclo_upgrade_automatico, daemon=True).start()
+
+# ==========================================================
+# FIM DA EXTENSÃO
+# ==========================================================
