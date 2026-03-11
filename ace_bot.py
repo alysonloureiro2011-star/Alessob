@@ -1057,3 +1057,140 @@ def webhook():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+
+# ==========================================================
+# EXTENSÃO UNIFICADA - ACE FULL PACKAGE
+# Pronta para colar no final do script principal
+# ==========================================================
+
+import os
+import time
+import datetime
+import json
+import threading
+import random
+import requests
+import numpy as np
+from bs4 import BeautifulSoup
+from google import genai
+from pytrends.request import TrendReq
+from flask import Flask, request, jsonify
+from pyngrok import ngrok
+from moviepy.editor import VideoFileClip, concatenate_videoclips
+from gtts import gTTS
+import torch
+import transformers
+from PIL import Image
+import cv2
+import aiohttp
+from dotenv import load_dotenv
+
+# --- CONFIGURAÇÕES GLOBAIS ---
+load_dotenv()
+ACE_DEBUG = True
+BASE_DIR = os.getcwd()
+TEMP_DIR = os.path.join(BASE_DIR, "temp")
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# --- UTILIDADES COMUNS ---
+def log(msg):
+    if ACE_DEBUG:
+        print(f"[{datetime.datetime.now()}] {msg}")
+
+def safe_request(url, headers=None, retries=3, delay=1):
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            log(f"Erro na request: {e} | Tentativa {attempt+1}/{retries}")
+            time.sleep(delay)
+    return None
+
+def run_async_task(func, *args, **kwargs):
+    thread = threading.Thread(target=func, args=args, kwargs=kwargs)
+    thread.daemon = True
+    thread.start()
+    return thread
+
+# --- PYTRENDS FUNÇÕES ---
+pytrends = TrendReq(hl='pt-BR', tz=-3)
+
+def google_trends(keyword, timeframe='now 7-d'):
+    try:
+        pytrends.build_payload([keyword], timeframe=timeframe)
+        data = pytrends.interest_over_time()
+        if not data.empty:
+            return data[keyword].tolist()
+    except Exception as e:
+        log(f"Erro no PyTrends: {e}")
+    return []
+
+# --- GENAI INTEGRAÇÃO ---
+def genai_response(prompt):
+    try:
+        response = genai.Text.create(model="text-bison-001", prompt=prompt)
+        return response.text
+    except Exception as e:
+        log(f"Erro GenAI: {e}")
+        return ""
+
+# --- FLASK / NGROK ---
+app = Flask(__name__)
+
+@app.route("/status")
+def status():
+    return jsonify({"status": "ACE Online", "timestamp": str(datetime.datetime.now())})
+
+@app.route("/ask", methods=["POST"])
+def ask():
+    data = request.json
+    prompt = data.get("prompt", "")
+    resposta = genai_response(prompt)
+    return jsonify({"response": resposta})
+
+def start_ngrok(port=5000):
+    public_url = ngrok.connect(port)
+    log(f"Ngrok ativo: {public_url}")
+    return public_url
+
+# --- MOVIEPY / GERAÇÃO DE VÍDEO ---
+def merge_videos(video_files, output_file):
+    clips = [VideoFileClip(f) for f in video_files]
+    final_clip = concatenate_videoclips(clips)
+    final_clip.write_videofile(output_file, codec="libx264")
+    for clip in clips:
+        clip.close()
+
+def text_to_speech(text, output_file):
+    tts = gTTS(text=text, lang='pt')
+    tts.save(output_file)
+
+# --- TORCH / TRANSFORMERS EXEMPLO ---
+device = "cuda" if torch.cuda.is_available() else "cpu"
+tokenizer = transformers.AutoTokenizer.from_pretrained("distilbert-base-uncased")
+model = transformers.AutoModel.from_pretrained("distilbert-base-uncased").to(device)
+
+def encode_text(text):
+    inputs = tokenizer(text, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+
+# --- IMAGEM / OPENCV ---
+def load_and_resize_image(path, size=(224,224)):
+    img = Image.open(path).convert("RGB")
+    img = img.resize(size)
+    return np.array(img)
+
+def detect_edges(image_array):
+    gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+    edges = cv2.Canny(gray, 100, 200)
+    return edges
+
+# --- EXECUÇÃO PRINCIPAL ---
+if __name__ == "__main__":
+    log("ACE Full Package iniciado")
+    start_ngrok()
+    app.run(host="0.0.0.0", port=5000)
