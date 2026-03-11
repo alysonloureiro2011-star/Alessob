@@ -1,40 +1,18 @@
-# =========================================================
-# ACE Consolidado 2.1 - Execução + Segurança de Chaves
-# =========================================================
-
-# Sistema, utilitários e compatibilidade
-numpy>=1.26.0
-pandas>=2.1.0
-python-dotenv>=1.0.0
-requests>=2.31.0
-aiohttp>=3.9.0
-Flask>=2.4.3
-gunicorn>=21.2.0
-
-# Processamento e automação
-beautifulsoup4>=4.13.0
-lxml>=4.9.3
-pyngrok>=5.3.0
-moviepy>=2.0.0
-Pillow>=10.0.0
-gTTS>=2.4.0
-opencv-python>=4.9.0.68
-
-# Inteligência artificial e aprendizado
-torch>=2.1.0
-transformers>=4.40.0
-google-genai>=0.1.8
-pytrends>=4.11.2
-
-# Segurança e criptografia de chaves
-cryptography>=41.0.3
-pycryptodome>=3.19.0
-fernet>=0.1.1
-
-# Otimização e performance
-numba>=0.57.0
-scikit-learn>=1.3.2
-
-# Ferramentas de teste, logs e debug
-pytest>=8.2.0
-loguru>=0.7.0
+numpy>=2.4.3
+pandas>=3.0.1
+python-dotenv>=1.2.2
+requests>=2.32.5
+aiohttp>=3.13.3
+Flask>=3.1.3
+gunicorn>=25.1.0
+beautifulsoup4>=4.14.3
+lxml>=6.0.2
+pyngrok>=7.5.1
+moviepy>=2.2.1
+Pillow>=12.1.1
+gTTS>=2.5.4
+opencv-python>=4.13.0.92
+torch>=2.10.0
+transformers>=5.3.0
+google-genai>=1.66.0
+pytrends>=4.9.2
