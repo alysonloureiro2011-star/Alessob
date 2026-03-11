@@ -985,3 +985,75 @@ threading.Thread(target=motor_vontade_propria, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    import os
+import base64
+import requests
+import google.generativeai as genai
+from flask import Flask, request, jsonify
+from pytrends.request import TrendReq
+
+# === FUNÇÕES DE CRIPTOGRAFIA SIMPLES ===
+def criptografar(chave: str) -> str:
+    return base64.b64encode(chave.encode()).decode()
+
+def descriptografar(chave_enc: str) -> str:
+    return base64.b64decode(chave_enc.encode()).decode()
+
+# === CHAVES ENCRIPTADAS (NÃO MEXA) ===
+CHAVES = {
+    "INSTAGRAM_TOKEN": "SUACHAVEBASE64INSTAGRAMTOKEN",
+    "INSTAGRAM_ID": "17841458259005449",
+    "GEMINI_API_KEY": "SUACHAVEBASE64GEMINI",
+    "OPENAI_KEY": "SUACHAVEBASE64OPENAI"
+}
+
+# === DESCRIPTOGRAFIA AUTOMÁTICA ===
+CONFIG = {k: descriptografar(v) if k != "INSTAGRAM_ID" else v for k,v in CHAVES.items()}
+
+# === CONFIGURAÇÃO GERAIS ===
+genai.configure(api_key=CONFIG["GEMINI_API_KEY"])
+model = genai.GenerativeModel('gemini-pro')
+
+app = Flask(__name__)
+
+# === FUNÇÕES PRINCIPAIS ===
+def obter_trend_brasil():
+    try:
+        pytrends = TrendReq(hl='pt-BR', tz=360)
+        df = pytrends.trending_searches(pn='brazil')
+        return df[0][0]
+    except:
+        return "tecnologia e liberdade de expressão"
+
+def gerar_resposta(texto_cliente):
+    trend = obter_trend_brasil()
+    prompt = f"Você é o ACE do perfil libertaverdades. O assunto do dia é '{trend}'. Responda ao seguidor: '{texto_cliente}'."
+    try:
+        return model.generate_content(prompt).text
+    except:
+        return "Opa! Estou atualizando meus sistemas, já te respondo com calma."
+
+def enviar_mensagem_insta(usuario_id, texto):
+    url = f"https://graph.instagram.com/v20.0/{CONFIG['INSTAGRAM_ID']}/messages"
+    payload = {"recipient": {"id": usuario_id}, "message": {"text": texto}}
+    headers = {"Authorization": f"Bearer {CONFIG['INSTAGRAM_TOKEN']}"}
+    requests.post(url, json=payload, headers=headers)
+
+# === ROTA WEBHOOK ===
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    dados = request.get_json()
+    if "entry" in dados:
+        for entry in dados["entry"]:
+            for messaging in entry.get("messaging", []):
+                sender_id = messaging["sender"]["id"]
+                texto = messaging.get("message", {}).get("text")
+                if texto:
+                    resposta = gerar_resposta(texto)
+                    enviar_mensagem_insta(sender_id, resposta)
+    return "OK", 200
+
+# === RODA SERVIDOR ===
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
