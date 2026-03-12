@@ -107,19 +107,29 @@ INSTAGRAM_APP_SECRET = (
 IG_TOKEN_RUNTIME = None
 IG_ID_RUNTIME = None
 
-# callback já registrado no app
-INSTAGRAM_REDIRECT_URI = ace_env("INSTAGRAM_REDIRECT_URI", f"{RENDER_URL}/webhook")
+# callback do login Instagram
+INSTAGRAM_REDIRECT_URI = ace_env("INSTAGRAM_REDIRECT_URI", f"{RENDER_URL}/instagram/token")
 
 app = Flask(__name__)
+
+GEMINI_MODEL = None
+GEMINI_MODEL_NAMES = [
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash-002",
+    "gemini-1.5-flash",
+]
 
 if genai and GEMINI_KEY:
     try:
         genai.configure(api_key=GEMINI_KEY)
-        GEMINI_MODEL = genai.GenerativeModel("gemini-1.5-flash")
+        for model_name in GEMINI_MODEL_NAMES:
+            try:
+                GEMINI_MODEL = genai.GenerativeModel(model_name)
+                break
+            except Exception:
+                continue
     except Exception:
         GEMINI_MODEL = None
-else:
-    GEMINI_MODEL = None
 
 
 # ==========================================================
@@ -684,15 +694,17 @@ def gerar_ideia_gemini(trend):
     usar_api("Gemini")
 
     if GEMINI_MODEL:
-        try:
-            resp = GEMINI_MODEL.generate_content(
-                f"Crie uma ideia curta, forte e clara em português do Brasil sobre: {trend}"
-            )
-            text = getattr(resp, "text", None)
-            if text:
-                return text.strip()
-        except Exception as e:
-            log("WARN", "gerar_ideia_gemini_fail", e)
+        for model_name in GEMINI_MODEL_NAMES:
+            try:
+                model = genai.GenerativeModel(model_name)
+                resp = model.generate_content(
+                    f"Crie uma ideia curta, forte e clara em português do Brasil sobre: {trend}"
+                )
+                text = getattr(resp, "text", None)
+                if text:
+                    return text.strip()
+            except Exception as e:
+                log("WARN", f"gerar_ideia_gemini_fail_{model_name}", e)
 
     return f"Ideia de conteúdo para {trend}"
 
@@ -2285,38 +2297,64 @@ def instagram_auth_url():
         "redirect_uri": INSTAGRAM_REDIRECT_URI
     })
 
+@app.route("/instagram/token", methods=["GET"])
+def instagram_token_callback():
+    code = request.args.get("code", "").strip()
+    error = request.args.get("error")
+    error_reason = request.args.get("error_reason")
+    error_description = request.args.get("error_description")
+
+    if error:
+        return jsonify({
+            "ok": False,
+            "stage": "instagram_auth",
+            "error": error,
+            "error_reason": error_reason,
+            "error_description": error_description
+        }), 400
+
+    if not code:
+        return jsonify({
+            "ok": True,
+            "message": "Endpoint ativo. Use /instagram/auth para iniciar o login.",
+            "redirect_uri_correto": INSTAGRAM_REDIRECT_URI,
+            "token_present": bool(get_ig_token()),
+            "ig_id": get_ig_id()
+        }), 200
+
+    result = exchange_code_for_token(code)
+
+    if result.get("ok"):
+        return jsonify({
+            "ok": True,
+            "message": "Token capturado com sucesso",
+            "user_id": get_ig_id(),
+            "token_present": bool(get_ig_token()),
+            "coloque_no_render": {
+                "IG_TOKEN": get_ig_token(),
+                "IG_ID": get_ig_id()
+            }
+        }), 200
+
+    return jsonify({
+        "ok": False,
+        "message": "Falha ao trocar code por token",
+        "error": result.get("error")
+    }), 400
+
 @app.route("/media/<path:filename>")
 def serve_static(filename):
     return send_from_directory(str(MEDIA_DIR), filename)
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook_gateway():
-    # 1) callback OAuth do Instagram
-    if request.method == "GET" and request.args.get("code"):
-        code = request.args.get("code", "").strip()
-        result = exchange_code_for_token(code)
-
-        if result.get("ok"):
-            return jsonify({
-                "ok": True,
-                "message": "Token capturado com sucesso",
-                "user_id": get_ig_id(),
-                "token_present": bool(get_ig_token())
-            }), 200
-
-        return jsonify({
-            "ok": False,
-            "message": "Falha ao trocar code por token",
-            "error": result.get("error")
-        }), 400
-
-    # 2) verificação de webhook Meta
+    # 1) verificação de webhook Meta
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args.get("hub.challenge", "OK")
         return "invalid verify token", 403
 
-    # 3) eventos webhook
+    # 2) eventos webhook
     data = request.get_json(silent=True) or {}
     if "entry" in data:
         for entry in data["entry"]:
