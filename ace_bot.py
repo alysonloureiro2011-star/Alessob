@@ -2297,6 +2297,16 @@ def instagram_auth():
 
     return redirect(url)
 
+@app.route("/instagram/auth_url")
+def instagram_auth_url():
+    url = build_instagram_oauth_url(mode="basic")
+    return jsonify({
+        "ok": bool(url),
+        "auth_url": url,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "mode": "basic"
+    })
+    
 @app.route("/instagram/token", methods=["GET"])
 def instagram_token_callback():
     code = request.args.get("code", "").strip()
