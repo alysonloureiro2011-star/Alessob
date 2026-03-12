@@ -66,7 +66,14 @@ RENDER_URL = ace_env(
 IG_TOKEN = ace_env("INSTAGRAM_TOKEN", ace_env("IG_TOKEN", ""))
 IG_ID = ace_env("INSTAGRAM_ID", ace_env("IG_ID", ""))
 GEMINI_KEY = ace_env("GEMINI_API_KEY", ace_env("GEMINI_KEY", ""))
+from openai import OpenAI
 
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+openai_client = None
+if OPENAI_API_KEY:
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    
 BASE_DIR = Path(__file__).resolve().parent
 MEMORY_DIR = BASE_DIR / "memory"
 TMP_DIR = BASE_DIR / "tmp_ace"
