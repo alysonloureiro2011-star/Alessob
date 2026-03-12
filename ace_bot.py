@@ -2285,53 +2285,18 @@ def queue_status():
         "tasks": snapshot
     })
 
-
 @app.route("/instagram/auth")
 def instagram_auth():
-@app.route("/instagram/token", methods=["GET"])
-def instagram_token_callback():
-    code = request.args.get("code", "").strip()
-    error = request.args.get("error")
-    error_reason = request.args.get("error_reason")
-    error_description = request.args.get("error_description")
+    url = build_instagram_oauth_url(mode="basic")
 
-    if error:
+    if not url:
         return jsonify({
             "ok": False,
-            "stage": "instagram_auth",
-            "error": error,
-            "error_reason": error_reason,
-            "error_description": error_description
+            "error": "INSTAGRAM_APP_ID ausente no ambiente"
         }), 400
 
-    if not code:
-        return jsonify({
-            "ok": True,
-            "message": "Endpoint ativo. Use /instagram/auth para iniciar o login.",
-            "redirect_uri_correto": INSTAGRAM_REDIRECT_URI,
-            "token_present": bool(get_ig_token()),
-            "ig_id": get_ig_id()
-        }), 200
+    return redirect(url)
 
-    result = exchange_code_for_token(code)
-
-    if result.get("ok"):
-        return jsonify({
-            "ok": True,
-            "message": "Token capturado com sucesso",
-            "user_id": get_ig_id(),
-            "token_present": bool(get_ig_token()),
-            "coloque_no_render": {
-                "IG_TOKEN": get_ig_token(),
-                "IG_ID": get_ig_id()
-            }
-        }), 200
-
-    return jsonify({
-        "ok": False,
-        "message": "Falha ao trocar code por token",
-        "error": result.get("error")
-    }), 400
 
 @app.route("/media/<path:filename>")
 def serve_static(filename):
