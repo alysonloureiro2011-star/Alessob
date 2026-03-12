@@ -2285,26 +2285,9 @@ def queue_status():
         "tasks": snapshot
     })
 
+
 @app.route("/instagram/auth")
 def instagram_auth():
-    url = build_instagram_oauth_url()
-    if not url:
-        return jsonify({
-            "ok": False,
-            "error": "INSTAGRAM_APP_ID ausente no ambiente"
-        }), 400
-
-    return redirect(url, code=302)
-
-@app.route("/instagram/auth_url")
-def instagram_auth_url():
-    url = build_instagram_oauth_url()
-    return jsonify({
-        "ok": bool(url),
-        "auth_url": url,
-        "redirect_uri": INSTAGRAM_REDIRECT_URI
-    })
-
 @app.route("/instagram/token", methods=["GET"])
 def instagram_token_callback():
     code = request.args.get("code", "").strip()
