@@ -1,5 +1,5 @@
 # ==========================================================
-# ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 3
+# ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 4 + TOKEN CALLBACK
 # Arquivo único para Render
 # ==========================================================
 
@@ -13,11 +13,15 @@ import sqlite3
 import threading
 import datetime
 import traceback
+import hashlib
+import unicodedata
 from pathlib import Path
+from difflib import SequenceMatcher
+from urllib.parse import urlencode
 
 import requests
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, redirect
 
 try:
     from pytrends.request import TrendReq
@@ -52,34 +56,18 @@ except Exception:
 # CONFIG
 # ==========================================================
 
-def ace_env(key, default=""):
+def ace_env(key, default=None):
     return os.environ.get(key, default)
 
 APP_NAME = "ACE Ω SUPREME"
 PORT = int(ace_env("PORT", "10000"))
 VERIFY_TOKEN = ace_env("VERIFY_TOKEN", "ACE_SIGILO_2026")
+
 RENDER_URL = ace_env(
     "RENDER_EXTERNAL_URL",
     f"https://{ace_env('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
 )
 
-# ==========================================================
-# 🔐 CHAVES DO SISTEMA (PUXADAS DO RENDER)
-# ==========================================================
-
-def ace_env(key, default=None):
-    return os.environ.get(key, default)
-
-IG_TOKEN = ace_env("IG_TOKEN")
-IG_ID = ace_env("IG_ID")
-
-GEMINI_KEY = ace_env("GEMINI_KEY")
-
-OPENAI_API_KEY = ace_env("OPENAI_API_KEY")
-
-VERIFY_TOKEN = ace_env("VERIFY_TOKEN", "ACE_SIGILO_2026")
-
-PORT = int(os.environ.get("PORT", 10000))
 BASE_DIR = Path(__file__).resolve().parent
 MEMORY_DIR = BASE_DIR / "memory"
 TMP_DIR = BASE_DIR / "tmp_ace"
@@ -92,6 +80,35 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 ENGINES_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = MEMORY_DIR / "ace_supreme.db"
+AUTH_PATH = MEMORY_DIR / "instagram_auth.json"
+
+# --- Chaves ---
+IG_TOKEN_ENV = ace_env("IG_TOKEN")
+IG_ID_ENV = ace_env("IG_ID")
+GEMINI_KEY = ace_env("GEMINI_KEY")
+OPENAI_API_KEY = ace_env("OPENAI_API_KEY")
+
+# App ID / Secret do app Meta / Instagram Login
+INSTAGRAM_APP_ID = (
+    ace_env("INSTAGRAM_APP_ID")
+    or ace_env("FACEBOOK_APP_ID")
+    or ace_env("APP_ID")
+    or ""
+)
+
+INSTAGRAM_APP_SECRET = (
+    ace_env("INSTAGRAM_APP_SECRET")
+    or ace_env("FACEBOOK_APP_SECRET")
+    or ace_env("APP_SECRET")
+    or ""
+)
+
+# runtime auth
+IG_TOKEN_RUNTIME = None
+IG_ID_RUNTIME = None
+
+# callback já registrado no app
+INSTAGRAM_REDIRECT_URI = ace_env("INSTAGRAM_REDIRECT_URI", f"{RENDER_URL}/webhook")
 
 app = Flask(__name__)
 
@@ -103,6 +120,48 @@ if genai and GEMINI_KEY:
         GEMINI_MODEL = None
 else:
     GEMINI_MODEL = None
+
+
+# ==========================================================
+# AUTH RUNTIME
+# ==========================================================
+
+def get_ig_token():
+    return IG_TOKEN_RUNTIME or IG_TOKEN_ENV
+
+def get_ig_id():
+    return IG_ID_RUNTIME or IG_ID_ENV
+
+def save_instagram_auth(token=None, user_id=None, meta=None):
+    global IG_TOKEN_RUNTIME, IG_ID_RUNTIME
+    payload = {
+        "token": token or get_ig_token(),
+        "user_id": user_id or get_ig_id(),
+        "saved_at": datetime.datetime.now().isoformat(),
+        "meta": meta or {},
+    }
+    try:
+        AUTH_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    if payload.get("token"):
+        IG_TOKEN_RUNTIME = payload["token"]
+    if payload.get("user_id"):
+        IG_ID_RUNTIME = str(payload["user_id"])
+
+def load_instagram_auth():
+    global IG_TOKEN_RUNTIME, IG_ID_RUNTIME
+    if not AUTH_PATH.exists():
+        return
+    try:
+        data = json.loads(AUTH_PATH.read_text(encoding="utf-8"))
+        IG_TOKEN_RUNTIME = data.get("token") or IG_TOKEN_RUNTIME
+        IG_ID_RUNTIME = str(data.get("user_id")) if data.get("user_id") else IG_ID_RUNTIME
+    except Exception:
+        pass
+
+load_instagram_auth()
 
 
 # ==========================================================
@@ -152,6 +211,8 @@ ACE_STATE = {
     "last_style": None,
     "symbiosis_level": 0.0,
     "legacy_threads_started": False,
+    "instagram_connected": bool(get_ig_token() and get_ig_id()),
+    "instagram_last_auth_at": None,
 }
 
 STATE_LOCK = threading.Lock()
@@ -306,6 +367,68 @@ def iniciar_banco():
             status TEXT,
             reason TEXT,
             ts TEXT
+        )
+    """)
+
+    # ===== CAMADA 4 =====
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ace_trend_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trend TEXT NOT NULL,
+            trend_norm TEXT NOT NULL,
+            used_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ace_trend_history_norm_used_at
+        ON ace_trend_history(trend_norm, used_at)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ace_content_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            trend TEXT,
+            trend_norm TEXT,
+            content_type TEXT,
+            title TEXT,
+            hook TEXT,
+            body TEXT,
+            content_hash TEXT,
+            score REAL DEFAULT 0,
+            status TEXT DEFAULT 'generated',
+            reason TEXT DEFAULT ''
+        )
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ace_content_history_created_at
+        ON ace_content_history(created_at)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ace_candidate_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            trend TEXT,
+            trend_norm TEXT,
+            content_type TEXT,
+            title TEXT,
+            hook TEXT,
+            body TEXT,
+            meta_json TEXT,
+            score REAL DEFAULT 0,
+            selected INTEGER DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS instagram_auth_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT,
+            action TEXT,
+            detail TEXT
         )
     """)
 
@@ -723,6 +846,330 @@ def update_trend_memory(trend, success, score):
 
 
 # ==========================================================
+# CAMADA 4 - GOVERNANÇA
+# ==========================================================
+
+ACE_LAYER4_CONFIG = {
+    "cooldown_minutes": int(ace_env("ACE_COOLDOWN_MINUTES", "60")),
+    "max_posts_per_hour": int(ace_env("ACE_MAX_POSTS_PER_HOUR", "4")),
+    "min_trend_chars": int(ace_env("ACE_MIN_TREND_CHARS", "4")),
+    "min_trend_words": int(ace_env("ACE_MIN_TREND_WORDS", "2")),
+    "similarity_threshold": float(ace_env("ACE_SIMILARITY_THRESHOLD", "0.80")),
+    "history_compare_limit": int(ace_env("ACE_HISTORY_COMPARE_LIMIT", "50")),
+}
+
+ACE_LAYER4_LOCK = threading.Lock()
+
+ACE_STOPWORDS = {
+    "a", "o", "e", "é", "de", "do", "da", "dos", "das", "em", "no", "na",
+    "nos", "nas", "um", "uma", "uns", "umas", "por", "para", "com", "sem",
+    "sobre", "até", "que", "se", "eu", "tu", "ele", "ela", "nós", "vos",
+    "eles", "elas", "isso", "isto", "aquilo", "me", "te", "lhe", "lhes",
+    "já", "vai", "foi", "ser", "ter", "tem", "há", "aqui", "ali", "lá",
+    "como", "mais", "menos", "muito", "muita", "muitos", "muitas",
+    "ninguem", "ninguém", "explica", "acontecendo", "mudou", "mudança",
+    "coisa", "coisas", "hoje", "ontem", "amanha", "amanhã", "agora",
+    "tipo", "assim", "aquele", "essa"
+}
+
+def ace_strip_accents(text):
+    if not text:
+        return ""
+    return ''.join(
+        c for c in unicodedata.normalize('NFKD', text)
+        if not unicodedata.combining(c)
+    )
+
+def ace_normalize_text(text):
+    text = (text or "").strip().lower()
+    text = ace_strip_accents(text)
+    text = re.sub(r"http\S+", " ", text)
+    text = re.sub(r"[@#]\w+", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+def ace_tokenize(text):
+    norm = ace_normalize_text(text)
+    return [t for t in norm.split() if t]
+
+def ace_compact_signature(text):
+    norm = ace_normalize_text(text)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+def ace_jaccard_similarity(a, b):
+    ta = set(ace_tokenize(a))
+    tb = set(ace_tokenize(b))
+    if not ta and not tb:
+        return 1.0
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / max(1, len(ta | tb))
+
+def ace_sequence_similarity(a, b):
+    return SequenceMatcher(None, ace_normalize_text(a), ace_normalize_text(b)).ratio()
+
+def ace_combined_similarity(a, b):
+    seq = ace_sequence_similarity(a, b)
+    jac = ace_jaccard_similarity(a, b)
+    return (seq * 0.6) + (jac * 0.4)
+
+def ace_is_bad_trend(trend):
+    raw = (trend or "").strip()
+    norm = ace_normalize_text(raw)
+    words = ace_tokenize(raw)
+
+    if not raw:
+        return True, "trend_vazia"
+    if len(norm) < ACE_LAYER4_CONFIG["min_trend_chars"]:
+        return True, "trend_curta"
+    if len(words) < ACE_LAYER4_CONFIG["min_trend_words"]:
+        return True, "trend_sem_contexto"
+
+    meaningful = [w for w in words if w not in ACE_STOPWORDS and len(w) >= 3]
+    if len(meaningful) < 2:
+        return True, "trend_fraca_sem_semantica"
+
+    if len(set(words)) == 1:
+        return True, "trend_repetitiva"
+
+    bad_patterns = [
+        r"^(ninguem|ninguem aceita|explica|acontecendo|mudou)$",
+        r"^(viral|trend|assunto|tema)$",
+    ]
+    for pattern in bad_patterns:
+        if re.match(pattern, norm):
+            return True, "trend_generica"
+
+    return False, "ok"
+
+def ace_register_trend_usage(trend):
+    now = datetime.datetime.now().isoformat()
+    trend_norm = ace_normalize_text(trend)
+    with ACE_LAYER4_LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("""
+            INSERT INTO ace_trend_history (trend, trend_norm, used_at)
+            VALUES (?, ?, ?)
+        """, (trend, trend_norm, now))
+        conn.commit()
+        conn.close()
+
+def ace_trend_in_cooldown(trend):
+    trend_norm = ace_normalize_text(trend)
+    limit_time = (
+        datetime.datetime.now() -
+        datetime.timedelta(minutes=ACE_LAYER4_CONFIG["cooldown_minutes"])
+    ).isoformat()
+
+    with ACE_LAYER4_LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute("""
+            SELECT used_at FROM ace_trend_history
+            WHERE trend_norm = ? AND used_at >= ?
+            ORDER BY used_at DESC
+            LIMIT 1
+        """, (trend_norm, limit_time)).fetchone()
+        conn.close()
+
+    if row:
+        return True, f"cooldown_ativo_ate_{row[0]}"
+    return False, "ok"
+
+def ace_count_recent_posts(hours=1):
+    limit_time = (datetime.datetime.now() - datetime.timedelta(hours=hours)).isoformat()
+    with ACE_LAYER4_LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute("""
+            SELECT COUNT(*) FROM ace_content_history
+            WHERE created_at >= ?
+            AND status IN ('approved', 'published', 'generated')
+        """, (limit_time,)).fetchone()
+        conn.close()
+    return int(row[0]) if row else 0
+
+def ace_rate_limit_blocked():
+    recent = ace_count_recent_posts(hours=1)
+    if recent >= ACE_LAYER4_CONFIG["max_posts_per_hour"]:
+        return True, f"limite_hora_atingido_{recent}"
+    return False, "ok"
+
+def ace_recent_history(limit=None):
+    limit = limit or ACE_LAYER4_CONFIG["history_compare_limit"]
+    with ACE_LAYER4_LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(f"""
+            SELECT id, created_at, trend, content_type, title, hook, body, content_hash, score, status
+            FROM ace_content_history
+            ORDER BY id DESC
+            LIMIT {int(limit)}
+        """).fetchall()
+        conn.close()
+    return rows
+
+def ace_is_duplicate_content(title, hook, body):
+    candidate_text = " ".join([title or "", hook or "", body or ""]).strip()
+    if not candidate_text:
+        return True, "conteudo_vazio", None
+
+    candidate_hash = ace_compact_signature(candidate_text)
+    rows = ace_recent_history()
+
+    threshold = ACE_LAYER4_CONFIG["similarity_threshold"]
+    best_match = None
+    best_score = 0.0
+
+    for row in rows:
+        existing_text = " ".join([
+            row[4] or "",
+            row[5] or "",
+            row[6] or ""
+        ]).strip()
+
+        if row[7] == candidate_hash:
+            return True, "hash_igual", {
+                "history_id": row[0],
+                "similarity": 1.0,
+                "title": row[4]
+            }
+
+        sim = ace_combined_similarity(candidate_text, existing_text)
+        if sim > best_score:
+            best_score = sim
+            best_match = row
+
+        if sim >= threshold:
+            return True, "similaridade_alta", {
+                "history_id": row[0],
+                "similarity": round(sim, 4),
+                "title": row[4]
+            }
+
+    return False, "ok", {
+        "best_similarity": round(best_score, 4),
+        "best_history_id": best_match[0] if best_match else None
+    }
+
+def ace_emotional_intensity(text):
+    norm = ace_normalize_text(text)
+    strong_words = {
+        "verdade", "erro", "crise", "medo", "ansiedade", "proposito",
+        "propósito", "disciplina", "fracasso", "segredo", "pare",
+        "urgente", "alerta", "liberdade", "mudanca", "mudança",
+        "destrava", "mentalidade", "fe", "fé", "deus", "jesus", "davi"
+    }
+    tokens = set(norm.split())
+    hits = len(tokens & strong_words)
+    return min(1.0, hits / 5.0)
+
+def ace_curiosity_gap(title, hook):
+    text = f"{title or ''} {hook or ''}".lower()
+    patterns = [
+        "ninguém", "ninguem", "verdade", "segredo", "por que",
+        "porque", "o que", "como", "erro", "motivo", "prova", "sinal"
+    ]
+    hits = sum(1 for p in patterns if p in text)
+    return min(1.0, hits / 4.0)
+
+def ace_novelty_score(title, hook, body):
+    duplicated, _, info = ace_is_duplicate_content(title, hook, body)
+    if duplicated:
+        return 0.0
+    best_similarity = (info or {}).get("best_similarity", 0.0)
+    novelty = 1.0 - float(best_similarity)
+    return max(0.0, min(1.0, novelty))
+
+def ace_trend_strength(trend):
+    bad, _ = ace_is_bad_trend(trend)
+    if bad:
+        return 0.0
+    words = ace_tokenize(trend)
+    meaningful = [w for w in words if w not in ACE_STOPWORDS and len(w) >= 3]
+    base = min(1.0, len(meaningful) / 4.0)
+    return max(0.0, min(1.0, base))
+
+def ace_calculate_post_score(trend, title, hook, body):
+    ts = ace_trend_strength(trend)
+    nv = ace_novelty_score(title, hook, body)
+    ei = ace_emotional_intensity(" ".join([trend or "", title or "", hook or ""]))
+    cg = ace_curiosity_gap(title, hook)
+
+    score = (
+        ts * 0.30 +
+        nv * 0.30 +
+        ei * 0.20 +
+        cg * 0.20
+    )
+    return round(max(0.0, min(1.0, score)), 4)
+
+def ace_register_content_history(trend, content_type, title, hook, body, score, status="approved", reason=""):
+    now = datetime.datetime.now().isoformat()
+    trend_norm = ace_normalize_text(trend)
+    content_hash = ace_compact_signature(" ".join([title or "", hook or "", body or ""]))
+
+    with ACE_LAYER4_LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("""
+            INSERT INTO ace_content_history
+            (created_at, trend, trend_norm, content_type, title, hook, body, content_hash, score, status, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            now, trend, trend_norm, content_type, title, hook, body,
+            content_hash, float(score), status, reason
+        ))
+        conn.commit()
+        conn.close()
+
+def ace_govern_post(trend, content_type, title, hook, body):
+    bad_trend, trend_reason = ace_is_bad_trend(trend)
+    if bad_trend:
+        ace_register_content_history(trend, content_type, title, hook, body, 0.0, "blocked", f"trend:{trend_reason}")
+        return {
+            "approved": False,
+            "reason": f"trend_bloqueada:{trend_reason}",
+            "score": 0.0
+        }
+
+    cooldown, cooldown_reason = ace_trend_in_cooldown(trend)
+    if cooldown:
+        ace_register_content_history(trend, content_type, title, hook, body, 0.0, "blocked", f"cooldown:{cooldown_reason}")
+        return {
+            "approved": False,
+            "reason": f"cooldown:{cooldown_reason}",
+            "score": 0.0
+        }
+
+    limited, limit_reason = ace_rate_limit_blocked()
+    if limited:
+        ace_register_content_history(trend, content_type, title, hook, body, 0.0, "blocked", f"rate:{limit_reason}")
+        return {
+            "approved": False,
+            "reason": f"rate_limit:{limit_reason}",
+            "score": 0.0
+        }
+
+    duplicate, duplicate_reason, duplicate_info = ace_is_duplicate_content(title, hook, body)
+    if duplicate:
+        ace_register_content_history(trend, content_type, title, hook, body, 0.0, "blocked", f"duplicate:{duplicate_reason}")
+        return {
+            "approved": False,
+            "reason": f"duplicado:{duplicate_reason}",
+            "score": 0.0,
+            "data": duplicate_info
+        }
+
+    score = ace_calculate_post_score(trend, title, hook, body)
+    ace_register_content_history(trend, content_type, title, hook, body, score, "approved", "ok")
+    ace_register_trend_usage(trend)
+
+    return {
+        "approved": True,
+        "reason": "ok",
+        "score": score
+    }
+
+
+# ==========================================================
 # GERAÇÃO DE MÍDIA
 # ==========================================================
 
@@ -860,13 +1307,16 @@ def postar_instagram(conteudo, tipo="reel"):
     ACE_STATE["last_action_type"] = tipo
 
 def enviar_mensagem_insta(usuario_id, texto):
-    if not IG_TOKEN or not IG_ID:
+    token = get_ig_token()
+    ig_id = get_ig_id()
+
+    if not token or not ig_id:
         log("WARN", "enviar_mensagem_insta_skip", "IG_TOKEN ou IG_ID ausentes")
         return
 
-    url = f"https://graph.instagram.com/v20.0/{IG_ID}/messages"
+    url = f"https://graph.instagram.com/v20.0/{ig_id}/messages"
     payload = {"recipient": {"id": usuario_id}, "message": {"text": texto}}
-    headers = {"Authorization": f"Bearer {IG_TOKEN}"}
+    headers = {"Authorization": f"Bearer {token}"}
 
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=20)
@@ -876,22 +1326,74 @@ def enviar_mensagem_insta(usuario_id, texto):
 
 
 # ==========================================================
+# HELPER ÚNICO DE PUBLICAÇÃO GOVERNADA
+# ==========================================================
+
+def processar_publicacao_governada(trend, estilo, tipo, title, hook, body, media_path=None):
+    govern = ace_govern_post(
+        trend=trend,
+        content_type=tipo,
+        title=title,
+        hook=hook,
+        body=body
+    )
+
+    if not govern["approved"]:
+        log("INFO", "post_blocked_layer4", govern)
+        register_post(trend, estilo, tipo, body, media_path, f"blocked:{govern['reason']}")
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": govern["reason"],
+            "score": govern.get("score", 0.0),
+            "content": body,
+            "media_path": media_path
+        }
+
+    postar_instagram(body, tipo)
+    register_post(trend, estilo, tipo, body, media_path, "generated")
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": "ok",
+        "score": govern["score"],
+        "content": body,
+        "media_path": media_path
+    }
+
+
+# ==========================================================
 # CRIAÇÃO DE CONTEÚDO
 # ==========================================================
 
 def criar_reel(trend, roteiro):
+    hook = get_best_saved_hook(trend)
     texto = f"REEL | {trend} | {str(roteiro)[:500]}"
     poster = make_poster(texto)
-    postar_instagram(texto, "reel")
-    register_post(trend, ACE_STATE.get("last_style"), "reel", texto, poster, "generated")
-    return texto
+    return processar_publicacao_governada(
+        trend=trend,
+        estilo=ACE_STATE.get("last_style"),
+        tipo="reel",
+        title=hook,
+        hook=hook,
+        body=texto,
+        media_path=poster
+    )
 
 def criar_carrossel(trend, slides):
+    hook = get_best_saved_hook(trend)
     texto = f"CARROSSEL | {trend} | {' | '.join([str(s) for s in slides])[:500]}"
     poster = make_poster(texto)
-    postar_instagram(texto, "carrossel")
-    register_post(trend, ACE_STATE.get("last_style"), "carrossel", texto, poster, "generated")
-    return texto
+    return processar_publicacao_governada(
+        trend=trend,
+        estilo=ACE_STATE.get("last_style"),
+        tipo="carrossel",
+        title=hook,
+        hook=hook,
+        body=texto,
+        media_path=poster
+    )
 
 def criar_reel_autonomo(trend, estilo):
     hook = get_best_saved_hook(trend)
@@ -899,9 +1401,10 @@ def criar_reel_autonomo(trend, estilo):
     roteiro = gerar_texto_gpt(
         f"Crie roteiro detalhado sobre {trend} com estilo {estilo}. Hook: {hook}. Base: {ideia}"
     )
-    criar_reel(trend, roteiro)
-    score_hook_memory(hook, 0.05)
-    return roteiro
+    result = criar_reel(trend, roteiro)
+    if result.get("ok"):
+        score_hook_memory(hook, 0.05)
+    return result
 
 def criar_carrossel_autonomo(trend, estilo):
     hook = get_best_saved_hook(trend)
@@ -909,9 +1412,10 @@ def criar_carrossel_autonomo(trend, estilo):
     roteiro = gerar_texto_gpt(
         f"Crie carrossel com 2 slides sobre {trend} e estilo {estilo}. Hook: {hook}. Base: {ideia}"
     )
-    criar_carrossel(trend, [hook, f"{roteiro} – Slide 2"])
-    score_hook_memory(hook, 0.03)
-    return roteiro
+    result = criar_carrossel(trend, [hook, f"{roteiro} – Slide 2"])
+    if result.get("ok"):
+        score_hook_memory(hook, 0.03)
+    return result
 
 def fabricar_presenca_digital(tipo="REEL"):
     tema, angulo = motor_radar_v7()
@@ -924,13 +1428,20 @@ def fabricar_presenca_digital(tipo="REEL"):
     audio_path = make_audio(manifesto)
     media_path = make_reel(f"{hook}\n\n{manifesto}", audio_path) or make_poster(f"{hook}\n\n{manifesto}")
 
-    if tipo.upper() == "REEL":
-        postar_instagram(f"{hook}\n\n{manifesto}", "reel")
-    else:
-        postar_instagram(f"{hook}\n\n{manifesto}", "carrossel")
+    body = f"{hook}\n\n{manifesto}"
+    tipo_norm = "reel" if tipo.upper() == "REEL" else "carrossel"
 
-    register_post(tema, ACE_STATE.get("last_style"), tipo.lower(), manifesto, media_path, "generated")
-    return media_path, manifesto
+    result = processar_publicacao_governada(
+        trend=tema,
+        estilo=ACE_STATE.get("last_style"),
+        tipo=tipo_norm,
+        title=hook,
+        hook=hook,
+        body=body,
+        media_path=media_path
+    )
+
+    return media_path, manifesto, result
 
 
 # ==========================================================
@@ -990,7 +1501,7 @@ def check_robustez_sistema():
     missing = []
     if not GEMINI_KEY:
         missing.append("GEMINI_KEY")
-    if not IG_TOKEN:
+    if not get_ig_token():
         missing.append("IG_TOKEN")
 
     if missing:
@@ -1078,13 +1589,13 @@ def ace_master_cycle():
             agora = datetime.datetime.now()
             if agora.hour in [6, 12, 18, 22] and agora.minute == 0:
                 log("INFO", "ace_master_cycle", f"Iniciando ciclo de poder {agora.hour}h")
-                _, manifesto = fabricar_presenca_digital("REEL")
+                _, manifesto, pub = fabricar_presenca_digital("REEL")
                 evoluir_dna(random.uniform(0.8, 1.5))
 
                 conn = sqlite3.connect(DB_PATH)
                 conn.execute(
                     "INSERT INTO thoughts (timestamp, thought, impact) VALUES (?,?,?)",
-                    (str(agora), f"Postado sobre {manifesto[:40]}", 1.0)
+                    (str(agora), f"Postado sobre {manifesto[:40]}", 1.0 if pub.get('ok') else 0.4)
                 )
                 conn.commit()
                 conn.close()
@@ -1298,12 +1809,19 @@ def execute_task(task):
                 f"Crie roteiro detalhado sobre {trend} com estilo {style}. Hook prioritário: {hook}"
             )
             result = criar_reel(trend, roteiro)
-            synthetic_score = random.uniform(0.9, 1.4)
-            update_trend_memory(trend, True, synthetic_score)
-            score_hook_memory(hook, 0.08)
-            register_performance("reel", True)
-            mark_task_memory(task, "done", "ok")
-            return {"ok": True, "type": "reel", "result": result, "score": synthetic_score}
+
+            if result.get("ok"):
+                synthetic_score = random.uniform(0.9, 1.4)
+                update_trend_memory(trend, True, synthetic_score)
+                score_hook_memory(hook, 0.08)
+                register_performance("reel", True)
+                mark_task_memory(task, "done", "ok")
+                return {"ok": True, "type": "reel", "result": result, "score": synthetic_score}
+
+            update_trend_memory(trend, False, 0.45)
+            register_performance("reel", False)
+            mark_task_memory(task, "blocked", result.get("reason", "blocked"))
+            return {"ok": False, "type": "reel", "error": result.get("reason", "blocked")}
 
         if task_type == "carrossel":
             hook = get_best_saved_hook(trend)
@@ -1312,12 +1830,19 @@ def execute_task(task):
             )
             slides = [hook, roteiro[:220]]
             result = criar_carrossel(trend, slides)
-            synthetic_score = random.uniform(0.85, 1.35)
-            update_trend_memory(trend, True, synthetic_score)
-            score_hook_memory(hook, 0.05)
-            register_performance("carrossel", True)
-            mark_task_memory(task, "done", "ok")
-            return {"ok": True, "type": "carrossel", "result": result, "score": synthetic_score}
+
+            if result.get("ok"):
+                synthetic_score = random.uniform(0.85, 1.35)
+                update_trend_memory(trend, True, synthetic_score)
+                score_hook_memory(hook, 0.05)
+                register_performance("carrossel", True)
+                mark_task_memory(task, "done", "ok")
+                return {"ok": True, "type": "carrossel", "result": result, "score": synthetic_score}
+
+            update_trend_memory(trend, False, 0.45)
+            register_performance("carrossel", False)
+            mark_task_memory(task, "blocked", result.get("reason", "blocked"))
+            return {"ok": False, "type": "carrossel", "error": result.get("reason", "blocked")}
 
         if task_type == "presenca":
             result = fabricar_presenca_digital("REEL")
@@ -1487,6 +2012,7 @@ def supervisor_loop():
             ACE_STATE["last_cycle_at"] = datetime.datetime.now().isoformat()
             ACE_STATE["symbiosis_level"] = min(1.0, ACE_STATE["symbiosis_level"] + 0.02)
             ACE_STATE["mode"] = "SUPERVISIONANDO"
+            ACE_STATE["instagram_connected"] = bool(get_ig_token() and get_ig_id())
 
             start_legacy_threads_once()
             recover_system()
@@ -1516,6 +2042,99 @@ def supervisor_loop():
 
 
 # ==========================================================
+# INSTAGRAM OAUTH / TOKEN CALLBACK
+# ==========================================================
+
+def log_auth(action, detail):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO instagram_auth_log (ts, action, detail) VALUES (?, ?, ?)",
+            (datetime.datetime.now().isoformat(), action, str(detail)[:4000])
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+def build_instagram_oauth_url():
+    if not INSTAGRAM_APP_ID:
+        return None
+
+    params = {
+        "force_reauth": "true",
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "response_type": "code",
+        "scope": ",".join([
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_insights",
+        ])
+    }
+    return f"https://www.instagram.com/oauth/authorize?{urlencode(params)}"
+
+def exchange_code_for_token(code):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        return {
+            "ok": False,
+            "error": "INSTAGRAM_APP_ID ou INSTAGRAM_APP_SECRET ausentes"
+        }
+
+    url = "https://api.instagram.com/oauth/access_token"
+    data = {
+        "client_id": INSTAGRAM_APP_ID,
+        "client_secret": INSTAGRAM_APP_SECRET,
+        "grant_type": "authorization_code",
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "code": code,
+    }
+
+    try:
+        r = requests.post(url, data=data, timeout=30)
+        body = {}
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:1000]}
+
+        log_auth("exchange_code", {"status": r.status_code, "body": body})
+
+        if r.status_code >= 400:
+            return {
+                "ok": False,
+                "status": r.status_code,
+                "error": body
+            }
+
+        access_token = body.get("access_token")
+        user_id = body.get("user_id")
+
+        if access_token:
+            save_instagram_auth(
+                token=access_token,
+                user_id=user_id,
+                meta={"source": "callback_code_exchange"}
+            )
+            ACE_STATE["instagram_connected"] = bool(get_ig_token() and get_ig_id())
+            ACE_STATE["instagram_last_auth_at"] = datetime.datetime.now().isoformat()
+
+        return {
+            "ok": True,
+            "data": body
+        }
+
+    except Exception as e:
+        log_auth("exchange_code_fail", str(e))
+        return {
+            "ok": False,
+            "error": str(e)
+        }
+
+
+# ==========================================================
 # FLASK ROUTES
 # ==========================================================
 
@@ -1524,7 +2143,8 @@ def home():
     return jsonify({
         "status": APP_NAME,
         "online": True,
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": datetime.datetime.now().isoformat(),
+        "instagram_connected": bool(get_ig_token() and get_ig_id())
     })
 
 @app.route("/status")
@@ -1541,8 +2161,26 @@ def status():
         "ace_state": ACE_STATE,
         "dna": dna,
         "consciencia": ACE_MIND.state,
-        "performance": PERFORMANCE_STATE
+        "performance": PERFORMANCE_STATE,
+        "instagram": {
+            "connected": bool(get_ig_token() and get_ig_id()),
+            "ig_id": get_ig_id(),
+            "token_present": bool(get_ig_token()),
+            "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        }
     })
+
+@app.route("/state")
+def state_alias():
+    return status()
+
+@app.route("/force")
+def force_alias():
+    return jsonify(force_action())
+
+@app.route("/tasks")
+def tasks_alias():
+    return queue_status()
 
 @app.route("/force_ace")
 def force_ace():
@@ -1627,17 +2265,58 @@ def queue_status():
         "tasks": snapshot
     })
 
+@app.route("/instagram/auth")
+def instagram_auth():
+    url = build_instagram_oauth_url()
+    if not url:
+        return jsonify({
+            "ok": False,
+            "error": "INSTAGRAM_APP_ID ausente no ambiente"
+        }), 400
+
+    return redirect(url, code=302)
+
+@app.route("/instagram/auth_url")
+def instagram_auth_url():
+    url = build_instagram_oauth_url()
+    return jsonify({
+        "ok": bool(url),
+        "auth_url": url,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI
+    })
+
 @app.route("/media/<path:filename>")
 def serve_static(filename):
     return send_from_directory(str(MEDIA_DIR), filename)
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook_gateway():
+    # 1) callback OAuth do Instagram
+    if request.method == "GET" and request.args.get("code"):
+        code = request.args.get("code", "").strip()
+        result = exchange_code_for_token(code)
+
+        if result.get("ok"):
+            return jsonify({
+                "ok": True,
+                "message": "Token capturado com sucesso",
+                "user_id": get_ig_id(),
+                "token_present": bool(get_ig_token())
+            }), 200
+
+        return jsonify({
+            "ok": False,
+            "message": "Falha ao trocar code por token",
+            "error": result.get("error")
+        }), 400
+
+    # 2) verificação de webhook Meta
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args.get("hub.challenge", "OK")
         return "invalid verify token", 403
 
+    # 3) eventos webhook
     data = request.get_json(silent=True) or {}
     if "entry" in data:
         for entry in data["entry"]:
@@ -1659,7 +2338,7 @@ def webhook_gateway():
 # ==========================================================
 
 def boot():
-    log("INFO", "boot_start", "Inicializando ACE consolidado com camada 3")
+    log("INFO", "boot_start", "Inicializando ACE consolidado com camada 4")
     threading.Thread(target=queue_executor_loop, daemon=True).start()
     threading.Thread(target=supervisor_loop, daemon=True).start()
 
