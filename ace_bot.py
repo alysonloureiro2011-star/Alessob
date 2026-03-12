@@ -1,4 +1,4 @@
-import os import gc import re import json import time import random import sqlite3 import threading import datetime import traceback import hashlib import unicodedata from pathlib import Path from urllib.parse import urlencode from typing import Any, Dict, List, Optional
+import os import gc import re import json import time import random import sqlite3 import threading import datetime import hashlib import unicodedata from pathlib import Path from urllib.parse import urlencode from typing import Any, Dict, List, Optional, Tuple
 
 import requests from flask import Flask, jsonify, request, send_from_directory, redirect
 
@@ -30,7 +30,7 @@ DB_PATH = MEMORY_DIR / "ace_supreme.db" AUTH_PATH = MEMORY_DIR / "instagram_auth
 
 IG_TOKEN_ENV = ace_env("IG_TOKEN") IG_ID_ENV = ace_env("IG_ID") GEMINI_KEY = ace_env("GEMINI_KEY") OPENAI_API_KEY = ace_env("OPENAI_API_KEY") INSTAGRAM_APP_ID = ( ace_env("INSTAGRAM_APP_ID") or ace_env("FACEBOOK_APP_ID") or ace_env("APP_ID") or "" ) INSTAGRAM_APP_SECRET = ( ace_env("INSTAGRAM_APP_SECRET") or ace_env("FACEBOOK_APP_SECRET") or ace_env("APP_SECRET") or "" ) INSTAGRAM_REDIRECT_URI = ace_env( "INSTAGRAM_REDIRECT_URI", f"{RENDER_URL}/instagram/token" )
 
-ACE_FAST_MODE = ace_env("ACE_FAST_MODE", "1") == "1" ACE_DISABLE_GEMINI = ace_env("ACE_DISABLE_GEMINI", "1") == "1" ACE_ENABLE_REAL_PUBLISH = ace_env("ACE_ENABLE_REAL_PUBLISH", "0") == "1" ACE_GRAPH_BASE_URL = ace_env("ACE_GRAPH_BASE_URL", "https://graph.facebook.com/v24.0")
+ACE_FAST_MODE = ace_env("ACE_FAST_MODE", "1") == "1" ACE_DISABLE_GEMINI = ace_env("ACE_DISABLE_GEMINI", "1") == "1" ACE_ENABLE_REAL_PUBLISH = ace_env("ACE_ENABLE_REAL_PUBLISH", "0") == "1" ACE_ENABLE_WORKERS = ace_env("ACE_ENABLE_WORKERS", "0") == "1" ACE_GRAPH_BASE_URL = ace_env("ACE_GRAPH_BASE_URL", "https://graph.facebook.com/v24.0")
 
 app = Flask(name)
 
@@ -294,7 +294,7 @@ if GEMINI_MODEL:
 
 return f"Ideia para {trend}"
 
-def motor_radar_v7() -> tuple[str, str]: trend = capturar_trend_brasil().lower() return trend, gerar_ideia_gemini(trend)
+def motor_radar_v7() -> Tuple[str, str]: trend = capturar_trend_brasil().lower() return trend, gerar_ideia_gemini(trend)
 
 ==========================================================
 
@@ -582,7 +582,7 @@ FLASK ROUTES
 
 @app.route("/instagram/auth") def instagram_auth() -> Any: params = { "client_id": INSTAGRAM_APP_ID, "redirect_uri": INSTAGRAM_REDIRECT_URI, "response_type": "code", "scope": "instagram_business_basic,instagram_business_content_publish", } return redirect(f"https://www.instagram.com/oauth/authorize?{urlencode(params)}")
 
-@app.route("/instagram/token") def instagram_token_callback() -> Any: code = request.args.get("code") if not code: return jsonify({ "ok": False, "error": "No code", "redirect_uri_correto": INSTAGRAM_REDIRECT_URI, }), 400
+@app.route("/instagram/token") def instagram_token_callback() -> Any: code = request.args.get("code") if not code: return jsonify( { "ok": False, "error": "No code", "redirect_uri_correto": INSTAGRAM_REDIRECT_URI, } ), 400
 
 result = exchange_code_for_token(code)
 return jsonify(result)
@@ -603,8 +603,10 @@ SUPERVISION / BOOT
 
 ==========================================================
 
-def supervisor_loop() -> None: while True: ACE_STATE["last_cycle_at"] = datetime.datetime.now().isoformat() ACE_STATE["mode"] = "SUPERVISIONANDO" if not TASK_QUEUE and random.random() > 0.7: queue_task("reel") time.sleep(60)
+def supervisor_loop() -> None: while True: ACE_STATE["last_cycle_at"] = datetime.datetime.now().isoformat() ACE_STATE["mode"] = "SUPERVISIONANDO" time.sleep(60)
 
-def boot() -> None: log("INFO", "boot", "ACE Iniciando...") threading.Thread(target=queue_executor_loop, daemon=True).start() threading.Thread(target=supervisor_loop, daemon=True).start()
+def boot() -> None: log("INFO", "boot", "ACE Iniciando...") if ACE_ENABLE_WORKERS: threading.Thread(target=queue_executor_loop, daemon=True).start() threading.Thread(target=supervisor_loop, daemon=True).start()
 
-if name == "main": boot() app.run(host="0.0.0.0", port=PORT)
+boot()
+
+if name == "main": app.run(host="0.0.0.0", port=PORT)
