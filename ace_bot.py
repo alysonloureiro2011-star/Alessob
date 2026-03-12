@@ -2378,7 +2378,787 @@ def webhook_gateway():
                     ).start()
 
     return "ACE_ACK", 200
+    
+# ==========================================================
+# ACE UNIFIED EXTENSION PACK
+# PERFORMANCE + ANTI-TRAVAMENTO + OAUTH FULL + WEBHOOK BRIDGE
+# COLE ESTE BLOCO ÚNICO ACIMA DE # BOOT
+# ==========================================================
 
+# ---------------------------
+# FLAGS DE EXTENSÃO
+# ---------------------------
+ACE_FAST_MODE = str(ace_env("ACE_FAST_MODE", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DISABLE_GEMINI = str(ace_env("ACE_DISABLE_GEMINI", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DISABLE_PYTRENDS = str(ace_env("ACE_DISABLE_PYTRENDS", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_MAX_QUEUE_SIZE = int(ace_env("ACE_MAX_QUEUE_SIZE", "3"))
+ACE_FORCE_SECONDARY_TASK = str(ace_env("ACE_FORCE_SECONDARY_TASK", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_OAUTH_FORCE_REAUTH = str(ace_env("ACE_OAUTH_FORCE_REAUTH", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_OAUTH_DEFAULT_MODE = str(ace_env("ACE_OAUTH_DEFAULT_MODE", "basic")).strip().lower()  # basic|full
+ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE = str(ace_env("ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE", "1")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_ENABLE_REAL_PUBLISH = str(ace_env("ACE_ENABLE_REAL_PUBLISH", "0")).strip().lower() in ("1", "true", "yes", "on")
+ACE_GRAPH_BASE_URL = ace_env("ACE_GRAPH_BASE_URL", "https://graph.facebook.com/v24.0")
+ACE_PUBLIC_MEDIA_BASE_URL = ace_env("ACE_PUBLIC_MEDIA_BASE_URL", RENDER_URL)
+
+ACE_UNIFIED_EXTENSION_STATE = {
+    "loaded_at": datetime.datetime.now().isoformat(),
+    "fast_mode": ACE_FAST_MODE,
+    "disable_gemini": ACE_DISABLE_GEMINI,
+    "disable_pytrends": ACE_DISABLE_PYTRENDS,
+    "max_queue_size": ACE_MAX_QUEUE_SIZE,
+    "oauth_force_reauth": ACE_OAUTH_FORCE_REAUTH,
+    "oauth_default_mode": ACE_OAUTH_DEFAULT_MODE,
+    "webhook_oauth_bridge": ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE,
+    "real_publish_enabled": ACE_ENABLE_REAL_PUBLISH,
+    "graph_base_url": ACE_GRAPH_BASE_URL,
+    "queue_protection_hits": 0,
+    "trend_fallbacks_used": 0,
+    "last_fast_trend": None,
+    "last_fast_idea": None,
+}
+
+ACE_FAST_TRENDS = [
+    "fé e propósito",
+    "disciplina e prosperidade",
+    "ansiedade e paz",
+    "transformação mental",
+    "escassez e abundância",
+    "verdade bíblica",
+    "clareza e propósito",
+    "controle emocional",
+    "mentalidade próspera",
+    "propósito e disciplina",
+]
+
+def ace_ext_pick_trend():
+    trend = random.choice(ACE_FAST_TRENDS)
+    ACE_UNIFIED_EXTENSION_STATE["last_fast_trend"] = trend
+    return trend
+
+def ace_ext_mode_scopes(mode="basic"):
+    mode = (mode or "basic").strip().lower()
+    if mode == "full":
+        return [
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_insights",
+        ]
+    return [
+        "instagram_business_basic"
+    ]
+
+def ace_ext_build_redirect_uri(target="token"):
+    target = (target or "token").strip().lower()
+    if target == "webhook":
+        return f"{RENDER_URL}/webhook"
+    return f"{RENDER_URL}/instagram/token"
+
+# ---------------------------
+# FAST PATCH - TRENDS
+# ---------------------------
+_original_capturar_trend_brasil_ext = capturar_trend_brasil
+
+def capturar_trend_brasil():
+    if ACE_FAST_MODE or ACE_DISABLE_PYTRENDS:
+        trend = ace_ext_pick_trend()
+        ACE_STATE["last_trend"] = trend
+        ACE_UNIFIED_EXTENSION_STATE["trend_fallbacks_used"] += 1
+        return trend
+
+    try:
+        trend = _original_capturar_trend_brasil_ext()
+        if trend:
+            ACE_STATE["last_trend"] = trend
+            return trend
+    except Exception as e:
+        log("WARN", "ext_fast_trend_fallback", e)
+
+    trend = ace_ext_pick_trend()
+    ACE_STATE["last_trend"] = trend
+    ACE_UNIFIED_EXTENSION_STATE["trend_fallbacks_used"] += 1
+    return trend
+
+def capturar_trend_brasil_v6():
+    return capturar_trend_brasil()
+
+def capturar_trend_do_momento():
+    return capturar_trend_brasil()
+
+def obter_trend_brasil():
+    return capturar_trend_brasil()
+
+# ---------------------------
+# FAST PATCH - GEMINI
+# ---------------------------
+def gerar_ideia_gemini(trend):
+    if ACE_FAST_MODE or ACE_DISABLE_GEMINI:
+        idea = f"Ideia direta e forte sobre {trend}"
+        ACE_UNIFIED_EXTENSION_STATE["last_fast_idea"] = idea
+        return idea
+
+    if not verificar_api("Gemini", 300):
+        return f"Ideia de conteúdo para {trend}"
+    usar_api("Gemini")
+
+    if GEMINI_MODEL:
+        try:
+            resp = GEMINI_MODEL.generate_content(
+                f"Crie uma ideia curta, forte e clara em português do Brasil sobre: {trend}"
+            )
+            text = getattr(resp, "text", None)
+            if text:
+                return text.strip()
+        except Exception as e:
+            log("WARN", "gerar_ideia_gemini_fail_ext", e)
+
+    idea = f"Ideia direta e forte sobre {trend}"
+    ACE_UNIFIED_EXTENSION_STATE["last_fast_idea"] = idea
+    return idea
+
+# ---------------------------
+# OAUTH BUILDER UNIFICADO
+# ---------------------------
+def build_instagram_oauth_url(mode=None, target="token"):
+    if not INSTAGRAM_APP_ID:
+        return None
+
+    mode = (mode or ACE_OAUTH_DEFAULT_MODE or "basic").strip().lower()
+    scopes = ace_ext_mode_scopes(mode)
+    redirect_uri = ace_ext_build_redirect_uri(target)
+
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": ",".join(scopes),
+    }
+
+    if ACE_OAUTH_FORCE_REAUTH:
+        params["force_reauth"] = "true"
+
+    return f"https://www.instagram.com/oauth/authorize?{urlencode(params)}"
+
+# ---------------------------
+# EXCHANGE TOKEN COM REDIRECT CUSTOM
+# ---------------------------
+def ace_exchange_code_for_token_with_redirect(code, redirect_uri):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        return {
+            "ok": False,
+            "error": "INSTAGRAM_APP_ID ou INSTAGRAM_APP_SECRET ausentes"
+        }
+
+    url = "https://api.instagram.com/oauth/access_token"
+    data = {
+        "client_id": INSTAGRAM_APP_ID,
+        "client_secret": INSTAGRAM_APP_SECRET,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+        "code": code,
+    }
+
+    try:
+        r = requests.post(url, data=data, timeout=30)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:1000]}
+
+        log_auth("exchange_code_unified_ext", {
+            "status": r.status_code,
+            "body": body,
+            "redirect_uri": redirect_uri
+        })
+
+        if r.status_code >= 400:
+            return {
+                "ok": False,
+                "status": r.status_code,
+                "error": body
+            }
+
+        access_token = body.get("access_token")
+        user_id = body.get("user_id")
+
+        if access_token:
+            save_instagram_auth(
+                token=access_token,
+                user_id=user_id,
+                meta={"source": "unified_extension", "redirect_uri": redirect_uri}
+            )
+            ACE_STATE["instagram_connected"] = bool(get_ig_token() and get_ig_id())
+            ACE_STATE["instagram_last_auth_at"] = datetime.datetime.now().isoformat()
+
+        return {
+            "ok": True,
+            "data": body
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }
+
+def ace_exchange_long_lived_token():
+    token = get_ig_token()
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+
+    params = {
+        "grant_type": "ig_exchange_token",
+        "client_secret": INSTAGRAM_APP_SECRET,
+        "access_token": token,
+    }
+
+    try:
+        r = requests.get("https://graph.instagram.com/access_token", params=params, timeout=30)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:1000]}
+
+        if r.status_code >= 400:
+            return {
+                "ok": False,
+                "status_code": r.status_code,
+                "error": body
+            }
+
+        new_token = body.get("access_token")
+        if new_token:
+            save_instagram_auth(token=new_token, user_id=get_ig_id(), meta={"source": "long_lived_exchange"})
+        return {
+            "ok": True,
+            "data": body
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+# ---------------------------
+# FILA PROTEGIDA
+# ---------------------------
+_original_queue_task_unified_ext = queue_task
+
+def queue_task(task_type, trend=None, style=None, priority=1.0, retries=0):
+    with TASK_LOCK:
+        qsize = len(TASK_QUEUE)
+
+    if qsize >= ACE_MAX_QUEUE_SIZE:
+        ACE_UNIFIED_EXTENSION_STATE["queue_protection_hits"] += 1
+        log("WARN", "queue_guard_block_ext", {"qsize": qsize, "max": ACE_MAX_QUEUE_SIZE, "task_type": task_type})
+        return
+
+    trend = trend or capturar_trend_brasil()
+    style = style or escolher_personalidade()
+
+    return _original_queue_task_unified_ext(
+        task_type=task_type,
+        trend=trend,
+        style=style,
+        priority=priority,
+        retries=retries
+    )
+
+def smart_force_action():
+    trend = capturar_trend_brasil()
+    style = escolher_personalidade()
+    signal = get_recent_signal_score()
+    best_type = choose_best_content_type()
+
+    with TASK_LOCK:
+        qsize = len(TASK_QUEUE)
+
+    if qsize >= ACE_MAX_QUEUE_SIZE:
+        ACE_UNIFIED_EXTENSION_STATE["queue_protection_hits"] += 1
+        log("INFO", "smart_force_skipped_queue_full_ext", {"qsize": qsize})
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "queue_full",
+            "queue_size": qsize
+        }
+
+    priority = 1.2 if is_idle(8) else 0.9
+    priority *= (0.8 + signal)
+
+    queue_task(
+        task_type=best_type,
+        trend=trend,
+        style=style,
+        priority=priority,
+        retries=0
+    )
+
+    if ACE_FORCE_SECONDARY_TASK:
+        with TASK_LOCK:
+            qsize_after = len(TASK_QUEUE)
+        if qsize_after < ACE_MAX_QUEUE_SIZE:
+            secondary = "carrossel" if best_type == "reel" else "reel"
+            queue_task(
+                task_type=secondary,
+                trend=trend,
+                style=style,
+                priority=max(0.5, priority - 0.2),
+                retries=0
+            )
+
+    ACE_STATE["forced_actions"] += 1
+    log("INFO", "smart_force_action_unified_ext", {
+        "trend": trend,
+        "style": style,
+        "best_type": best_type,
+        "signal": signal,
+        "queue_size": len(TASK_QUEUE)
+    })
+
+    return {
+        "ok": True,
+        "queued_primary": best_type,
+        "trend": trend,
+        "style": style,
+        "signal": signal,
+        "queue_size": len(TASK_QUEUE),
+        "fast_mode": ACE_FAST_MODE
+    }
+
+# ---------------------------
+# WATCHDOGS LEVES
+# ---------------------------
+def watchdog_consciousness():
+    while True:
+        try:
+            if not ACE_FAST_MODE:
+                requests.get(f"{RENDER_URL}/status", timeout=5)
+                ACE_STATE["render_pings"] += 1
+        except Exception:
+            pass
+        time.sleep(600)
+
+def pulso_de_vida():
+    while True:
+        try:
+            if not ACE_FAST_MODE:
+                requests.get(f"{RENDER_URL}/status", timeout=5)
+                ACE_STATE["render_pings"] += 1
+                print("💓 ACE: Pulso de vida enviado.")
+        except Exception:
+            pass
+        time.sleep(600)
+
+# ---------------------------
+# PUBLICAÇÃO REAL (BASE)
+# ---------------------------
+def ace_instagram_request(method, path, params=None, data=None, json_payload=None, token=None, timeout=30):
+    token = token or get_ig_token()
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+
+    url = f"{ACE_GRAPH_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        if method.upper() == "GET":
+            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+        elif method.upper() == "POST":
+            r = requests.post(url, params=params, data=data, json=json_payload, headers=headers, timeout=timeout)
+        else:
+            return {"ok": False, "error": f"método_unsupported:{method}"}
+
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:2000]}
+
+        if r.status_code >= 400:
+            return {
+                "ok": False,
+                "status_code": r.status_code,
+                "error": body,
+                "url": url
+            }
+
+        return {
+            "ok": True,
+            "status_code": r.status_code,
+            "data": body,
+            "url": url
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "url": url
+        }
+
+def ace_media_public_url_from_path(media_path):
+    if not media_path:
+        return None
+    try:
+        p = Path(media_path)
+        filename = p.name
+        if not filename:
+            return None
+        return f"{ACE_PUBLIC_MEDIA_BASE_URL.rstrip('/')}/media/{filename}"
+    except Exception:
+        return None
+
+def ace_detect_media_kind(media_path, content_type=None):
+    ext = (Path(media_path).suffix or "").lower() if media_path else ""
+    ctype = (content_type or "").lower()
+
+    if ctype == "reel":
+        return "reel"
+    if ctype == "carrossel":
+        if ext in (".mp4", ".mov"):
+            return "reel"
+        return "image"
+    if ext in (".png", ".jpg", ".jpeg", ".webp"):
+        return "image"
+    if ext in (".mp4", ".mov"):
+        return "reel"
+    return "image"
+
+def ace_instagram_create_media_container(ig_id, media_url, caption="", media_kind="image"):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not media_url:
+        return {"ok": False, "error": "media_url ausente"}
+
+    path = f"{ig_id}/media"
+
+    if media_kind == "reel":
+        payload = {
+            "media_type": "REELS",
+            "video_url": media_url,
+            "caption": caption[:2200],
+        }
+    else:
+        payload = {
+            "image_url": media_url,
+            "caption": caption[:2200],
+        }
+
+    return ace_instagram_request("POST", path, data=payload)
+
+def ace_instagram_publish_container(ig_id, creation_id):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not creation_id:
+        return {"ok": False, "error": "creation_id ausente"}
+
+    path = f"{ig_id}/media_publish"
+    payload = {
+        "creation_id": creation_id
+    }
+    return ace_instagram_request("POST", path, data=payload)
+
+def ace_real_publish_if_possible(conteudo, tipo="reel", media_path=None):
+    if not ACE_ENABLE_REAL_PUBLISH:
+        return {"ok": False, "reason": "real_publish_disabled"}
+
+    ig_id = get_ig_id()
+    token = get_ig_token()
+    if not ig_id or not token:
+        return {"ok": False, "reason": "ig_id_ou_token_ausente"}
+
+    media_url = ace_media_public_url_from_path(media_path)
+    if not media_url:
+        return {"ok": False, "reason": "media_url_indisponivel"}
+
+    media_kind = ace_detect_media_kind(media_path, tipo)
+    container = ace_instagram_create_media_container(
+        ig_id=ig_id,
+        media_url=media_url,
+        caption=conteudo,
+        media_kind=media_kind
+    )
+    if not container.get("ok"):
+        return {"ok": False, "reason": "container_fail", "detail": container}
+
+    creation_id = (container.get("data") or {}).get("id")
+    if not creation_id:
+        return {"ok": False, "reason": "creation_id_ausente", "detail": container}
+
+    published = ace_instagram_publish_container(ig_id=ig_id, creation_id=creation_id)
+    if not published.get("ok"):
+        return {"ok": False, "reason": "publish_fail", "detail": published}
+
+    return {
+        "ok": True,
+        "media_url": media_url,
+        "container": container.get("data"),
+        "published": published.get("data"),
+    }
+
+def postar_instagram(conteudo, tipo="reel", media_path=None):
+    real = ace_real_publish_if_possible(conteudo=conteudo, tipo=tipo, media_path=media_path)
+    if real.get("ok"):
+        ACE_STATE["last_action_at"] = datetime.datetime.now().isoformat()
+        ACE_STATE["last_action_type"] = tipo
+        log("INFO", "instagram_real_publish_ok_ext", real)
+        return real
+
+    print(f"[INSTAGRAM {tipo.upper()}] {conteudo[:300]}")
+    usar_api("Instagram")
+    ACE_STATE["last_action_at"] = datetime.datetime.now().isoformat()
+    ACE_STATE["last_action_type"] = tipo
+    log("INFO", "instagram_real_publish_fallback_ext", real)
+    return {"ok": False, "fallback": True, "detail": real}
+
+def processar_publicacao_governada(trend, estilo, tipo, title, hook, body, media_path=None):
+    govern = ace_govern_post(
+        trend=trend,
+        content_type=tipo,
+        title=title,
+        hook=hook,
+        body=body
+    )
+
+    if not govern["approved"]:
+        log("INFO", "post_blocked_layer4_ext", govern)
+        register_post(trend, estilo, tipo, body, media_path, f"blocked:{govern['reason']}")
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": govern["reason"],
+            "score": govern.get("score", 0.0),
+            "content": body,
+            "media_path": media_path
+        }
+
+    post_result = postar_instagram(body, tipo, media_path=media_path)
+    register_post(trend, estilo, tipo, body, media_path, "generated")
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": "ok",
+        "score": govern["score"],
+        "content": body,
+        "media_path": media_path,
+        "publish_result": post_result,
+    }
+
+# ---------------------------
+# OVERRIDE DAS ROTAS EXISTENTES
+# ---------------------------
+def _instagram_auth_basic_override():
+    url = build_instagram_oauth_url(mode="basic", target="token")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente no ambiente"}), 400
+    return redirect(url, code=302)
+
+def _instagram_auth_url_override():
+    mode = request.args.get("mode", ACE_OAUTH_DEFAULT_MODE)
+    target = request.args.get("target", "token")
+    url = build_instagram_oauth_url(mode=mode, target=target)
+    return jsonify({
+        "ok": bool(url),
+        "auth_url": url,
+        "redirect_uri": ace_ext_build_redirect_uri(target),
+        "mode": mode,
+        "target": target,
+        "force_reauth": ACE_OAUTH_FORCE_REAUTH,
+        "scopes": ace_ext_mode_scopes(mode)
+    })
+
+def _instagram_token_callback_override():
+    code = request.args.get("code", "").strip()
+    error = request.args.get("error")
+    error_reason = request.args.get("error_reason")
+    error_description = request.args.get("error_description")
+
+    if error:
+        return jsonify({
+            "ok": False,
+            "stage": "instagram_auth",
+            "error": error,
+            "error_reason": error_reason,
+            "error_description": error_description
+        }), 400
+
+    if not code:
+        return jsonify({
+            "ok": True,
+            "message": "Endpoint ativo. Use /instagram/auth, /instagram/auth_basic ou /instagram/auth_full para iniciar o login.",
+            "redirect_uri_correto": ace_ext_build_redirect_uri("token"),
+            "token_present": bool(get_ig_token()),
+            "ig_id": get_ig_id(),
+            "default_mode": ACE_OAUTH_DEFAULT_MODE
+        }), 200
+
+    result = ace_exchange_code_for_token_with_redirect(
+        code=code,
+        redirect_uri=ace_ext_build_redirect_uri("token")
+    )
+
+    if result.get("ok"):
+        return jsonify({
+            "ok": True,
+            "message": "Token capturado com sucesso",
+            "user_id": get_ig_id(),
+            "token_present": bool(get_ig_token()),
+            "coloque_no_render": {
+                "IG_TOKEN": get_ig_token(),
+                "IG_ID": get_ig_id()
+            }
+        }), 200
+
+    return jsonify({
+        "ok": False,
+        "message": "Falha ao trocar code por token",
+        "error": result.get("error")
+    }), 400
+
+def _webhook_gateway_override():
+    # callback OAuth via webhook bridge
+    if request.method == "GET" and request.args.get("code") and ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE:
+        code = request.args.get("code", "").strip()
+        result = ace_exchange_code_for_token_with_redirect(
+            code=code,
+            redirect_uri=ace_ext_build_redirect_uri("webhook")
+        )
+
+        if result.get("ok"):
+            return jsonify({
+                "ok": True,
+                "message": "Token capturado com sucesso via webhook",
+                "user_id": get_ig_id(),
+                "token_present": bool(get_ig_token()),
+                "coloque_no_render": {
+                    "IG_TOKEN": get_ig_token(),
+                    "IG_ID": get_ig_id()
+                }
+            }), 200
+
+        return jsonify({
+            "ok": False,
+            "message": "Falha ao trocar code por token via webhook",
+            "error": result.get("error")
+        }), 400
+
+    # verificação de webhook Meta
+    if request.method == "GET":
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge", "OK")
+        return "invalid verify token", 403
+
+    # eventos webhook
+    data = request.get_json(silent=True) or {}
+    if "entry" in data:
+        for entry in data["entry"]:
+            for msg in entry.get("messaging", []):
+                sender_id = msg.get("sender", {}).get("id")
+                text = msg.get("message", {}).get("text", "")
+                if sender_id and text:
+                    threading.Thread(
+                        target=ace_interaction_engine,
+                        args=(sender_id, text),
+                        daemon=True
+                    ).start()
+
+    return "ACE_ACK", 200
+
+# sobescreve as rotas já existentes
+if "instagram_auth" in app.view_functions:
+    app.view_functions["instagram_auth"] = _instagram_auth_basic_override
+
+if "instagram_auth_url" in app.view_functions:
+    app.view_functions["instagram_auth_url"] = _instagram_auth_url_override
+
+if "instagram_token_callback" in app.view_functions:
+    app.view_functions["instagram_token_callback"] = _instagram_token_callback_override
+
+if "webhook_gateway" in app.view_functions:
+    app.view_functions["webhook_gateway"] = _webhook_gateway_override
+
+# ---------------------------
+# NOVAS ROTAS SEM DUPLICAR AS ANTIGAS
+# ---------------------------
+def ace_safe_add_route(rule, endpoint, view_func, methods=None):
+    if endpoint in app.view_functions:
+        return
+    app.add_url_rule(rule, endpoint=endpoint, view_func=view_func, methods=methods or ["GET"])
+
+def _instagram_auth_full_view():
+    url = build_instagram_oauth_url(mode="full", target="token")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente"}), 400
+    return redirect(url, code=302)
+
+def _instagram_auth_via_webhook_view():
+    if not ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE:
+        return jsonify({"ok": False, "error": "webhook_oauth_bridge_desativado"}), 400
+    url = build_instagram_oauth_url(mode="full", target="webhook")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente"}), 400
+    return redirect(url, code=302)
+
+def _instagram_auth_url_full_view():
+    url = build_instagram_oauth_url(mode="full", target="token")
+    return jsonify({
+        "ok": bool(url),
+        "auth_url": url,
+        "redirect_uri": ace_ext_build_redirect_uri("token"),
+        "mode": "full",
+        "force_reauth": ACE_OAUTH_FORCE_REAUTH,
+        "scopes": ace_ext_mode_scopes("full")
+    })
+
+def _instagram_token_long_lived_view():
+    result = ace_exchange_long_lived_token()
+    status_code = 200 if result.get("ok") else 400
+    return jsonify(result), status_code
+
+def _instagram_debug_auth_matrix_view():
+    return jsonify({
+        "ok": True,
+        "app_id_present": bool(INSTAGRAM_APP_ID),
+        "app_secret_present": bool(INSTAGRAM_APP_SECRET),
+        "ig_id": get_ig_id(),
+        "token_present": bool(get_ig_token()),
+        "default_mode": ACE_OAUTH_DEFAULT_MODE,
+        "force_reauth": ACE_OAUTH_FORCE_REAUTH,
+        "webhook_bridge": ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE,
+        "real_publish_enabled": ACE_ENABLE_REAL_PUBLISH,
+        "redirect_token": ace_ext_build_redirect_uri("token"),
+        "redirect_webhook": ace_ext_build_redirect_uri("webhook"),
+        "basic_scopes": ace_ext_mode_scopes("basic"),
+        "full_scopes": ace_ext_mode_scopes("full"),
+    })
+
+def _ext_perf_view():
+    with TASK_LOCK:
+        qsize = len(TASK_QUEUE)
+
+    return jsonify({
+        "ok": True,
+        "extension_state": ACE_UNIFIED_EXTENSION_STATE,
+        "queue_size": qsize,
+        "instagram_connected": bool(get_ig_token() and get_ig_id()),
+        "last_trend": ACE_STATE.get("last_trend"),
+        "last_style": ACE_STATE.get("last_style"),
+    })
+
+ace_safe_add_route("/instagram/auth_basic", "instagram_auth_basic_ext", _instagram_auth_basic_override, methods=["GET"])
+ace_safe_add_route("/instagram/auth_full", "instagram_auth_full_ext", _instagram_auth_full_view, methods=["GET"])
+ace_safe_add_route("/instagram/auth_via_webhook", "instagram_auth_via_webhook_ext", _instagram_auth_via_webhook_view, methods=["GET"])
+ace_safe_add_route("/instagram/auth_url_full", "instagram_auth_url_full_ext", _instagram_auth_url_full_view, methods=["GET"])
+ace_safe_add_route("/instagram/token/long_lived", "instagram_token_long_lived_ext", _instagram_token_long_lived_view, methods=["GET"])
+ace_safe_add_route("/instagram/debug/auth_matrix", "instagram_debug_auth_matrix_ext", _instagram_debug_auth_matrix_view, methods=["GET"])
+ace_safe_add_route("/ext/perf", "ext_perf_unified_ext", _ext_perf_view, methods=["GET"])
+
+# ---------------------------
+# ESTADO FINAL DA EXTENSÃO
+# ---------------------------
+ACE_STATE["mode"] = "FAST_SAFE_BOOT" if ACE_FAST_MODE else ACE_STATE.get("mode", "OBSERVANDO")
+ACE_UNIFIED_EXTENSION_STATE["instagram_connected"] = bool(get_ig_token() and get_ig_id())
+log("INFO", "ace_unified_extension_loaded", ACE_UNIFIED_EXTENSION_STATE)
 
 # ==========================================================
 # BOOT
