@@ -2069,26 +2069,34 @@ def log_auth(action, detail):
     except Exception:
         pass
 
-def build_instagram_oauth_url():
+
+def build_instagram_oauth_url(mode="basic"):
     if not INSTAGRAM_APP_ID:
         return None
 
-    params = {
-        "force_reauth": "true",
-        "client_id": INSTAGRAM_APP_ID,
-        "redirect_uri": INSTAGRAM_REDIRECT_URI,
-        "response_type": "code",
-        "scope": ",".join([
+    if mode == "basic":
+        scope_list = [
+            "instagram_business_basic"
+        ]
+    else:
+        scope_list = [
             "instagram_business_basic",
             "instagram_business_content_publish",
             "instagram_business_manage_comments",
             "instagram_business_manage_messages",
             "instagram_business_manage_insights",
-        ])
+        ]
+
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "response_type": "code",
+        "scope": ",".join(scope_list)
     }
     return f"https://www.instagram.com/oauth/authorize?{urlencode(params)}"
 
 def exchange_code_for_token(code):
+    
     if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
         return {
             "ok": False,
