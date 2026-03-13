@@ -263,6 +263,10 @@ def ace_test_modular_pipeline():
 # ==========================================================
 # AUTH RUNTIME
 # ==========================================================
+# RUNTIME AUTH
+IG_TOKEN_RUNTIME = None
+IG_ID_RUNTIME = None
+
 
 def get_ig_token():
     return IG_TOKEN_RUNTIME or IG_TOKEN_ENV
