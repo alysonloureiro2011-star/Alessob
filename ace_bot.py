@@ -5237,7 +5237,315 @@ def ace_upgrade_token():
     result = ace_exchange_long_lived_token(token)
 
     return result
-        
+
+# ==========================================================
+# ACE Ω INSTAGRAM ANALYTICS CORE
+# CONSOLIDADO: mídia real + insights reais + memória viral real
+# COLE ACIMA DO BOOT FINAL
+# ==========================================================
+
+ACE_ANALYTICS_CORE = {
+    "last_scan": None,
+    "last_posts": [],
+    "top_posts": [],
+    "last_error": None,
+    "metrics_mode": "safe"
+}
+
+def ace_fetch_recent_instagram_media(limit=12):
+    token = get_ig_token()
+    ig_id = get_ig_id()
+
+    if not token or not ig_id:
+        return []
+
+    try:
+        url = f"{ACE_GRAPH_BASE_URL}/{ig_id}/media"
+        params = {
+            "fields": "id,caption,media_type,media_product_type,timestamp,permalink",
+            "access_token": token,
+            "limit": limit
+        }
+        r = requests.get(url, params=params, timeout=20)
+        data = r.json() if r.content else {}
+        return data.get("data", []) if isinstance(data, dict) else []
+    except Exception as e:
+        ACE_ANALYTICS_CORE["last_error"] = f"fetch_recent_media:{e}"
+        return []
+
+def ace_fetch_media_insights_safe(media_id):
+    token = get_ig_token()
+    if not token:
+        return {}
+
+    metric_sets = [
+        ["engagement", "impressions", "reach", "saved"],
+        ["likes", "comments", "shares", "saved", "views"],
+        ["likes", "comments", "saved", "shares"],
+    ]
+
+    last_error = None
+
+    for metric_list in metric_sets:
+        try:
+            url = f"{ACE_GRAPH_BASE_URL}/{media_id}/insights"
+            params = {
+                "metric": ",".join(metric_list),
+                "access_token": token
+            }
+            r = requests.get(url, params=params, timeout=20)
+            data = r.json() if r.content else {}
+
+            if r.status_code == 200 and isinstance(data, dict) and "data" in data:
+                out = {}
+                for item in data.get("data", []):
+                    name = item.get("name")
+                    values = item.get("values", [])
+                    if name and values:
+                        out[name] = values[0].get("value", 0)
+                if out:
+                    return out
+
+            last_error = data
+        except Exception as e:
+            last_error = str(e)
+
+    ACE_ANALYTICS_CORE["last_error"] = f"fetch_media_insights:{last_error}"
+    return {}
+
+def ace_compute_media_quality_score(media_item, metrics):
+    media_type = (media_item.get("media_type") or "").upper()
+    caption = media_item.get("caption") or ""
+
+    likes = float(metrics.get("likes", 0) or 0)
+    comments = float(metrics.get("comments", 0) or 0)
+    saved = float(metrics.get("saved", 0) or 0)
+    shares = float(metrics.get("shares", 0) or 0)
+    engagement = float(metrics.get("engagement", 0) or 0)
+    impressions = float(metrics.get("impressions", 0) or 0)
+    reach = float(metrics.get("reach", 0) or 0)
+    views = float(metrics.get("views", 0) or 0)
+
+    base_den = max(reach, impressions, views, 1.0)
+
+    # score simples e robusto, sem depender de uma única métrica
+    raw = (
+        likes * 1.0 +
+        comments * 1.6 +
+        saved * 2.0 +
+        shares * 2.2 +
+        engagement * 1.2
+    ) / base_den
+
+    # leve viés pró-reel, sem distorcer demais
+    if media_type == "VIDEO" or media_item.get("media_product_type") == "REELS":
+        raw *= 1.08
+
+    # legenda muito curta tende a carregar menos contexto
+    if len(caption.strip()) < 40:
+        raw *= 0.96
+
+    return round(float(raw), 6)
+
+def ace_extract_theme_from_caption(caption):
+    text = ace_normalize_text(caption or "")
+    if not text:
+        return None
+
+    # tenta reaproveitar temas do seu universo conhecido
+    known = [
+        "disciplina e prosperidade",
+        "mentalidade prospera",
+        "controle emocional",
+        "transformacao de vida",
+        "fe e proposito",
+        "escassez e abundancia",
+        "clareza e proposito",
+        "renovacao da mente",
+        "ansiedade e paz",
+        "verdade biblica",
+    ]
+    for item in known:
+        if item in text:
+            return item
+
+    # fallback: primeira linha ou trecho inicial
+    first = (caption or "").splitlines()[0].strip()[:90]
+    return ace_normalize_text(first)[:90] or None
+
+def ace_refresh_viral_memory_from_instagram(limit=12):
+    posts = ace_fetch_recent_instagram_media(limit=limit)
+    analyzed = []
+
+    for post in posts:
+        metrics = ace_fetch_media_insights_safe(post["id"])
+        score = ace_compute_media_quality_score(post, metrics)
+        caption = post.get("caption", "") or ""
+
+        trend = ace_extract_theme_from_caption(caption)
+        hook = caption.split("\n\n")[0].strip()[:140] if caption.strip() else None
+
+        style = None
+        cap_norm = ace_normalize_text(caption)
+        if "sarcast" in cap_norm:
+            style = "sarcastico"
+        elif "reflex" in cap_norm:
+            style = "reflexivo"
+        elif "diret" in cap_norm:
+            style = "direto"
+
+        analyzed.append({
+            "id": post["id"],
+            "media_type": post.get("media_type"),
+            "product_type": post.get("media_product_type"),
+            "timestamp": post.get("timestamp"),
+            "permalink": post.get("permalink"),
+            "trend": trend,
+            "hook": hook,
+            "style": style,
+            "score": score,
+            "metrics": metrics,
+        })
+
+        # alimenta memória viral real
+        if trend:
+            if trend not in ACE_VIRAL_MEMORY["themes"]:
+                ACE_VIRAL_MEMORY["themes"][trend] = 1.0
+            ACE_VIRAL_MEMORY["themes"][trend] *= (1.0 + min(score, 0.25))
+
+        if hook:
+            if hook not in ACE_VIRAL_MEMORY["hooks"]:
+                ACE_VIRAL_MEMORY["hooks"][hook] = 1.0
+            ACE_VIRAL_MEMORY["hooks"][hook] *= (1.0 + min(score, 0.25))
+
+        if style:
+            if style not in ACE_VIRAL_MEMORY["styles"]:
+                ACE_VIRAL_MEMORY["styles"][style] = 1.0
+            ACE_VIRAL_MEMORY["styles"][style] *= (1.0 + min(score, 0.25))
+
+        # se o microtema existir, reforça também
+        if trend and trend in ACE_RUNTIME_STATE.get("micro_topics", {}):
+            ACE_RUNTIME_STATE["micro_topics"][trend]["tests"] += 1
+            ACE_RUNTIME_STATE["micro_topics"][trend]["score"] *= (1.0 + min(score, 0.20))
+
+    analyzed.sort(key=lambda x: x["score"], reverse=True)
+
+    ACE_ANALYTICS_CORE["last_scan"] = str(datetime.datetime.now())
+    ACE_ANALYTICS_CORE["last_posts"] = analyzed
+    ACE_ANALYTICS_CORE["top_posts"] = analyzed[:5]
+
+    log("INFO", "ace_instagram_analytics_core_scan", {
+        "posts": len(analyzed),
+        "top_score": analyzed[0]["score"] if analyzed else None
+    })
+
+    return analyzed
+
+def ace_pick_trend_smart():
+    # prioridade 1: temas reais que já performaram
+    if ACE_VIRAL_MEMORY["themes"]:
+        ranked = sorted(
+            ACE_VIRAL_MEMORY["themes"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        if ranked and random.random() < 0.65:
+            return ranked[0][0]
+
+    # prioridade 2: microtemas descobertos
+    if ACE_RUNTIME_STATE.get("micro_topics"):
+        keys = list(ACE_RUNTIME_STATE["micro_topics"].keys())
+        weights = [ACE_RUNTIME_STATE["micro_topics"][k]["score"] for k in keys]
+        if keys:
+            return random.choices(keys, weights=weights)[0]
+
+    # prioridade 3: fallback do seu sistema
+    return ace_pick_trend()
+
+def ace_pick_best_hook_smart(trend):
+    # primeiro tenta hooks reais já vencedores
+    if ACE_VIRAL_MEMORY["hooks"]:
+        candidates = []
+        for h, s in ACE_VIRAL_MEMORY["hooks"].items():
+            h_norm = ace_normalize_text(h)
+            t_norm = ace_normalize_text(trend)
+            if t_norm and t_norm in h_norm:
+                candidates.append((h, s))
+        if candidates:
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            return candidates[0][0]
+
+    return ace_pick_best_hook(trend)
+
+def ace_pick_style_smart():
+    if ACE_VIRAL_MEMORY["styles"]:
+        ranked = sorted(
+            ACE_VIRAL_MEMORY["styles"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        if ranked:
+            return ranked[0][0]
+    return ace_pick_style()
+
+def ace_video_creative_core():
+    trend = ace_pick_trend_smart()
+    style = ace_pick_style_smart()
+    hook = ace_pick_best_hook_smart(trend)
+
+    body = ace_build_script(trend, hook, style)
+    text = f"{hook}\n\n{body}"
+
+    video = ace_make_reel_video(text)
+
+    ace_record_performance(trend, hook, style)
+
+    ACE_VIDEO_STATE["cycles"] += 1
+    ACE_VIDEO_STATE["last_video"] = video
+    ACE_VIDEO_STATE["last_trend"] = trend
+
+    return {
+        "trend": trend,
+        "style": style,
+        "hook": hook,
+        "text": text,
+        "media_path": video
+    }
+
+def ace_analytics_supervisor_loop():
+    while True:
+        try:
+            ace_refresh_viral_memory_from_instagram(limit=12)
+            time.sleep(3600)
+        except Exception as e:
+            ACE_ANALYTICS_CORE["last_error"] = str(e)
+            log("WARN", "ace_analytics_supervisor_fail", {"error": str(e)})
+            time.sleep(900)
+
+threading.Thread(
+    target=ace_analytics_supervisor_loop,
+    daemon=True
+).start()
+
+@app.route("/debug/analytics")
+def ace_debug_analytics():
+    return jsonify({
+        "ok": True,
+        "last_scan": ACE_ANALYTICS_CORE["last_scan"],
+        "top_posts": ACE_ANALYTICS_CORE["top_posts"],
+        "viral_memory": {
+            "top_themes": sorted(ACE_VIRAL_MEMORY["themes"].items(), key=lambda x: x[1], reverse=True)[:10],
+            "top_hooks": sorted(ACE_VIRAL_MEMORY["hooks"].items(), key=lambda x: x[1], reverse=True)[:10],
+            "top_styles": sorted(ACE_VIRAL_MEMORY["styles"].items(), key=lambda x: x[1], reverse=True)[:10],
+        },
+        "last_error": ACE_ANALYTICS_CORE["last_error"]
+    })
+
+log("INFO", "ace_instagram_analytics_core_loaded", {
+    "real_media_learning": True,
+    "metrics_mode": ACE_ANALYTICS_CORE["metrics_mode"]
+})
+
 # ==========================================================
 # BOOT
 # ==========================================================
