@@ -5631,7 +5631,136 @@ else:
     ace_safe_add_route("/debug/analytics", "ace_debug_analytics", _ace_debug_analytics_hotfix, methods=["GET"])
 
 log("INFO", "ace_analytics_hotfix_loaded", {"ok": True})
-    
+
+# ==========================================================
+# ACE Ω EXECUTION OVERRIDE
+# força a fila a usar o núcleo consolidado de vídeo
+# COLE ACIMA DO BOOT
+# ==========================================================
+
+def ace_create_reel_from_core(trend=None, style=None):
+    result = ace_video_creative_core()
+
+    trend = result["trend"]
+    style = result["style"]
+    hook = result["hook"]
+    text = result["text"]
+    media_path = result["media_path"]
+
+    publish_result = processar_publicacao_governada(
+        trend=trend,
+        estilo=style,
+        tipo="reel",
+        title=hook,
+        hook=hook,
+        body=text,
+        media_path=media_path
+    )
+
+    return {
+        "ok": bool(publish_result.get("ok")),
+        "type": "reel",
+        "result": publish_result,
+        "trend": trend,
+        "style": style,
+        "hook": hook,
+        "media_path": media_path,
+    }
+
+
+def ace_create_carrossel_from_core(trend=None, style=None):
+    # fallback controlado: ainda usa o pipeline antigo de carrossel,
+    # mas com trend/style saneados
+    trend = trend or ace_pick_trend_smart() if "ace_pick_trend_smart" in globals() else ace_pick_trend()
+    style = style or ace_pick_style_smart() if "ace_pick_style_smart" in globals() else ace_pick_style()
+    hook = ace_pick_best_hook_smart(trend) if "ace_pick_best_hook_smart" in globals() else ace_pick_best_hook(trend)
+
+    prompt = f"""
+    Crie um carrossel de 5 slides em português do Brasil.
+
+    Tema: {trend}
+    Estilo: {style}
+    Hook: {hook}
+
+    Estrutura:
+    Slide 1 = Hook
+    Slide 2 = Problema
+    Slide 3 = Insight
+    Slide 4 = Solução
+    Slide 5 = CTA
+    """
+
+    body = ace_router_generate_text(prompt)
+    content = f"{hook}\n\n{body}"
+
+    result = criar_carrossel(trend, [hook, body[:220], "Insight", "Solução", "CTA"])
+
+    return {
+        "ok": bool(result.get("ok")),
+        "type": "carrossel",
+        "result": result,
+        "trend": trend,
+        "style": style,
+        "hook": hook,
+    }
+
+
+def execute_task(task):
+    trend = task.get("trend")
+    style = task.get("style")
+    task_type = task.get("type")
+
+    try:
+        if task_type == "reel":
+            result = ace_create_reel_from_core(trend=trend, style=style)
+
+            if result.get("ok"):
+                register_performance("reel", True)
+                mark_task_memory(task, "done", "core_video_ok")
+                return result
+
+            register_performance("reel", False)
+            mark_task_memory(task, "failed", result.get("result", {}).get("reason", "core_video_fail"))
+            return result
+
+        if task_type == "carrossel":
+            result = ace_create_carrossel_from_core(trend=trend, style=style)
+
+            if result.get("ok"):
+                register_performance("carrossel", True)
+                mark_task_memory(task, "done", "carousel_ok")
+                return result
+
+            register_performance("carrossel", False)
+            mark_task_memory(task, "failed", result.get("result", {}).get("reason", "carousel_fail"))
+            return result
+
+        if task_type == "presenca":
+            result = ace_create_reel_from_core(trend=trend, style=style)
+
+            if result.get("ok"):
+                register_performance("reel", True)
+                mark_task_memory(task, "done", "presence_core_ok")
+                return result
+
+            register_performance("reel", False)
+            mark_task_memory(task, "failed", "presence_core_fail")
+            return result
+
+        mark_task_memory(task, "failed", f"unknown_task_type:{task_type}")
+        return {"ok": False, "error": f"tipo desconhecido: {task_type}"}
+
+    except Exception as e:
+        log("ERROR", "execute_task_override_fail", {"task": task, "error": str(e)})
+        mark_task_memory(task, "failed", str(e))
+        return {"ok": False, "error": str(e)}
+
+
+log("INFO", "ace_execution_override_loaded", {
+    "reel_pipeline": "video_core",
+    "carrossel_pipeline": "controlled",
+})
+
 # ==========================================================
 # BOOT
 # ==========================================================
