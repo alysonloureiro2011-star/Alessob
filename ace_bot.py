@@ -2,6 +2,12 @@
 # ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 4 + TOKEN CALLBACK
 # ARQUIVO ÚNICO PARA RENDER
 # ==========================================================
+from ace.engines.trend_engine import (
+    choose_trend,
+    normalize_trend,
+    build_trend_object
+)
+
 from ace.core.config import *
 import os
 import gc
