@@ -63,13 +63,6 @@ except Exception:
 # CONFIG
 # ==========================================================
 
-def ace_env(key, default=None):
-    return os.environ.get(key, default)
-
-
-APP_NAME = "ACE Ω SUPREME"
-PORT = int(ace_env("PORT", "10000"))
-VERIFY_TOKEN = ace_env("VERIFY_TOKEN", "ACE_SIGILO_2026")
 
 RENDER_URL = ace_env(
     "RENDER_EXTERNAL_URL",
