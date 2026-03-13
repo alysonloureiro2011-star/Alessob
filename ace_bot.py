@@ -5032,6 +5032,81 @@ ace_safe_add_route("/ext/adaptive/force", "ace_adaptive_force_ext", _ace_adaptiv
 
 log("INFO", "ace_adaptive_world_patch_loaded", ACE_ADAPTIVE_PATCH_STATE)
 
+# ==========================================================
+# ACE ADAPTIVE HOTFIX
+# SANITIZAÇÃO FINAL DE TRENDS + FILTRO DE RUÍDO
+# COLE ABAIXO DO PATCH ADAPTATIVO E ACIMA DE # BOOT
+# ==========================================================
+
+ACE_WORLD_HOTFIX_ENABLED = str(ace_env("ACE_WORLD_HOTFIX_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_WORLD_HOTFIX_BLACKLIST = {
+    "atras", "atrás", "proibe", "proíbe", "sentido", "explica",
+    "acontecendo", "assustador", "verdade", "ninguem", "ninguém",
+    "causa", "volta", "segue", "novo", "alta", "meio", "filha",
+    "visita", "busca", "decisao", "decisão", "pedido", "motorista",
+    "jornalista", "preso", "bloqueio", "reduz", "impostos"
+}
+
+def ace_world_is_noisy_candidate(text):
+    norm = ace_normalize_text(text)
+    if not norm:
+        return True
+
+    words = [w for w in norm.split() if w]
+    if not words:
+        return True
+
+    if norm in ACE_WORLD_HOTFIX_BLACKLIST:
+        return True
+
+    if len(words) == 1 and words[0] in ACE_WORLD_HOTFIX_BLACKLIST:
+        return True
+
+    if len(words) <= 2:
+        bad_count = sum(1 for w in words if w in ACE_WORLD_HOTFIX_BLACKLIST)
+        if bad_count >= 1:
+            return True
+
+    if any(w in ACE_WORLD_HOTFIX_BLACKLIST for w in words) and len(words) < 3:
+        return True
+
+    return False
+
+_original_ace_world_sanitize_candidate_hotfix = ace_world_sanitize_candidate
+_original_ace_world_pick_trend_hotfix = ace_world_pick_trend
+
+def ace_world_sanitize_candidate(text):
+    candidate = _original_ace_world_sanitize_candidate_hotfix(text)
+
+    if not ACE_WORLD_HOTFIX_ENABLED:
+        return candidate
+
+    if ace_world_is_noisy_candidate(candidate):
+        return ace_world_pick_fallback_trend()
+
+    words = [w for w in ace_normalize_text(candidate).split() if w and w not in ACE_WORLD_HOTFIX_BLACKLIST]
+    if len(words) < 2:
+        return ace_world_pick_fallback_trend()
+
+    refined = " ".join(words[:4]).strip()
+    if ace_world_is_noisy_candidate(refined):
+        return ace_world_pick_fallback_trend()
+
+    return refined
+
+def ace_world_pick_trend():
+    trend = _original_ace_world_pick_trend_hotfix()
+    if ace_world_is_noisy_candidate(trend):
+        trend = ace_world_pick_fallback_trend()
+    ACE_ADAPTIVE_PATCH_STATE["last_world_trend"] = trend
+    return trend
+
+log("INFO", "ace_adaptive_hotfix_loaded", {
+    "enabled": ACE_WORLD_HOTFIX_ENABLED,
+    "blacklist_size": len(ACE_WORLD_HOTFIX_BLACKLIST)
+})
+
         
 # ==========================================================
 # BOOT
