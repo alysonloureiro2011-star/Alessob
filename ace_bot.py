@@ -4371,10 +4371,17 @@ def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_pat
             "report": refined_report,
         }
 
-    return {
-        "approved": False,
-        "body": refined_body,
-        "media_path": media
+    
+return {
+    "approved": False,
+    "body": refined_body,
+    "media_path": media_path,
+    "media_paths": media_paths or [],
+    "report": refined_report,
+
+}
+
+
 # ==========================================================
 # BOOT
 # ==========================================================
