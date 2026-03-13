@@ -4252,76 +4252,7 @@ def ace_build_visual_prompt(content_type, trend, style, hook, idea):
 # ---------------------------
 # QUALITY GATE
 # ---------------------------
-def ace_media_quality_score(media_path, content_type="reel"):
-    if not media_path:
-        return 0.0
-    try:
-        p = Path(media_path)
-        if not p.exists():
-            return 0.0
 
-        ext = p.suffix.lower()
-        score = 0.55
-
-        if ext in (".png", ".jpg", ".jpeg", ".webp"):
-            score += 0.15
-        if ext in (".mp4", ".mov", ".m4v"):
-            score += 0.20
-
-        size_bytes = p.stat().st_size
-        if size_bytes > 200_000:
-            score += 0.05
-        if size_bytes > 700_000:
-            score += 0.05
-        if size_bytes > 2_000_000:
-            score += 0.05
-
-        if content_type == "carrossel":
-            score += 0.05
-
-        return max(0.0, min(1.0, round(score, 4)))
-    except Exception as e:
-        log("WARN", "ace_media_quality_score_fail", e)
-        return 0.0
-
-def ace_visual_quality_score(body, media_path, content_type):
-    text_score = ace_text_naturality_score(body)
-    media_score = ace_media_quality_score(media_path, content_type=content_type)
-    score = (text_score * 0.45) + (media_score * 0.55)
-    return max(0.0, min(1.0, round(score, 4)))
-
-def ace_quality_report(trend, style, content_type, hook, body, media_path=None, media_paths=None):
-    text_score = ace_text_naturality_score(body)
-    media_score = ace_media_quality_score(media_path, content_type=content_type)
-    combined = ace_visual_quality_score(body, media_path, content_type)
-
-    issues = []
-    if text_score < 0.72:
-        issues.append("texto_pouco_natural")
-    if media_score < 0.72:
-        issues.append("mídia_fraca")
-    if combined < ACE_MIN_ACCEPT_SCORE:
-        issues.append("abaixo_do_padrão")
-
-    report = {
-        "trend": trend,
-        "style": style,
-        "content_type": content_type,
-        "hook": hook,
-        "text_score": text_score,
-        "media_score": media_score,
-        "combined_score": combined,
-        "issues": issues,
-        "approved": combined >= ACE_MIN_ACCEPT_SCORE,
-        "media_path": media_path,
-        "media_paths_count": len(media_paths or []),
-    }
-
-    ACE_STEP3_STATE["last_quality_report"] = report
-    ACE_STEP3_STATE["last_accept_score"] = combined
-    if issues:
-        ACE_STEP3_STATE["last_rejection_reason"] = ",".join(issues)
-    return report
 
 def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_path=None, media_paths=None):
     if not ACE_PREPUBLISH_QUALITY_GATE:
@@ -4342,6 +4273,7 @@ def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_pat
         media_path=media_path,
         media_paths=media_paths,
     )
+
     if report["approved"]:
         return {
             "approved": True,
@@ -4371,17 +4303,15 @@ def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_pat
             "report": refined_report,
         }
 
-    
-return {
-    "approved": False,
-    "body": refined_body,
-    "media_path": media_path,
-    "media_paths": media_paths or [],
-    "report": refined_report,
+    return {
+        "approved": False,
+        "body": refined_body,
+        "media_path": media_path,
+        "media_paths": media_paths or [],
+        "report": refined_report,
+    }
 
-}
-
-
+        
 # ==========================================================
 # BOOT
 # ==========================================================
