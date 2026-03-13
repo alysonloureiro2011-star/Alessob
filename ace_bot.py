@@ -2,6 +2,8 @@
 # ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 4 + TOKEN CALLBACK
 # ARQUIVO ÚNICO PARA RENDER
 # ==========================================================
+from ace.pipeline.queue_executor import QueueExecutor
+
 from ace.engines.trend_engine import (
     choose_trend,
     normalize_trend,
