@@ -44,7 +44,7 @@ try:
     from gtts import gTTS
 except Exception:
     gTTS = None
-⁷
+
 try:
     from moviepy.video.VideoClip import ColorClip, TextClip, ImageClip
     from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
