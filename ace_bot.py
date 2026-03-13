@@ -70,6 +70,76 @@ import requests
 import numpy as np
 
 # ==========================================================
+# PIPELINE MODULAR ACE
+# ==========================================================
+
+def ace_run_modular_pipeline(trend):
+
+    # 1 — DIRETOR (decide formato e estilo)
+    plan = build_director_plan(trend)
+
+    content_type = plan["content_type"]
+    style = plan["style"]
+
+    # 2 — GERADOR (cria conteúdo textual)
+    content = build_content_package(
+        trend=trend,
+        style=style,
+        content_type=content_type
+    )
+
+    # 3 — MEDIA (gera mídia placeholder)
+    media = build_media_package(
+        content_type=content_type,
+        caption=content["caption"]
+    )
+
+    # 4 — PUBLICAÇÃO (estrutura publicação)
+    published = publish_content(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        caption=content["caption"],
+        media_path=media["media_path"]
+    )
+
+    # 5 — ATUALIZA ESTADO GLOBAL
+    try:
+        ACE_STATE["cycles"] += 1
+        ACE_STATE["last_trend"] = trend
+        ACE_STATE["last_publish"] = published
+        ACE_STATE["last_error"] = None
+    except Exception:
+        pass
+
+    return {
+        "plan": plan,
+        "content": content,
+        "media": media,
+        "published": published
+    }
+
+
+def ace_test_modular_pipeline():
+
+    trend_obj = build_trend_object("disciplina e prosperidade", 1.0)
+
+    trend = trend_obj["topic"]
+
+    return ace_run_modular_pipeline(trend)
+
+
+# ==========================================================
+# ROTA DE TESTE DO PIPELINE
+# ==========================================================
+
+@app.route("/ace/test_modular")
+def ace_test_modular():
+
+    result = ace_test_modular_pipeline()
+
+    return jsonify(result)
+# ==========================================================
 # FRAMEWORK WEB
 # ==========================================================
 
