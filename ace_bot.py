@@ -2956,7 +2956,12 @@ def instagram_token_callback():
         "error": result.get("error")
     }), 400
 
+@app.route("/ace/test_modular")
+def ace_test_modular():
 
+    result = ace_test_modular_pipeline()
+
+    return jsonify(result)
 @app.route("/instagram/token/long_lived")
 def instagram_token_long_lived():
     result = ace_exchange_long_lived_token()
