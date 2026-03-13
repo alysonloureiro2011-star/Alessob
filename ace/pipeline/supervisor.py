@@ -10,13 +10,25 @@ class Supervisor:
         self.running = False
         self.thread = None
 
-    def cycle(self):
-        """
-        Aqui entra a lógica principal do ACE.
-        Por enquanto, deixamos só o esqueleto.
-        """
-        pass
+    
+def cycle(self):
 
+    from ace.engines.trend_engine import build_trend_object
+    from ace_bot import ace_run_modular_pipeline
+
+    trend_obj = build_trend_object("disciplina e prosperidade", 1.0)
+
+    trend = trend_obj["topic"]
+
+    try:
+
+        result = ace_run_modular_pipeline(trend)
+
+        print("ACE pipeline executado:", result["published"])
+
+    except Exception as e:
+
+        print("Erro no pipeline:", e)
     def worker(self):
         while self.running:
             try:
