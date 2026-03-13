@@ -6390,6 +6390,48 @@ log("INFO", "ace_sovereign_video_patch_loaded", {
     "legacy_reel_overridden": True
 })
 
+
+# ==========================================================
+# ACE Ω MOVIEPY HOTFIX
+# compatibilidade com API nova do moviepy no Render
+# ==========================================================
+
+def ace_sv_make_video(text, trend=None):
+    media_dir = Path(MEDIA_DIR)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    video_path = media_dir / f"ace_video_{uuid.uuid4().hex}.mp4"
+
+    frame_path = ace_sv_render_frame(text, trend=trend)
+    audio_path = ace_sv_make_audio(text)
+
+    duration = 9.0
+    audio = None
+
+    try:
+        if audio_path and os.path.exists(audio_path):
+            audio = AudioFileClip(audio_path)
+            duration = max(6.5, min(18.0, float(audio.duration)))
+    except Exception:
+        audio = None
+        duration = 9.0
+
+    base = ImageClip(frame_path).with_duration(duration)
+    zoom = base.resized(lambda t: 1.0 + min(0.08, t * 0.012))
+
+    clip = zoom.with_audio(audio) if audio else zoom
+
+    clip.write_videofile(
+        str(video_path),
+        fps=24,
+        codec="libx264",
+        audio_codec="aac",
+        logger=None
+    )
+
+    return str(video_path)
+
+log("INFO", "ace_moviepy_hotfix_loaded", {"ok": True})
+
 # ==========================================================
 # BOOT
 # ==========================================================
