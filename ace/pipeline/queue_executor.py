@@ -1,4 +1,3 @@
-
 import queue
 import threading
 import time
@@ -9,6 +8,7 @@ class QueueExecutor:
     def __init__(self):
         self.q = queue.Queue()
         self.running = False
+        self.thread = None
 
     def add(self, task):
         self.q.put(task)
@@ -20,7 +20,9 @@ class QueueExecutor:
                 task()
                 self.q.task_done()
             except queue.Empty:
-                time.sleep(1)
+                time.sleep(0.5)
+            except Exception as e:
+                print("QUEUE TASK ERROR:", e)
 
     def start(self):
         if self.running:
@@ -28,8 +30,12 @@ class QueueExecutor:
 
         self.running = True
 
-        t = threading.Thread(target=self.worker, daemon=True)
-        t.start()
+        self.thread = threading.Thread(
+            target=self.worker,
+            daemon=True
+        )
+
+        self.thread.start()
 
     def stop(self):
         self.running = False
