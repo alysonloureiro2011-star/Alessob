@@ -63,18 +63,6 @@ except Exception:
 # CONFIG
 # ==========================================================
 
-
-RENDER_URL = ace_env(
-    "RENDER_EXTERNAL_URL",
-    f"https://{ace_env('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
-)
-
-BASE_DIR = Path(__file__).resolve().parent
-MEMORY_DIR = BASE_DIR / "memory"
-TMP_DIR = BASE_DIR / "tmp_ace"
-MEDIA_DIR = BASE_DIR / "ace_media"
-ENGINES_DIR = BASE_DIR / "engines"
-
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
