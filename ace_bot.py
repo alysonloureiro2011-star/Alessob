@@ -2,7 +2,7 @@
 # ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 4 + TOKEN CALLBACK
 # ARQUIVO ÚNICO PARA RENDER
 # ==========================================================
-
+from ace.core.config import *
 import os
 import gc
 import re
