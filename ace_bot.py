@@ -133,12 +133,6 @@ def ace_test_modular_pipeline():
 # ROTA DE TESTE DO PIPELINE
 # ==========================================================
 
-@app.route("/ace/test_modular")
-def ace_test_modular():
-
-    result = ace_test_modular_pipeline()
-
-    return jsonify(result)
 # ==========================================================
 # FRAMEWORK WEB
 # ==========================================================
