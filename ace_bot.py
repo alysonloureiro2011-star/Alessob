@@ -66,6 +66,8 @@ from difflib import SequenceMatcher
 from urllib.parse import urlencode
 from typing import Any, Dict, List, Optional
 
+AUTH_PATH = Path("instagram_auth.json")
+
 import requests
 import numpy as np
 
