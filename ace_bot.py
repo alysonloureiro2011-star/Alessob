@@ -44,7 +44,7 @@ try:
     from gtts import gTTS
 except Exception:
     gTTS = None
-
+⁷
 try:
     from moviepy.video.VideoClip import ColorClip, TextClip, ImageClip
     from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
@@ -4041,6 +4041,340 @@ ace_safe_add_route("/ext/test/reel", "ace_ext_test_reel_consolidado", _ext_test_
 ACE_STATE["mode"] = "EXTENSION_ACTIVE"
 log("INFO", "ace_extension_pack_consolidado_loaded", ACE_EXT_STATE)
 
+# ==========================================================
+# ACE EXTENSION STEP 3
+# PROMPT ENGINEERS + QUALITY GOVERNANCE + PREMIUM PRODUCTION
+# COLE ABAIXO DAS OUTRAS EXTENSÕES E ACIMA DE # BOOT
+# ==========================================================
+
+ACE_PREPUBLISH_QUALITY_GATE = str(ace_env("ACE_PREPUBLISH_QUALITY_GATE", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_QUALITY_PRIORITY_MODE = str(ace_env("ACE_QUALITY_PRIORITY_MODE", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_MAX_PRODUCTION_PER_CYCLE = int(ace_env("ACE_MAX_PRODUCTION_PER_CYCLE", "1"))
+ACE_MIN_ACCEPT_SCORE = float(ace_env("ACE_MIN_ACCEPT_SCORE", "0.82"))
+ACE_ENABLE_PROMPT_ENGINEERS = str(ace_env("ACE_ENABLE_PROMPT_ENGINEERS", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_USE_PREMIUM_VISUAL_PROMPTS = str(ace_env("ACE_USE_PREMIUM_VISUAL_PROMPTS", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_TEXT_NATURALITY_STRICT = str(ace_env("ACE_TEXT_NATURALITY_STRICT", "1")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_STEP3_STATE = {
+    "loaded_at": datetime.datetime.now().isoformat(),
+    "quality_gate": ACE_PREPUBLISH_QUALITY_GATE,
+    "quality_priority_mode": ACE_QUALITY_PRIORITY_MODE,
+    "max_production_per_cycle": ACE_MAX_PRODUCTION_PER_CYCLE,
+    "min_accept_score": ACE_MIN_ACCEPT_SCORE,
+    "prompt_engineers_enabled": ACE_ENABLE_PROMPT_ENGINEERS,
+    "premium_visual_prompts": ACE_USE_PREMIUM_VISUAL_PROMPTS,
+    "text_naturality_strict": ACE_TEXT_NATURALITY_STRICT,
+    "last_prompt_pack": None,
+    "last_quality_report": None,
+    "last_rejection_reason": None,
+    "last_accept_score": None,
+}
+
+# ---------------------------
+# PROMPT ENGINEERS
+# ---------------------------
+ACE_PROMPT_ENGINEERS = {
+    "director": {
+        "name": "ACE Director",
+        "role": "Define direção criativa, atmosfera, intenção emocional e elegância narrativa.",
+    },
+    "cinematographer": {
+        "name": "ACE Cinematographer",
+        "role": "Define luz, composição, profundidade, contraste, textura, lente e leitura visual premium.",
+    },
+    "copy_chief": {
+        "name": "ACE Copy Chief",
+        "role": "Refina o texto para soar humano, claro, forte, fluido e sem cheiro de IA.",
+    },
+    "storyboard": {
+        "name": "ACE Storyboard Engineer",
+        "role": "Transforma a ideia em sequência visual: hook, tensão, contraste, solução, CTA.",
+    },
+    "brand_guardian": {
+        "name": "ACE Brand Guardian",
+        "role": "Garante coerência estética, espiritual, intelectual e de posicionamento.",
+    },
+    "quality_reviewer": {
+        "name": "ACE Quality Reviewer",
+        "role": "Audita naturalidade, nitidez, clareza, retenção saudável, legibilidade e premium feel.",
+    },
+}
+
+def ace_prompt_engineer_pack(content_type, trend, style, hook, idea):
+    base_style = str(style or "premium").strip()
+    trend = str(trend or "").strip()
+    hook = str(hook or "").strip()
+    idea = str(idea or "").strip()
+
+    director_prompt = (
+        f"Direção criativa premium para {content_type}. "
+        f"Tema: {trend}. Estilo: {base_style}. Hook: {hook}. "
+        f"Objetivo: impacto alto, naturalidade humana, clareza, elegância, tensão narrativa, profundidade emocional."
+    )
+
+    cinematographer_prompt = (
+        f"Direção visual premium para {content_type}. "
+        f"Tema: {trend}. "
+        f"Estética: luz cinematográfica suave, contraste limpo, profundidade, composição central forte, "
+        f"tons sofisticados, aparência orgânica, acabamento premium, legibilidade alta, sem ruído visual."
+    )
+
+    copy_prompt = (
+        f"Escreva em português do Brasil com naturalidade humana. "
+        f"Evite soar robótico, genérico, inflado ou repetitivo. "
+        f"Use frases fortes, mas limpas. "
+        f"Evite exagero artificial. "
+        f"Mantenha precisão, fluidez e presença."
+    )
+
+    storyboard_prompt = (
+        f"Monte a estrutura de {content_type} com progressão clara. "
+        f"Sequência: hook, tensão, contraste, insight, solução, fechamento, CTA curto."
+    )
+
+    brand_prompt = (
+        f"Mantenha coerência com uma marca de alto valor simbólico, espiritual e mental. "
+        f"Nada infantil, nada amador, nada visualmente poluído. "
+        f"Entrega premium, séria, elegante e memorável."
+    )
+
+    visual_prompt = (
+        f"Visual premium, orgânico, alto nível, realista, textura natural, iluminação refinada, "
+        f"profundidade cinematográfica, composição equilibrada, nitidez alta, cor sofisticada, "
+        f"sem aspecto artificial forçado, sem aparência genérica."
+    )
+
+    pack = {
+        "director_prompt": director_prompt,
+        "cinematographer_prompt": cinematographer_prompt,
+        "copy_prompt": copy_prompt,
+        "storyboard_prompt": storyboard_prompt,
+        "brand_prompt": brand_prompt,
+        "visual_prompt": visual_prompt,
+        "seed_context": {
+            "content_type": content_type,
+            "trend": trend,
+            "style": base_style,
+            "hook": hook,
+            "idea": idea,
+        },
+    }
+
+    ACE_STEP3_STATE["last_prompt_pack"] = pack
+    return pack
+
+# ---------------------------
+# NATURALIDADE / TEXTO
+# ---------------------------
+def ace_text_has_ai_smell(text):
+    text = str(text or "").lower()
+    suspicious = [
+        "neste vídeo",
+        "neste carrossel",
+        "vamos explorar",
+        "descubra agora",
+        "de forma poderosa",
+        "incrivelmente",
+        "transformadoramente",
+        "jornada de transformação",
+        "conteúdo impactante",
+    ]
+    hits = sum(1 for s in suspicious if s in text)
+    return hits >= 2
+
+def ace_text_naturality_score(text):
+    text = str(text or "").strip()
+    if not text:
+        return 0.0
+
+    score = 1.0
+
+    if len(text) < 40:
+        score -= 0.25
+    if len(text) > 2200:
+        score -= 0.20
+    if ace_text_has_ai_smell(text):
+        score -= 0.30
+
+    exclam = text.count("!")
+    if exclam > 4:
+        score -= 0.10
+
+    caps_words = [w for w in text.split() if len(w) > 2 and w.isupper()]
+    if len(caps_words) > 8:
+        score -= 0.10
+
+    repeated_patterns = ["verdade", "segredo", "erro", "agora", "ninguém"]
+    for rp in repeated_patterns:
+        if text.lower().count(rp) > 4:
+            score -= 0.07
+
+    if ACE_TEXT_NATURALITY_STRICT and len(re.findall(r"[|]{1,}", text)) > 2:
+        score -= 0.10
+
+    return max(0.0, min(1.0, round(score, 4)))
+
+def ace_refine_text_natural(text, trend, style):
+    base = str(text or "").strip()
+    prompt = (
+        f"Reescreva este texto em português do Brasil com naturalidade humana alta, "
+        f"clareza, elegância e força. "
+        f"Remova cheiro de IA, clichês e exagero artificial. "
+        f"Mantenha o impacto e a intenção. "
+        f"Tema: {trend}. Estilo: {style}. "
+        f"Texto original:\n\n{base}"
+    )
+    refined = gerar_texto_gpt(prompt)
+    refined = str(refined or "").strip()
+    if refined:
+        return refined
+    return base
+
+# ---------------------------
+# VISUAL PROMPTS PREMIUM
+# ---------------------------
+def ace_build_visual_prompt(content_type, trend, style, hook, idea):
+    pack = ace_prompt_engineer_pack(content_type, trend, style, hook, idea)
+
+    prompt = (
+        f"{pack['visual_prompt']} "
+        f"Direção: {pack['director_prompt']} "
+        f"Fotografia: {pack['cinematographer_prompt']} "
+        f"Marca: {pack['brand_prompt']} "
+        f"Tema central: {trend}. "
+        f"Hook: {hook}. "
+        f"Ideia base: {idea}. "
+        f"Formato: {content_type}. "
+        f"Prioridade: naturalidade, sofisticação, nitidez, profundidade, leitura premium."
+    )
+    return prompt
+
+# ---------------------------
+# QUALITY GATE
+# ---------------------------
+def ace_media_quality_score(media_path, content_type="reel"):
+    if not media_path:
+        return 0.0
+    try:
+        p = Path(media_path)
+        if not p.exists():
+            return 0.0
+
+        ext = p.suffix.lower()
+        score = 0.55
+
+        if ext in (".png", ".jpg", ".jpeg", ".webp"):
+            score += 0.15
+        if ext in (".mp4", ".mov", ".m4v"):
+            score += 0.20
+
+        size_bytes = p.stat().st_size
+        if size_bytes > 200_000:
+            score += 0.05
+        if size_bytes > 700_000:
+            score += 0.05
+        if size_bytes > 2_000_000:
+            score += 0.05
+
+        if content_type == "carrossel":
+            score += 0.05
+
+        return max(0.0, min(1.0, round(score, 4)))
+    except Exception as e:
+        log("WARN", "ace_media_quality_score_fail", e)
+        return 0.0
+
+def ace_visual_quality_score(body, media_path, content_type):
+    text_score = ace_text_naturality_score(body)
+    media_score = ace_media_quality_score(media_path, content_type=content_type)
+    score = (text_score * 0.45) + (media_score * 0.55)
+    return max(0.0, min(1.0, round(score, 4)))
+
+def ace_quality_report(trend, style, content_type, hook, body, media_path=None, media_paths=None):
+    text_score = ace_text_naturality_score(body)
+    media_score = ace_media_quality_score(media_path, content_type=content_type)
+    combined = ace_visual_quality_score(body, media_path, content_type)
+
+    issues = []
+    if text_score < 0.72:
+        issues.append("texto_pouco_natural")
+    if media_score < 0.72:
+        issues.append("mídia_fraca")
+    if combined < ACE_MIN_ACCEPT_SCORE:
+        issues.append("abaixo_do_padrão")
+
+    report = {
+        "trend": trend,
+        "style": style,
+        "content_type": content_type,
+        "hook": hook,
+        "text_score": text_score,
+        "media_score": media_score,
+        "combined_score": combined,
+        "issues": issues,
+        "approved": combined >= ACE_MIN_ACCEPT_SCORE,
+        "media_path": media_path,
+        "media_paths_count": len(media_paths or []),
+    }
+
+    ACE_STEP3_STATE["last_quality_report"] = report
+    ACE_STEP3_STATE["last_accept_score"] = combined
+    if issues:
+        ACE_STEP3_STATE["last_rejection_reason"] = ",".join(issues)
+    return report
+
+def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_path=None, media_paths=None):
+    if not ACE_PREPUBLISH_QUALITY_GATE:
+        return {
+            "approved": True,
+            "body": body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": None,
+        }
+
+    report = ace_quality_report(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        hook=hook,
+        body=body,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+    if report["approved"]:
+        return {
+            "approved": True,
+            "body": body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": report,
+        }
+
+    refined_body = ace_refine_text_natural(body, trend, style)
+    refined_report = ace_quality_report(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        hook=hook,
+        body=refined_body,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+
+    if refined_report["approved"]:
+        return {
+            "approved": True,
+            "body": refined_body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": refined_report,
+        }
+
+    return {
+        "approved": False,
+        "body": refined_body,
+        "media_path": media
 # ==========================================================
 # BOOT
 # ==========================================================
