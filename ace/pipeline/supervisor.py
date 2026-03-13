@@ -16,9 +16,9 @@ def cycle(self):
     from ace.engines.trend_engine import build_trend_object
     from ace_bot import ace_run_modular_pipeline
 
-    trend_obj = build_trend_object("disciplina e prosperidade", 1.0)
+    trend_obj = build_trend_object("inteligencia artificial", 1.0)
 
-    trend = trend_obj["topic"]
+trend = trend_obj["topic"]
 
     try:
 
