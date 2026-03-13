@@ -8,6 +8,9 @@
 # ==========================================================
 
 
+from ace.pipeline.queue_executor import QueueExecutor
+from ace.pipeline.supervisor import Supervisor
+
 from ace.core.config import *
 from ace.core.db import *
 from ace.core.state import *
@@ -21,8 +24,9 @@ from ace.engines.trend_engine import (
 
 queue_executor = QueueExecutor()
 queue_executor.start()
-from ace.pipeline.queue_executor import QueueExecutor
 
+supervisor = Supervisor(queue_executor)
+supervisor.start()
 
 # ==========================================================
 # IMPORTS DO SISTEMA
