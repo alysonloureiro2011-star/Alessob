@@ -7,8 +7,7 @@
 # IMPORTS DE MÓDULOS INTERNOS
 # ==========================================================
 
-queue_executor = QueueExecutor()
-queue_executor.start()
+
 from ace.core.config import *
 from ace.core.db import *
 from ace.core.state import *
@@ -20,6 +19,8 @@ from ace.engines.trend_engine import (
     build_trend_object
 )
 
+queue_executor = QueueExecutor()
+queue_executor.start()
 from ace.pipeline.queue_executor import QueueExecutor
 
 
