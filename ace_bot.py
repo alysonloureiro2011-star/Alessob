@@ -1,8 +1,16 @@
 # ==========================================================
-# ACE Ω SUPREME - CONSOLIDADO FINAL COM CAMADA 4 + TOKEN CALLBACK
-# ARQUIVO ÚNICO PARA RENDER
+# ACE Ω SUPREME - CORE BOOTSTRAP
+# Arquivo principal do sistema
 # ==========================================================
-from ace.pipeline.queue_executor import QueueExecutor
+
+# ==========================================================
+# IMPORTS DE MÓDULOS INTERNOS
+# ==========================================================
+
+from ace.core.config import *
+from ace.core.db import *
+from ace.core.state import *
+from ace.core.logging import *
 
 from ace.engines.trend_engine import (
     choose_trend,
@@ -10,7 +18,13 @@ from ace.engines.trend_engine import (
     build_trend_object
 )
 
-from ace.core.config import *
+from ace.pipeline.queue_executor import QueueExecutor
+
+
+# ==========================================================
+# IMPORTS DO SISTEMA
+# ==========================================================
+
 import os
 import gc
 import re
@@ -23,6 +37,7 @@ import datetime
 import traceback
 import hashlib
 import unicodedata
+
 from pathlib import Path
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
@@ -30,7 +45,18 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import numpy as np
+
+
+# ==========================================================
+# FRAMEWORK WEB
+# ==========================================================
+
 from flask import Flask, jsonify, request, send_from_directory, redirect
+
+
+# ==========================================================
+# DEPENDÊNCIAS OPCIONAIS
+# ==========================================================
 
 try:
     from pytrends.request import TrendReq
@@ -65,6 +91,34 @@ except Exception:
     CompositeVideoClip = None
     AudioFileClip = None
     MOVIEPY_OK = False
+
+
+# ==========================================================
+# INICIALIZAÇÃO DO SISTEMA
+# ==========================================================
+
+app = Flask(__name__)
+
+
+# ==========================================================
+# EXECUTOR DE FILA (PIPELINE)
+# ==========================================================
+
+queue_executor = QueueExecutor()
+queue_executor.start()
+
+
+# ==========================================================
+# MEMÓRIA GLOBAL DO ACE
+# ==========================================================
+
+ACE_STATE = {
+    "online": True,
+    "cycles": 0,
+    "last_trend": None,
+    "last_style": None,
+    "last_hook": None,
+    "last
 
 
 
