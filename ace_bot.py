@@ -146,6 +146,55 @@ ACE_STATE = {
 }
 
 # ==========================================================
+# PIPELINE MODULAR ACE
+# ==========================================================
+
+def ace_run_modular_pipeline(trend):
+
+    plan = build_director_plan(trend)
+
+    content_type = plan["content_type"]
+    style = plan["style"]
+
+    content = build_content_package(
+        trend=trend,
+        style=style,
+        content_type=content_type
+    )
+
+    media = build_media_package(
+        content_type=content_type,
+        caption=content["caption"]
+    )
+
+    published = publish_content(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        caption=content["caption"],
+        media_path=media["media_path"]
+    )
+
+    ACE_STATE["cycles"] += 1
+    ACE_STATE["last_trend"] = trend
+    ACE_STATE["last_publish"] = published
+    ACE_STATE["last_error"] = None
+
+    return {
+        "plan": plan,
+        "content": content,
+        "media": media,
+        "published": published
+    }
+
+
+def ace_test_modular_pipeline():
+
+    trend_obj = build_trend_object("disciplina e prosperidade", 1.0)
+    trend = trend_obj["topic"]
+
+    return ace_run_modular_pipeline(trend)
+# ==========================================================
 # AUTH RUNTIME
 # ==========================================================
 
