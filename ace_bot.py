@@ -5762,6 +5762,167 @@ log("INFO", "ace_execution_override_loaded", {
 })
 
 # ==========================================================
+# ACE Ω HARD SANITIZER + SOVEREIGN DISPATCH
+# COLE ACIMA DO BOOT
+# ==========================================================
+
+ACE_HARD_BLACKLIST = {
+    "vida", "sentido", "explica", "mudou", "assustador",
+    "acontecendo", "verdade", "ninguem", "ninguém"
+}
+
+ACE_STRONG_FALLBACK_TOPICS = [
+    "disciplina e prosperidade",
+    "mentalidade prospera",
+    "controle emocional",
+    "transformacao de vida",
+    "fe e proposito",
+    "clareza e proposito",
+    "ansiedade e paz",
+    "escassez e abundancia",
+]
+
+def ace_is_weak_topic(topic):
+    norm = ace_normalize_text(topic or "")
+    if not norm:
+        return True
+    if norm in ACE_HARD_BLACKLIST:
+        return True
+    words = [w for w in norm.split() if len(w) >= 3]
+    if len(words) < 2:
+        return True
+    return False
+
+def ace_pick_trend_sanitized():
+    candidates = []
+
+    try:
+        if "ace_pick_trend_smart" in globals():
+            candidates.append(ace_pick_trend_smart())
+    except Exception:
+        pass
+
+    try:
+        if "ace_pick_trend" in globals():
+            candidates.append(ace_pick_trend())
+    except Exception:
+        pass
+
+    for c in candidates:
+        if c and not ace_is_weak_topic(c):
+            return c
+
+    return random.choice(ACE_STRONG_FALLBACK_TOPICS)
+
+def ace_video_creative_core():
+    trend = ace_pick_trend_sanitized()
+    style = ace_pick_style_smart() if "ace_pick_style_smart" in globals() else ace_pick_style()
+    hook = ace_pick_best_hook_smart(trend) if "ace_pick_best_hook_smart" in globals() else ace_pick_best_hook(trend)
+
+    body = ace_build_script(trend, hook, style)
+    text = f"{hook}\n\n{body}"
+
+    # usa seu motor soberano de vídeo
+    media_path = ace_make_reel_video(text)
+
+    ace_record_performance(trend, hook, style)
+
+    if "ACE_VIDEO_STATE" in globals():
+        ACE_VIDEO_STATE["cycles"] += 1
+        ACE_VIDEO_STATE["last_video"] = media_path
+        ACE_VIDEO_STATE["last_trend"] = trend
+
+    return {
+        "trend": trend,
+        "style": style,
+        "hook": hook,
+        "text": text,
+        "media_path": media_path,
+    }
+
+def ace_dispatch_reel_safely(task):
+    result = ace_video_creative_core()
+
+    publish_result = processar_publicacao_governada(
+        trend=result["trend"],
+        estilo=result["style"],
+        tipo="reel",
+        title=result["hook"],
+        hook=result["hook"],
+        body=result["text"],
+        media_path=result["media_path"],
+    )
+
+    ok = bool(publish_result.get("ok"))
+    return {
+        "ok": ok,
+        "type": "reel",
+        "trend": result["trend"],
+        "style": result["style"],
+        "hook": result["hook"],
+        "media_path": result["media_path"],
+        "result": publish_result,
+    }
+
+def execute_task(task):
+    task_type = task.get("type")
+
+    try:
+        if task_type in ("reel", "presenca"):
+            result = ace_dispatch_reel_safely(task)
+
+            if result.get("ok"):
+                register_performance("reel", True)
+                mark_task_memory(task, "done", "sovereign_video_ok")
+            else:
+                register_performance("reel", False)
+                mark_task_memory(task, "failed", result.get("result", {}).get("reason", "sovereign_video_fail"))
+
+            return result
+
+        if task_type == "carrossel":
+            trend = ace_pick_trend_sanitized()
+            style = ace_pick_style_smart() if "ace_pick_style_smart" in globals() else ace_pick_style()
+            hook = ace_pick_best_hook_smart(trend) if "ace_pick_best_hook_smart" in globals() else ace_pick_best_hook(trend)
+
+            prompt = f"""
+            Crie um carrossel de 5 slides em português do Brasil.
+            Tema: {trend}
+            Estilo: {style}
+            Hook: {hook}
+            Estrutura:
+            Slide 1 = Hook
+            Slide 2 = Problema
+            Slide 3 = Insight
+            Slide 4 = Solução
+            Slide 5 = CTA
+            """
+            body = ace_router_generate_text(prompt)
+            result = criar_carrossel(trend, [hook, body[:220], "Insight", "Solução", "CTA"])
+
+            if result.get("ok"):
+                register_performance("carrossel", True)
+                mark_task_memory(task, "done", "carousel_ok")
+            else:
+                register_performance("carrossel", False)
+                mark_task_memory(task, "failed", result.get("reason", "carousel_fail"))
+
+            return {"ok": bool(result.get("ok")), "type": "carrossel", "result": result}
+
+        mark_task_memory(task, "failed", f"unknown_task_type:{task_type}")
+        return {"ok": False, "error": f"tipo desconhecido: {task_type}"}
+
+    except Exception as e:
+        log("ERROR", "execute_task_sovereign_fail", {"task": task, "error": str(e)})
+        mark_task_memory(task, "failed", str(e))
+        return {"ok": False, "error": str(e)}
+
+log("INFO", "ace_hard_sanitizer_and_dispatch_loaded", {
+    "sovereign_dispatch": True,
+    "trend_sanitizer": True
+})
+
+# ==========================================================
 # BOOT
 # ==========================================================
 
