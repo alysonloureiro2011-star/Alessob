@@ -1,3 +1,4 @@
+
 # ==========================================================
 # ACE Ω SUPREME - CORE BOOTSTRAP
 # Arquivo principal do sistema
@@ -6,7 +7,6 @@
 # ==========================================================
 # IMPORTS DE MÓDULOS INTERNOS
 # ==========================================================
-
 
 from ace.pipeline.queue_executor import QueueExecutor
 from ace.pipeline.supervisor import Supervisor
@@ -22,11 +22,11 @@ from ace.engines.trend_engine import (
     build_trend_object
 )
 
-queue_executor = QueueExecutor()
-queue_executor.start()
-
-supervisor = Supervisor(queue_executor)
-supervisor.start()
+from ace.engines.director_engine import (
+    choose_content_type,
+    choose_style,
+    build_director_plan
+)
 
 # ==========================================================
 # IMPORTS DO SISTEMA
@@ -53,13 +53,11 @@ from typing import Any, Dict, List, Optional
 import requests
 import numpy as np
 
-
 # ==========================================================
 # FRAMEWORK WEB
 # ==========================================================
 
 from flask import Flask, jsonify, request, send_from_directory, redirect
-
 
 # ==========================================================
 # DEPENDÊNCIAS OPCIONAIS
@@ -99,35 +97,37 @@ except Exception:
     AudioFileClip = None
     MOVIEPY_OK = False
 
-
 # ==========================================================
-# INICIALIZAÇÃO DO SISTEMA
+# INICIALIZAÇÃO DO APP
 # ==========================================================
 
 app = Flask(__name__)
 
-
 # ==========================================================
-# EXECUTOR DE FILA (PIPELINE)
+# EXECUTOR DE FILA
 # ==========================================================
 
 queue_executor = QueueExecutor()
 queue_executor.start()
 
+# ==========================================================
+# SUPERVISOR DO SISTEMA
+# ==========================================================
+
+supervisor = Supervisor(queue_executor)
+supervisor.start()
 
 # ==========================================================
-# MEMÓRIA GLOBAL DO ACE
+# ESTADO GLOBAL DO ACE
 # ==========================================================
 
 ACE_STATE = {
     "online": True,
     "cycles": 0,
     "last_trend": None,
-    "last_style": None,
-    "last_hook": None,
-    "last
-
-
+    "last_publish": None,
+    "last_error": None
+}
 
 # ==========================================================
 # AUTH RUNTIME
