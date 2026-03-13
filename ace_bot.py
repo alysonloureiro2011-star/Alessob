@@ -5177,6 +5177,66 @@ ace_safe_add_route("/debug/token/me", "ace_debug_token_me", _ace_debug_token_me,
 ace_safe_add_route("/debug/token/ig", "ace_debug_token_ig", _ace_debug_token_ig, methods=["GET"])
 
 log("INFO", "ace_token_diagnostic_patch_loaded", {"ok": True})
+
+# ==========================================================
+# ACE TOKEN LONG-LIVED PATCH
+# converte token curto em token de 60 dias automaticamente
+# ==========================================================
+
+def ace_exchange_long_lived_token(short_token):
+
+    app_id = os.environ.get("APP_ID")
+    app_secret = os.environ.get("APP_SECRET")
+
+    if not app_id or not app_secret:
+        return {"ok": False, "error": "APP_ID ou APP_SECRET ausente"}
+
+    try:
+
+        url = "https://graph.facebook.com/v19.0/oauth/access_token"
+
+        params = {
+            "grant_type": "fb_exchange_token",
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "fb_exchange_token": short_token
+        }
+
+        r = requests.get(url, params=params, timeout=20)
+
+        data = r.json()
+
+        if "access_token" in data:
+
+            long_token = data["access_token"]
+
+            log("INFO", "ace_long_lived_token_generated", {
+                "expires_in": data.get("expires_in")
+            })
+
+            return {
+                "ok": True,
+                "token": long_token,
+                "expires_in": data.get("expires_in")
+            }
+
+        return {"ok": False, "data": data}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.route("/token/upgrade")
+def ace_upgrade_token():
+
+    token = os.environ.get("IG_TOKEN")
+
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN não encontrado"}
+
+    result = ace_exchange_long_lived_token(token)
+
+    return result
         
 # ==========================================================
 # BOOT
