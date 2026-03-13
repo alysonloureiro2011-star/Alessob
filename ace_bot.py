@@ -5547,6 +5547,92 @@ log("INFO", "ace_instagram_analytics_core_loaded", {
 })
 
 # ==========================================================
+# ACE Ω ANALYTICS HOTFIX
+# endpoint defensivo para evitar 500 no /debug/analytics
+# ==========================================================
+
+def ace_safe_get(name, default):
+    try:
+        return globals().get(name, default)
+    except Exception:
+        return default
+
+def ace_safe_sorted_items(d, limit=10):
+    try:
+        if not isinstance(d, dict):
+            return []
+        return sorted(d.items(), key=lambda x: x[1], reverse=True)[:limit]
+    except Exception:
+        return []
+
+def ace_safe_top_posts():
+    core = ace_safe_get("ACE_ANALYTICS_CORE", {})
+    posts = core.get("top_posts", [])
+    safe_posts = []
+
+    for p in posts[:5]:
+        try:
+            safe_posts.append({
+                "id": str(p.get("id")),
+                "media_type": p.get("media_type"),
+                "product_type": p.get("product_type"),
+                "timestamp": p.get("timestamp"),
+                "permalink": p.get("permalink"),
+                "trend": p.get("trend"),
+                "hook": p.get("hook"),
+                "style": p.get("style"),
+                "score": float(p.get("score", 0.0) or 0.0),
+                "metrics": p.get("metrics", {}) if isinstance(p.get("metrics", {}), dict) else {}
+            })
+        except Exception:
+            continue
+
+    return safe_posts
+
+def ace_debug_analytics_payload():
+    analytics = ace_safe_get("ACE_ANALYTICS_CORE", {})
+    viral = ace_safe_get("ACE_VIRAL_MEMORY", {"themes": {}, "hooks": {}, "styles": {}})
+    video = ace_safe_get("ACE_VIDEO_STATE", {})
+
+    return {
+        "ok": True,
+        "last_scan": analytics.get("last_scan"),
+        "last_error": analytics.get("last_error"),
+        "top_posts": ace_safe_top_posts(),
+        "viral_memory": {
+            "top_themes": ace_safe_sorted_items(viral.get("themes", {}), 10),
+            "top_hooks": ace_safe_sorted_items(viral.get("hooks", {}), 10),
+            "top_styles": ace_safe_sorted_items(viral.get("styles", {}), 10),
+        },
+        "video_state": {
+            "cycles": video.get("cycles", 0),
+            "last_video": video.get("last_video"),
+            "last_trend": video.get("last_trend"),
+        }
+    }
+
+def _ace_debug_analytics_hotfix():
+    try:
+        return jsonify(ace_debug_analytics_payload())
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "fallback_payload": {
+                "analytics_exists": "ACE_ANALYTICS_CORE" in globals(),
+                "viral_exists": "ACE_VIRAL_MEMORY" in globals(),
+                "video_exists": "ACE_VIDEO_STATE" in globals(),
+            }
+        }), 500
+
+if "ace_debug_analytics" in app.view_functions:
+    app.view_functions["ace_debug_analytics"] = _ace_debug_analytics_hotfix
+else:
+    ace_safe_add_route("/debug/analytics", "ace_debug_analytics", _ace_debug_analytics_hotfix, methods=["GET"])
+
+log("INFO", "ace_analytics_hotfix_loaded", {"ok": True})
+    
+# ==========================================================
 # BOOT
 # ==========================================================
 
