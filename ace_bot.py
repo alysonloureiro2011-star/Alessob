@@ -4311,6 +4311,727 @@ def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_pat
         "report": refined_report,
     }
 
+# ==========================================================
+# ACE ADAPTIVE WORLD PATCH
+# 100% ADITIVO | RENDER-SAFE | COMPATÍVEL COM O ACE ATUAL
+# COLE ACIMA DE # BOOT
+# ==========================================================
+
+import xml.etree.ElementTree as ET
+from collections import Counter
+
+# ---------------------------
+# FLAGS
+# ---------------------------
+ACE_ADAPTIVE_PATCH_ENABLED = str(ace_env("ACE_ADAPTIVE_PATCH_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_WORLD_TRENDS_ENABLED = str(ace_env("ACE_WORLD_TRENDS_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_WORLD_NEWS_RSS_ENABLED = str(ace_env("ACE_WORLD_NEWS_RSS_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_WORLD_SUGGEST_ENABLED = str(ace_env("ACE_WORLD_SUGGEST_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_WORLD_TIMEOUT = int(ace_env("ACE_WORLD_TIMEOUT", "10"))
+ACE_WORLD_MAX_NEWS = int(ace_env("ACE_WORLD_MAX_NEWS", "12"))
+ACE_WORLD_MAX_SUGGEST = int(ace_env("ACE_WORLD_MAX_SUGGEST", "12"))
+
+ACE_DIRECTOR_ENABLED = str(ace_env("ACE_DIRECTOR_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DIRECTOR_QUALITY_FIRST = str(ace_env("ACE_DIRECTOR_QUALITY_FIRST", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DIRECTOR_ALLOW_STORY = str(ace_env("ACE_DIRECTOR_ALLOW_STORY", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DIRECTOR_ALLOW_IMAGE = str(ace_env("ACE_DIRECTOR_ALLOW_IMAGE", "1")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_DUP_GUARD_ENABLED = str(ace_env("ACE_DUP_GUARD_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DUP_GUARD_LIMIT = int(ace_env("ACE_DUP_GUARD_LIMIT", "30"))
+ACE_DUP_GUARD_THRESHOLD = float(ace_env("ACE_DUP_GUARD_THRESHOLD", "0.90"))
+
+ACE_PREPUBLISH_QUALITY_GATE = str(ace_env("ACE_PREPUBLISH_QUALITY_GATE", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_MIN_QUALITY_SCORE = float(ace_env("ACE_MIN_QUALITY_SCORE", "0.68"))
+
+ACE_ADAPTIVE_PATCH_STATE = {
+    "loaded_at": datetime.datetime.now().isoformat(),
+    "enabled": ACE_ADAPTIVE_PATCH_ENABLED,
+    "world_trends_enabled": ACE_WORLD_TRENDS_ENABLED,
+    "news_rss_enabled": ACE_WORLD_NEWS_RSS_ENABLED,
+    "suggest_enabled": ACE_WORLD_SUGGEST_ENABLED,
+    "director_enabled": ACE_DIRECTOR_ENABLED,
+    "quality_first": ACE_DIRECTOR_QUALITY_FIRST,
+    "last_world_titles": [],
+    "last_world_candidates": [],
+    "last_world_trend": None,
+    "last_world_source": None,
+    "last_dup_score": None,
+    "last_quality_score": None,
+    "last_director_plan": None,
+    "last_route_test": None,
+}
+
+ACE_WORLD_BAD_TOKENS = {
+    "verdade", "ninguém", "ninguem", "explica", "acontecendo", "assustador",
+    "mudou", "vida", "sentido", "agora", "isso", "tema", "viral", "trend",
+    "assunto", "coisa", "coisas", "brasil", "g1", "uol", "cnn", "terra",
+    "youtube", "instagram", "facebook", "tiktok", "whatsapp", "twitter", "x",
+}
+
+ACE_WORLD_FALLBACK_TRENDS = [
+    "clareza e propósito",
+    "disciplina e prosperidade",
+    "ansiedade e paz",
+    "controle emocional",
+    "fé e propósito",
+    "transformação de vida",
+    "mentalidade próspera",
+    "escassez e abundância",
+    "verdade bíblica",
+    "renovação da mente",
+]
+
+ACE_WORLD_SEEDS = [
+    "ansiedade",
+    "disciplina",
+    "prosperidade",
+    "propósito",
+    "fé",
+    "jesus",
+    "davi",
+    "controle emocional",
+    "transformação mental",
+    "escassez",
+]
+
+# ---------------------------
+# HELPERS
+# ---------------------------
+def ace_world_pick_fallback_trend():
+    return random.choice(ACE_WORLD_FALLBACK_TRENDS)
+
+def ace_http_get_text(url, params=None, timeout=None):
+    try:
+        r = requests.get(
+            url,
+            params=params,
+            headers={"User-Agent": "Mozilla/5.0 ACE/1.0"},
+            timeout=timeout or ACE_WORLD_TIMEOUT,
+        )
+        if r.status_code >= 400:
+            return None
+        return r.text
+    except Exception as e:
+        log("WARN", "ace_http_get_text_fail", {"url": url, "err": str(e)})
+        return None
+
+def ace_world_clean_title(title):
+    t = str(title or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s*[-|–—]\s*[^-|–—]{1,40}$", "", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def ace_world_tokens(text):
+    norm = ace_normalize_text(ace_world_clean_title(text))
+    return [w for w in norm.split() if w and len(w) >= 3]
+
+def ace_world_sanitize_candidate(text):
+    raw = str(text or "").strip()
+    if not raw:
+        return ace_world_pick_fallback_trend()
+
+    norm = ace_normalize_text(raw)
+    words = [w for w in norm.split() if w and w not in ACE_WORLD_BAD_TOKENS]
+
+    if not words:
+        return ace_world_pick_fallback_trend()
+
+    if len(words) == 1 and len(words[0]) < 5:
+        return ace_world_pick_fallback_trend()
+
+    candidate = " ".join(words[:4]).strip()
+    if not candidate:
+        return ace_world_pick_fallback_trend()
+
+    try:
+        bad, _ = ace_is_bad_trend(candidate)
+        if bad:
+            return ace_world_pick_fallback_trend()
+    except Exception:
+        pass
+
+    return candidate
+
+# ---------------------------
+# FONTES DO MUNDO REAL
+# ---------------------------
+def ace_world_parse_rss(xml_text):
+    items = []
+    if not xml_text:
+        return items
+    try:
+        root = ET.fromstring(xml_text)
+        for item in root.findall(".//item"):
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            if title:
+                items.append({"title": title, "link": link, "pubDate": pub})
+    except Exception as e:
+        log("WARN", "ace_world_parse_rss_fail", e)
+    return items
+
+def ace_world_fetch_news_titles():
+    if not ACE_WORLD_NEWS_RSS_ENABLED:
+        return []
+
+    urls = [
+        "https://news.google.com/rss?hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "https://news.google.com/rss/search?q=Brasil+economia+ansiedade+fé+propósito+prosperidade&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    ]
+
+    titles = []
+    seen = set()
+
+    for url in urls:
+        xml_text = ace_http_get_text(url)
+        items = ace_world_parse_rss(xml_text)
+        for item in items:
+            title = ace_world_clean_title(item.get("title"))
+            if title and title not in seen:
+                seen.add(title)
+                titles.append(title)
+
+    return titles[:ACE_WORLD_MAX_NEWS]
+
+def ace_world_fetch_suggestions(seed):
+    if not ACE_WORLD_SUGGEST_ENABLED:
+        return []
+
+    text = ace_http_get_text(
+        "https://suggestqueries.google.com/complete/search",
+        params={"client": "firefox", "hl": "pt-BR", "q": seed},
+    )
+    if not text:
+        return []
+
+    try:
+        data = json.loads(text)
+        arr = data[1] if isinstance(data, list) and len(data) > 1 else []
+        return [str(x).strip() for x in arr if str(x).strip()]
+    except Exception as e:
+        log("WARN", "ace_world_fetch_suggestions_fail", {"seed": seed, "err": str(e)})
+        return []
+
+def ace_world_extract_candidates_from_text(text):
+    tokens = [w for w in ace_world_tokens(text) if w not in ACE_WORLD_BAD_TOKENS]
+    candidates = set()
+
+    for w in tokens:
+        if len(w) >= 4:
+            candidates.add(w)
+
+    for i in range(len(tokens) - 1):
+        a, b = tokens[i], tokens[i + 1]
+        phrase = f"{a} {b}".strip()
+        if len(phrase) >= 8:
+            candidates.add(phrase)
+
+    raw_norm = ace_normalize_text(text)
+    for pattern in [
+        r"\b([a-z0-9]{4,}\s+e\s+[a-z0-9]{4,})\b",
+        r"\b([a-z0-9]{4,}\s+de\s+[a-z0-9]{4,})\b",
+    ]:
+        for m in re.findall(pattern, raw_norm):
+            candidates.add(m.strip())
+
+    return list(candidates)
+
+def ace_world_collect_signals():
+    if not ACE_WORLD_TRENDS_ENABLED:
+        return {
+            "titles": [],
+            "suggestions": [],
+            "candidates": [],
+            "source": "disabled",
+        }
+
+    titles = ace_world_fetch_news_titles()
+    suggestions = []
+
+    for seed in ACE_WORLD_SEEDS[:5]:
+        suggestions.extend(ace_world_fetch_suggestions(seed))
+
+    raw_candidates = []
+    for title in titles:
+        raw_candidates.extend(ace_world_extract_candidates_from_text(title))
+    for s in suggestions[:ACE_WORLD_MAX_SUGGEST]:
+        raw_candidates.extend(ace_world_extract_candidates_from_text(s))
+
+    counter = Counter()
+    for c in raw_candidates:
+        norm = ace_world_sanitize_candidate(c)
+        if not norm:
+            continue
+        if norm in ACE_WORLD_BAD_TOKENS:
+            continue
+        counter[norm] += 1
+
+    ranked = [phrase for phrase, _ in counter.most_common(12)]
+
+    ACE_ADAPTIVE_PATCH_STATE["last_world_titles"] = titles[:8]
+    ACE_ADAPTIVE_PATCH_STATE["last_world_candidates"] = ranked[:8]
+
+    return {
+        "titles": titles,
+        "suggestions": suggestions[:20],
+        "candidates": ranked,
+        "source": "news_rss+suggest",
+    }
+
+def ace_world_pick_trend():
+    signals = ace_world_collect_signals()
+    candidates = signals.get("candidates") or []
+
+    for c in candidates:
+        trend = ace_world_sanitize_candidate(c)
+        try:
+            bad, _ = ace_is_bad_trend(trend)
+            if not bad:
+                ACE_ADAPTIVE_PATCH_STATE["last_world_trend"] = trend
+                ACE_ADAPTIVE_PATCH_STATE["last_world_source"] = signals.get("source")
+                return trend
+        except Exception:
+            if trend:
+                ACE_ADAPTIVE_PATCH_STATE["last_world_trend"] = trend
+                ACE_ADAPTIVE_PATCH_STATE["last_world_source"] = signals.get("source")
+                return trend
+
+    fallback = ace_world_pick_fallback_trend()
+    ACE_ADAPTIVE_PATCH_STATE["last_world_trend"] = fallback
+    ACE_ADAPTIVE_PATCH_STATE["last_world_source"] = "fallback"
+    return fallback
+
+# ---------------------------
+# ANTI-DUPLICAÇÃO
+# ---------------------------
+def ace_patch_recent_posts(limit=None):
+    limit = limit or ACE_DUP_GUARD_LIMIT
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute("""
+            SELECT id, trend, tipo, conteudo, status, ts
+            FROM posts
+            ORDER BY id DESC
+            LIMIT ?
+        """, (int(limit),)).fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        log("WARN", "ace_patch_recent_posts_fail", e)
+        return []
+
+def ace_patch_dup_score(candidate_text):
+    if not ACE_DUP_GUARD_ENABLED:
+        return 0.0
+
+    recent = ace_patch_recent_posts()
+    best = 0.0
+    for row in recent:
+        existing = row[3] or ""
+        sim = ace_combined_similarity(candidate_text, existing)
+        if sim > best:
+            best = sim
+
+    ACE_ADAPTIVE_PATCH_STATE["last_dup_score"] = round(best, 4)
+    return best
+
+def ace_patch_should_block_duplicate(candidate_text):
+    if not ACE_DUP_GUARD_ENABLED:
+        return False, "dup_guard_disabled"
+
+    score = ace_patch_dup_score(candidate_text)
+    if score >= ACE_DUP_GUARD_THRESHOLD:
+        return True, f"duplicacao_narrativa:{round(score, 4)}"
+    return False, "ok"
+
+# ---------------------------
+# QUALITY GATE
+# ---------------------------
+def ace_quality_report(trend, style, content_type, hook, body, media_path=None, media_paths=None):
+    text = " ".join([trend or "", style or "", content_type or "", hook or "", body or ""]).strip()
+    emotional = ace_emotional_intensity(text)
+    curiosity = ace_curiosity_gap(hook, hook)
+    novelty = ace_novelty_score(hook, hook, body)
+    trend_strength = ace_trend_strength(trend)
+
+    quality_score = (
+        trend_strength * 0.30 +
+        novelty * 0.25 +
+        emotional * 0.20 +
+        curiosity * 0.15 +
+        0.10
+    )
+    quality_score = round(max(0.0, min(1.0, quality_score)), 4)
+
+    ACE_ADAPTIVE_PATCH_STATE["last_quality_score"] = quality_score
+
+    return {
+        "approved": quality_score >= ACE_MIN_QUALITY_SCORE,
+        "quality_score": quality_score,
+        "trend_strength": trend_strength,
+        "novelty": novelty,
+        "emotional": emotional,
+        "curiosity": curiosity,
+    }
+
+def ace_refine_text_natural(body, trend, style):
+    refined = gerar_texto_gpt(
+        f"Reescreva este conteúdo em português do Brasil de forma mais natural, fluida e humana. "
+        f"Tema: {trend}. Estilo: {style}. "
+        f"Texto base: {body[:1200]}"
+    )
+    return refined or body
+
+def ace_quality_gate_or_refine(trend, style, content_type, hook, body, media_path=None, media_paths=None):
+    if not ACE_PREPUBLISH_QUALITY_GATE:
+        return {
+            "approved": True,
+            "body": body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": None,
+        }
+
+    report = ace_quality_report(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        hook=hook,
+        body=body,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+
+    if report["approved"]:
+        return {
+            "approved": True,
+            "body": body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": report,
+        }
+
+    refined_body = ace_refine_text_natural(body, trend, style)
+    refined_report = ace_quality_report(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        hook=hook,
+        body=refined_body,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+
+    if refined_report["approved"]:
+        return {
+            "approved": True,
+            "body": refined_body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+            "report": refined_report,
+        }
+
+    return {
+        "approved": False,
+        "body": refined_body,
+        "media_path": media_path,
+        "media_paths": media_paths or [],
+        "report": refined_report,
+    }
+
+# ---------------------------
+# PROMPTS PREMIUM
+# ---------------------------
+def ace_build_reel_prompt(trend, style, hook, base_idea):
+    openings = [
+        "Abertura humana, natural, forte e limpa.",
+        "Cadência de fala real, sem cheiro de IA.",
+        "Tom de conversa inteligente, direta e memorável.",
+        "Linguagem natural, intensa e sem exagero artificial.",
+    ]
+    structures = [
+        "Estrutura: hook, tensão, insight, virada, fechamento, CTA curto.",
+        "Estrutura: dor silenciosa, confronto, verdade central, solução, CTA curto.",
+        "Estrutura: crença errada, quebra, explicação clara, síntese, CTA leve.",
+        "Estrutura: pergunta forte, contraste, verdade, aplicação, fechamento.",
+    ]
+    return (
+        f"Crie um roteiro premium de reel em português do Brasil. "
+        f"Tema: {trend}. Estilo: {style}. Hook: {hook}. Base: {base_idea}. "
+        f"{random.choice(openings)} {random.choice(structures)} "
+        f"Evite clichê, robô, enrolação, moralismo vazio e CTA artificial."
+    )
+
+def ace_build_carrossel_prompt(trend, style, hook, base_idea):
+    structures = [
+        "Slides: hook, problema, contraste, solução, CTA.",
+        "Slides: hook, erro, verdade, aplicação, CTA.",
+        "Slides: tensão, quebra, clareza, direção, CTA.",
+    ]
+    return (
+        f"Crie um carrossel premium de 5 slides em português do Brasil. "
+        f"Tema: {trend}. Estilo: {style}. Hook: {hook}. Base: {base_idea}. "
+        f"{random.choice(structures)} "
+        f"Texto curto, elegante, humano, nítido e sem cara de IA."
+    )
+
+def ace_build_story_prompt(trend, style, hook, base_idea):
+    return (
+        f"Crie 3 telas curtas de story em português do Brasil. "
+        f"Tema: {trend}. Estilo: {style}. Hook: {hook}. Base: {base_idea}. "
+        f"Objetivo: retenção e curiosidade. Texto curto e natural."
+    )
+
+# ---------------------------
+# DIRETOR
+# ---------------------------
+def ace_director_choose_type():
+    if not ACE_DIRECTOR_ENABLED:
+        return choose_best_content_type()
+
+    signal = get_recent_signal_score()
+    hour = datetime.datetime.now().hour
+
+    if ACE_DIRECTOR_QUALITY_FIRST:
+        if signal >= 0.72:
+            return "reel"
+        if hour in [18, 19, 20, 21]:
+            return "carrossel"
+        return "reel"
+
+    return choose_best_content_type()
+
+def ace_director_plan():
+    trend = ace_world_pick_trend() if ACE_WORLD_TRENDS_ENABLED else capturar_trend_brasil()
+    style = escolher_personalidade()
+    content_type = ace_director_choose_type()
+
+    plan = {
+        "trend": trend,
+        "style": style,
+        "content_type": content_type,
+        "signal": get_recent_signal_score(),
+        "quality_first": ACE_DIRECTOR_QUALITY_FIRST,
+    }
+    ACE_ADAPTIVE_PATCH_STATE["last_director_plan"] = plan
+    return plan
+
+# ---------------------------
+# GERAÇÃO ADAPTATIVA
+# ---------------------------
+def criar_story_autonomo(trend=None, estilo=None):
+    trend = trend or ace_world_pick_trend()
+    estilo = estilo or escolher_personalidade()
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(ace_build_story_prompt(trend, estilo, hook, ideia))
+
+    texto = f"STORY | {hook} | {trend} | {roteiro[:240]}"
+    blocked, reason = ace_patch_should_block_duplicate(texto)
+    if blocked:
+        return {"ok": False, "blocked": True, "reason": reason, "content": texto}
+
+    media_path = make_poster(texto)
+    register_post(trend, estilo, "story", texto, media_path, "generated")
+    return {"ok": True, "trend": trend, "style": estilo, "content": texto, "media_path": media_path}
+
+def criar_imagem_unica_autonoma(trend=None, estilo=None):
+    trend = trend or ace_world_pick_trend()
+    estilo = estilo or escolher_personalidade()
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    texto = f"IMAGEM | {trend} | {hook} | {ideia}"
+
+    blocked, reason = ace_patch_should_block_duplicate(texto)
+    if blocked:
+        return {"ok": False, "blocked": True, "reason": reason, "content": texto}
+
+    media_path = make_poster(texto)
+    register_post(trend, estilo, "imagem", texto, media_path, "generated")
+    return {"ok": True, "trend": trend, "style": estilo, "content": texto, "media_path": media_path}
+
+# ---------------------------
+# OVERRIDES SEGUROS
+# ---------------------------
+_original_capturar_trend_brasil_adaptive = capturar_trend_brasil
+_original_criar_reel_autonomo_adaptive = criar_reel_autonomo
+_original_criar_carrossel_autonomo_adaptive = criar_carrossel_autonomo
+_original_smart_force_action_adaptive = smart_force_action
+
+def capturar_trend_brasil():
+    if ACE_ADAPTIVE_PATCH_ENABLED and ACE_WORLD_TRENDS_ENABLED:
+        trend = ace_world_pick_trend()
+        ACE_STATE["last_trend"] = trend
+        return trend
+    return _original_capturar_trend_brasil_adaptive()
+
+def capturar_trend_brasil_v6():
+    return capturar_trend_brasil()
+
+def capturar_trend_do_momento():
+    return capturar_trend_brasil()
+
+def obter_trend_brasil():
+    return capturar_trend_brasil()
+
+def criar_reel_autonomo(trend, estilo):
+    if not ACE_ADAPTIVE_PATCH_ENABLED:
+        return _original_criar_reel_autonomo_adaptive(trend, estilo)
+
+    trend = trend or ace_world_pick_trend()
+    estilo = estilo or escolher_personalidade()
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(ace_build_reel_prompt(trend, estilo, hook, ideia))
+
+    quality = ace_quality_gate_or_refine(
+        trend=trend,
+        style=estilo,
+        content_type="reel",
+        hook=hook,
+        body=roteiro,
+    )
+    roteiro_final = quality["body"]
+
+    candidate_text = f"{hook}\n\n{roteiro_final}"
+    blocked, reason = ace_patch_should_block_duplicate(candidate_text)
+    if blocked:
+        return {"ok": False, "blocked": True, "reason": reason, "trend": trend, "content": candidate_text}
+
+    result = criar_reel(trend, roteiro_final)
+    if result.get("ok"):
+        score_hook_memory(hook, 0.08)
+    result["quality_report"] = quality.get("report")
+    return result
+
+def criar_carrossel_autonomo(trend, estilo):
+    if not ACE_ADAPTIVE_PATCH_ENABLED:
+        return _original_criar_carrossel_autonomo_adaptive(trend, estilo)
+
+    trend = trend or ace_world_pick_trend()
+    estilo = estilo or escolher_personalidade()
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(ace_build_carrossel_prompt(trend, estilo, hook, ideia))
+
+    quality = ace_quality_gate_or_refine(
+        trend=trend,
+        style=estilo,
+        content_type="carrossel",
+        hook=hook,
+        body=roteiro,
+    )
+    roteiro_final = quality["body"]
+
+    slides = [
+        hook,
+        f"PROBLEMA | {trend}",
+        f"CONTRASTE | {ideia[:160]}",
+        f"SOLUÇÃO | {roteiro_final[:220]}",
+        "CTA | siga @libertaverdades",
+    ]
+    candidate_text = " | ".join(slides)
+
+    blocked, reason = ace_patch_should_block_duplicate(candidate_text)
+    if blocked:
+        return {"ok": False, "blocked": True, "reason": reason, "trend": trend, "content": candidate_text}
+
+    result = criar_carrossel(trend, slides)
+    if result.get("ok"):
+        score_hook_memory(hook, 0.05)
+    result["quality_report"] = quality.get("report")
+    return result
+
+def smart_force_action():
+    if not ACE_ADAPTIVE_PATCH_ENABLED:
+        return _original_smart_force_action_adaptive()
+
+    plan = ace_director_plan()
+    trend = plan["trend"]
+    style = plan["style"]
+    best_type = plan["content_type"]
+    signal = plan["signal"]
+
+    priority = 1.1 if ACE_DIRECTOR_QUALITY_FIRST else 1.5
+    priority *= (0.8 + signal)
+
+    queue_task(
+        task_type=best_type if best_type in ("reel", "carrossel") else "reel",
+        trend=trend,
+        style=style,
+        priority=priority,
+        retries=0
+    )
+
+    ACE_STATE["forced_actions"] += 1
+
+    return {
+        "ok": True,
+        "queued_primary": best_type,
+        "trend": trend,
+        "style": style,
+        "signal": signal,
+        "queue_size": len(TASK_QUEUE),
+        "director": plan,
+    }
+
+# ---------------------------
+# ROTAS
+# ---------------------------
+def _ace_adaptive_health():
+    return jsonify({
+        "ok": True,
+        "patch_state": ACE_ADAPTIVE_PATCH_STATE,
+        "world_fallback_trends": ACE_WORLD_FALLBACK_TRENDS,
+    })
+
+def _ace_adaptive_trends():
+    return jsonify({
+        "ok": True,
+        "signals": ace_world_collect_signals(),
+        "picked_trend": ace_world_pick_trend(),
+    })
+
+def _ace_adaptive_director():
+    return jsonify({
+        "ok": True,
+        "director_plan": ace_director_plan(),
+    })
+
+def _ace_adaptive_reel():
+    ACE_ADAPTIVE_PATCH_STATE["last_route_test"] = "reel"
+    return jsonify(criar_reel_autonomo(None, None))
+
+def _ace_adaptive_carrossel():
+    ACE_ADAPTIVE_PATCH_STATE["last_route_test"] = "carrossel"
+    return jsonify(criar_carrossel_autonomo(None, None))
+
+def _ace_adaptive_story():
+    ACE_ADAPTIVE_PATCH_STATE["last_route_test"] = "story"
+    return jsonify(criar_story_autonomo())
+
+def _ace_adaptive_imagem():
+    ACE_ADAPTIVE_PATCH_STATE["last_route_test"] = "imagem"
+    return jsonify(criar_imagem_unica_autonoma())
+
+def _ace_adaptive_force():
+    ACE_ADAPTIVE_PATCH_STATE["last_route_test"] = "force"
+    return jsonify(smart_force_action())
+
+ace_safe_add_route("/ext/adaptive/health", "ace_adaptive_health_ext", _ace_adaptive_health, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/trends", "ace_adaptive_trends_ext", _ace_adaptive_trends, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/director", "ace_adaptive_director_ext", _ace_adaptive_director, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/reel", "ace_adaptive_reel_ext", _ace_adaptive_reel, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/carrossel", "ace_adaptive_carrossel_ext", _ace_adaptive_carrossel, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/story", "ace_adaptive_story_ext", _ace_adaptive_story, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/imagem", "ace_adaptive_imagem_ext", _ace_adaptive_imagem, methods=["GET"])
+ace_safe_add_route("/ext/adaptive/force", "ace_adaptive_force_ext", _ace_adaptive_force, methods=["GET"])
+
+log("INFO", "ace_adaptive_world_patch_loaded", ACE_ADAPTIVE_PATCH_STATE)
+
         
 # ==========================================================
 # BOOT
