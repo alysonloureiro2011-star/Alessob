@@ -2975,6 +2975,1073 @@ def generate_carrossel_route():
 
 
 # ==========================================================
+# ACE EXTENSION PACK CONSOLIDADO
+# COLE ESTE BLOCO ACIMA DE # BOOT
+# ==========================================================
+
+# ---------------------------
+# FLAGS / CONFIG
+# ---------------------------
+ACE_ENABLE_REAL_PUBLISH = str(ace_env("ACE_ENABLE_REAL_PUBLISH", "0")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DISABLE_GEMINI = str(ace_env("ACE_DISABLE_GEMINI", "0")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DISABLE_OPENAI = str(ace_env("ACE_DISABLE_OPENAI", "0")).strip().lower() in ("1", "true", "yes", "on")
+ACE_DISABLE_PYTRENDS = str(ace_env("ACE_DISABLE_PYTRENDS", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_LLM_PROVIDER = str(ace_env("ACE_LLM_PROVIDER", "auto")).strip().lower()  # auto|openai|gemini|stub
+OPENAI_MODEL = str(ace_env("OPENAI_MODEL", "gpt-4.1-mini")).strip()
+GEMINI_REST_MODEL = str(ace_env("GEMINI_REST_MODEL", "gemini-2.5-flash")).strip()
+
+ACE_GRAPH_BASE_URL = ace_env("ACE_GRAPH_BASE_URL", "https://graph.facebook.com/v24.0")
+ACE_PUBLIC_MEDIA_BASE_URL = ace_env("ACE_PUBLIC_MEDIA_BASE_URL", RENDER_URL)
+
+ACE_MAX_QUEUE_SIZE = int(ace_env("ACE_MAX_QUEUE_SIZE", "3"))
+ACE_FORCE_SECONDARY_TASK = str(ace_env("ACE_FORCE_SECONDARY_TASK", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_OAUTH_FORCE_REAUTH = str(ace_env("ACE_OAUTH_FORCE_REAUTH", "1")).strip().lower() in ("1", "true", "yes", "on")
+ACE_OAUTH_DEFAULT_MODE = str(ace_env("ACE_OAUTH_DEFAULT_MODE", "full")).strip().lower()
+ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE = str(ace_env("ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE", "1")).strip().lower() in ("1", "true", "yes", "on")
+
+ACE_EXT_TRENDS_FALLBACK = [
+    "fé e propósito",
+    "disciplina e prosperidade",
+    "ansiedade e paz",
+    "transformação mental",
+    "escassez e abundância",
+    "clareza e propósito",
+    "controle emocional",
+    "mentalidade próspera",
+    "propósito e disciplina",
+    "transformação de vida",
+]
+
+ACE_EXT_STATE = {
+    "loaded_at": datetime.datetime.now().isoformat(),
+    "real_publish_enabled": ACE_ENABLE_REAL_PUBLISH,
+    "disable_gemini": ACE_DISABLE_GEMINI,
+    "disable_openai": ACE_DISABLE_OPENAI,
+    "disable_pytrends": ACE_DISABLE_PYTRENDS,
+    "llm_provider": ACE_LLM_PROVIDER,
+    "openai_model": OPENAI_MODEL,
+    "gemini_model": GEMINI_REST_MODEL,
+    "public_media_base_url": ACE_PUBLIC_MEDIA_BASE_URL,
+    "max_queue_size": ACE_MAX_QUEUE_SIZE,
+    "oauth_default_mode": ACE_OAUTH_DEFAULT_MODE,
+    "oauth_force_reauth": ACE_OAUTH_FORCE_REAUTH,
+    "webhook_bridge": ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE,
+    "last_llm_used": None,
+    "last_trend_source": None,
+    "last_publish_mode": None,
+    "queue_protection_hits": 0,
+}
+
+# ---------------------------
+# HELPERS HTTP
+# ---------------------------
+def ace_http_post(url, *, headers=None, data=None, json_payload=None, timeout=60):
+    try:
+        r = requests.post(url, headers=headers, data=data, json=json_payload, timeout=timeout)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:4000]}
+        return {"ok": r.status_code < 400, "status_code": r.status_code, "data": body}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "status_code": None}
+
+def ace_http_get(url, *, headers=None, params=None, timeout=60):
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:4000]}
+        return {"ok": r.status_code < 400, "status_code": r.status_code, "data": body}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "status_code": None}
+
+def ace_safe_add_route(rule, endpoint, view_func, methods=None):
+    if endpoint in app.view_functions:
+        return
+    app.add_url_rule(rule, endpoint=endpoint, view_func=view_func, methods=methods or ["GET"])
+
+# ---------------------------
+# TRENDS ROBUSTO
+# ---------------------------
+def ace_ext_pick_trend():
+    trend = random.choice(ACE_EXT_TRENDS_FALLBACK)
+    ACE_EXT_STATE["last_trend_source"] = "fallback_pool"
+    return trend
+
+def capturar_trend_brasil():
+    if ACE_DISABLE_PYTRENDS or TrendReq is None:
+        trend = ace_ext_pick_trend()
+        ACE_STATE["last_trend"] = trend
+        return trend
+
+    try:
+        pytrends = TrendReq(hl="pt-BR", tz=360)
+        df = pytrends.trending_searches(pn="brazil")
+        trend = str(df[0][0]).strip()
+        if trend:
+            ACE_STATE["last_trend"] = trend
+            ACE_EXT_STATE["last_trend_source"] = "pytrends"
+            return trend
+    except Exception as e:
+        log("WARN", "capturar_trend_brasil_ext_fail", e)
+
+    trend = ace_ext_pick_trend()
+    ACE_STATE["last_trend"] = trend
+    return trend
+
+def capturar_trend_brasil_v6():
+    return capturar_trend_brasil()
+
+def capturar_trend_do_momento():
+    return capturar_trend_brasil()
+
+def obter_trend_brasil():
+    return capturar_trend_brasil()
+
+# ---------------------------
+# LLM OPENAI
+# ---------------------------
+def ace_openai_generate_text(prompt):
+    if ACE_DISABLE_OPENAI or not OPENAI_API_KEY:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": prompt,
+    }
+
+    result = ace_http_post(
+        "https://api.openai.com/v1/responses",
+        headers=headers,
+        json_payload=payload,
+        timeout=90,
+    )
+    if not result.get("ok"):
+        log("WARN", "ace_openai_generate_text_fail", result)
+        return None
+
+    data = result.get("data", {})
+    if data.get("output_text"):
+        ACE_EXT_STATE["last_llm_used"] = "openai"
+        return str(data["output_text"]).strip()
+
+    try:
+        output = data.get("output", [])
+        chunks = []
+        for item in output:
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    chunks.append(content.get("text", ""))
+        text = "\n".join([c for c in chunks if c]).strip()
+        if text:
+            ACE_EXT_STATE["last_llm_used"] = "openai"
+            return text
+    except Exception:
+        pass
+
+    return None
+
+# ---------------------------
+# LLM GEMINI REST
+# ---------------------------
+def ace_gemini_generate_text(prompt):
+    if ACE_DISABLE_GEMINI or not GEMINI_KEY:
+        return None
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_REST_MODEL}:generateContent?key={GEMINI_KEY}"
+    )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+
+    result = ace_http_post(url, json_payload=payload, timeout=90)
+    if not result.get("ok"):
+        log("WARN", "ace_gemini_generate_text_fail", result)
+        return None
+
+    data = result.get("data", {})
+    try:
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            text = "\n".join([p.get("text", "") for p in parts if p.get("text")]).strip()
+            if text:
+                ACE_EXT_STATE["last_llm_used"] = "gemini"
+                return text
+    except Exception:
+        pass
+
+    return None
+
+# ---------------------------
+# ROTEADOR DE TEXTO
+# ---------------------------
+def gerar_texto_gpt(prompt):
+    provider = ACE_LLM_PROVIDER
+
+    if provider == "openai":
+        text = ace_openai_generate_text(prompt)
+        return text or f"[OPENAI_FALLBACK] {prompt[:700]}"
+
+    if provider == "gemini":
+        text = ace_gemini_generate_text(prompt)
+        return text or f"[GEMINI_FALLBACK] {prompt[:700]}"
+
+    if provider == "stub":
+        ACE_EXT_STATE["last_llm_used"] = "stub"
+        return f"[STUB] {prompt[:700]}"
+
+    text = ace_openai_generate_text(prompt)
+    if text:
+        return text
+
+    text = ace_gemini_generate_text(prompt)
+    if text:
+        return text
+
+    ACE_EXT_STATE["last_llm_used"] = "stub"
+    return f"[AUTO_FALLBACK] {prompt[:700]}"
+
+def gerar_ideia_gemini(trend):
+    prompt = f"Crie uma ideia curta, forte e clara em português do Brasil sobre: {trend}"
+    text = ace_gemini_generate_text(prompt)
+    if text:
+        return text
+
+    text = ace_openai_generate_text(prompt)
+    if text:
+        return text
+
+    return f"Ideia direta e forte sobre {trend}"
+
+# ---------------------------
+# FILA PROTEGIDA
+# ---------------------------
+_original_queue_task_ext = queue_task
+
+def queue_task(task_type, trend=None, style=None, priority=1.0, retries=0):
+    with TASK_LOCK:
+        qsize = len(TASK_QUEUE)
+
+    if qsize >= ACE_MAX_QUEUE_SIZE:
+        ACE_EXT_STATE["queue_protection_hits"] += 1
+        log("WARN", "queue_guard_block_ext", {"qsize": qsize, "max": ACE_MAX_QUEUE_SIZE, "task_type": task_type})
+        return
+
+    trend = trend or capturar_trend_brasil()
+    style = style or escolher_personalidade()
+
+    return _original_queue_task_ext(
+        task_type=task_type,
+        trend=trend,
+        style=style,
+        priority=priority,
+        retries=retries
+    )
+
+def smart_force_action():
+    trend = capturar_trend_brasil()
+    style = escolher_personalidade()
+    signal = get_recent_signal_score()
+    best_type = choose_best_content_type()
+
+    with TASK_LOCK:
+        qsize = len(TASK_QUEUE)
+
+    if qsize >= ACE_MAX_QUEUE_SIZE:
+        ACE_EXT_STATE["queue_protection_hits"] += 1
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "queue_full",
+            "queue_size": qsize
+        }
+
+    priority = 1.2 if is_idle(8) else 0.9
+    priority *= (0.8 + signal)
+
+    queue_task(
+        task_type=best_type,
+        trend=trend,
+        style=style,
+        priority=priority,
+        retries=0
+    )
+
+    if ACE_FORCE_SECONDARY_TASK:
+        with TASK_LOCK:
+            qsize_after = len(TASK_QUEUE)
+        if qsize_after < ACE_MAX_QUEUE_SIZE:
+            secondary = "carrossel" if best_type == "reel" else "reel"
+            queue_task(
+                task_type=secondary,
+                trend=trend,
+                style=style,
+                priority=max(0.5, priority - 0.2),
+                retries=0
+            )
+
+    ACE_STATE["forced_actions"] += 1
+    return {
+        "ok": True,
+        "queued_primary": best_type,
+        "trend": trend,
+        "style": style,
+        "signal": signal,
+        "queue_size": len(TASK_QUEUE),
+    }
+
+# ---------------------------
+# OAUTH UNIFICADO
+# ---------------------------
+def ace_ext_mode_scopes(mode="basic"):
+    mode = (mode or "basic").strip().lower()
+    if mode == "full":
+        return [
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_insights",
+        ]
+    return [
+        "instagram_business_basic"
+    ]
+
+def ace_ext_build_redirect_uri(target="token"):
+    target = (target or "token").strip().lower()
+    if target == "webhook":
+        return f"{RENDER_URL}/webhook"
+    return f"{RENDER_URL}/instagram/token"
+
+def build_instagram_oauth_url(mode=None, target="token"):
+    if not INSTAGRAM_APP_ID:
+        return None
+
+    mode = (mode or ACE_OAUTH_DEFAULT_MODE or "basic").strip().lower()
+    scopes = ace_ext_mode_scopes(mode)
+    redirect_uri = ace_ext_build_redirect_uri(target)
+
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": ",".join(scopes),
+    }
+
+    if ACE_OAUTH_FORCE_REAUTH:
+        params["force_reauth"] = "true"
+
+    return f"https://www.instagram.com/oauth/authorize?{urlencode(params)}"
+
+def ace_exchange_code_for_token_with_redirect(code, redirect_uri):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        return {
+            "ok": False,
+            "error": "INSTAGRAM_APP_ID ou INSTAGRAM_APP_SECRET ausentes"
+        }
+
+    data = {
+        "client_id": INSTAGRAM_APP_ID,
+        "client_secret": INSTAGRAM_APP_SECRET,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+        "code": code,
+    }
+
+    result = ace_http_post("https://api.instagram.com/oauth/access_token", data=data, timeout=30)
+    log_auth("exchange_code_ext", {"redirect_uri": redirect_uri, "result": result})
+
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("data") or result.get("error")}
+
+    body = result.get("data", {})
+    access_token = body.get("access_token")
+    user_id = body.get("user_id")
+
+    if access_token:
+        save_instagram_auth(
+            token=access_token,
+            user_id=user_id,
+            meta={"source": "extension_oauth", "redirect_uri": redirect_uri}
+        )
+        ACE_STATE["instagram_connected"] = bool(get_ig_token() and get_ig_id())
+        ACE_STATE["instagram_last_auth_at"] = datetime.datetime.now().isoformat()
+
+    return {"ok": True, "data": body}
+
+# ---------------------------
+# PUBLIC URL / MEDIA KIND
+# ---------------------------
+def ace_media_public_url_from_path(media_path):
+    if not media_path:
+        return None
+    try:
+        filename = Path(media_path).name
+        if not filename:
+            return None
+        return f"{ACE_PUBLIC_MEDIA_BASE_URL.rstrip('/')}/media/{filename}"
+    except Exception:
+        return None
+
+def ace_media_kind_from_path(media_path, tipo="reel"):
+    ext = (Path(media_path).suffix or "").lower() if media_path else ""
+    if tipo == "reel":
+        return "reel"
+    if ext in (".mp4", ".mov", ".m4v"):
+        return "video"
+    return "image"
+
+# ---------------------------
+# GRAPH HELPERS
+# ---------------------------
+def ace_ig_post(path, data, timeout=60):
+    token = get_ig_token()
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+
+    url = f"{ACE_GRAPH_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    payload = dict(data or {})
+    payload["access_token"] = token
+    return ace_http_post(url, data=payload, timeout=timeout)
+
+def ace_create_single_media_container(ig_id, media_url, caption="", media_kind="image"):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not media_url:
+        return {"ok": False, "error": "media_url ausente"}
+
+    path = f"{ig_id}/media"
+
+    if media_kind == "reel":
+        data = {
+            "media_type": "REELS",
+            "video_url": media_url,
+            "caption": caption[:2200],
+        }
+    elif media_kind == "video":
+        data = {
+            "media_type": "VIDEO",
+            "video_url": media_url,
+            "caption": caption[:2200],
+        }
+    else:
+        data = {
+            "image_url": media_url,
+            "caption": caption[:2200],
+        }
+
+    return ace_ig_post(path, data, timeout=90)
+
+def ace_create_carousel_child_container(ig_id, media_url, media_kind="image"):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not media_url:
+        return {"ok": False, "error": "media_url ausente"}
+
+    path = f"{ig_id}/media"
+
+    if media_kind == "video":
+        data = {
+            "media_type": "VIDEO",
+            "video_url": media_url,
+            "is_carousel_item": "true",
+        }
+    else:
+        data = {
+            "image_url": media_url,
+            "is_carousel_item": "true",
+        }
+
+    return ace_ig_post(path, data, timeout=90)
+
+def ace_create_carousel_container(ig_id, children_ids, caption=""):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not children_ids:
+        return {"ok": False, "error": "children_ids ausente"}
+
+    path = f"{ig_id}/media"
+    data = {
+        "media_type": "CAROUSEL",
+        "children": ",".join(children_ids),
+        "caption": caption[:2200],
+    }
+    return ace_ig_post(path, data, timeout=90)
+
+def ace_publish_media_container(ig_id, creation_id):
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+    if not creation_id:
+        return {"ok": False, "error": "creation_id ausente"}
+
+    return ace_ig_post(f"{ig_id}/media_publish", {"creation_id": creation_id}, timeout=90)
+
+# ---------------------------
+# PUBLICAÇÃO REAL
+# ---------------------------
+def ace_real_publish_single(conteudo, tipo="reel", media_path=None):
+    ig_id = get_ig_id()
+    token = get_ig_token()
+    if not ig_id or not token:
+        return {"ok": False, "reason": "ig_id_ou_token_ausente"}
+
+    media_url = ace_media_public_url_from_path(media_path)
+    if not media_url:
+        return {"ok": False, "reason": "media_url_indisponivel"}
+
+    media_kind = ace_media_kind_from_path(media_path, tipo=tipo)
+    if tipo == "reel":
+        media_kind = "reel"
+
+    container = ace_create_single_media_container(
+        ig_id=ig_id,
+        media_url=media_url,
+        caption=conteudo,
+        media_kind=media_kind
+    )
+    if not container.get("ok"):
+        return {"ok": False, "reason": "container_fail", "detail": container}
+
+    creation_id = (container.get("data") or {}).get("id")
+    if not creation_id:
+        return {"ok": False, "reason": "creation_id_ausente", "detail": container}
+
+    published = ace_publish_media_container(ig_id, creation_id)
+    if not published.get("ok"):
+        return {"ok": False, "reason": "publish_fail", "detail": published}
+
+    ACE_EXT_STATE["last_publish_mode"] = "single"
+    return {"ok": True, "container": container.get("data"), "published": published.get("data")}
+
+def ace_real_publish_carrossel(conteudo, media_paths):
+    ig_id = get_ig_id()
+    token = get_ig_token()
+    if not ig_id or not token:
+        return {"ok": False, "reason": "ig_id_ou_token_ausente"}
+    if not media_paths or len(media_paths) < 2:
+        return {"ok": False, "reason": "carrossel_precisa_de_2_ou_mais_midias"}
+
+    child_ids = []
+    child_debug = []
+
+    for media_path in media_paths:
+        media_url = ace_media_public_url_from_path(media_path)
+        if not media_url:
+            return {"ok": False, "reason": "media_url_indisponivel", "media_path": media_path}
+
+        media_kind = ace_media_kind_from_path(media_path, tipo="carrossel")
+        if media_kind == "reel":
+            media_kind = "video"
+
+        child = ace_create_carousel_child_container(
+            ig_id=ig_id,
+            media_url=media_url,
+            media_kind=media_kind
+        )
+        child_debug.append(child)
+
+        if not child.get("ok"):
+            return {"ok": False, "reason": "child_container_fail", "detail": child, "children_debug": child_debug}
+
+        child_id = (child.get("data") or {}).get("id")
+        if not child_id:
+            return {"ok": False, "reason": "child_id_ausente", "detail": child, "children_debug": child_debug}
+
+        child_ids.append(child_id)
+
+    parent = ace_create_carousel_container(
+        ig_id=ig_id,
+        children_ids=child_ids,
+        caption=conteudo
+    )
+    if not parent.get("ok"):
+        return {"ok": False, "reason": "carousel_parent_fail", "detail": parent, "children_debug": child_debug}
+
+    creation_id = (parent.get("data") or {}).get("id")
+    if not creation_id:
+        return {"ok": False, "reason": "carousel_creation_id_ausente", "detail": parent}
+
+    published = ace_publish_media_container(ig_id, creation_id)
+    if not published.get("ok"):
+        return {"ok": False, "reason": "carousel_publish_fail", "detail": published}
+
+    ACE_EXT_STATE["last_publish_mode"] = "carousel"
+    return {
+        "ok": True,
+        "children_ids": child_ids,
+        "parent": parent.get("data"),
+        "published": published.get("data"),
+    }
+
+def ace_real_publish_if_possible(conteudo, tipo="reel", media_path=None, media_paths=None):
+    if not ACE_ENABLE_REAL_PUBLISH:
+        return {"ok": False, "reason": "real_publish_disabled"}
+
+    if tipo == "carrossel":
+        return ace_real_publish_carrossel(conteudo, media_paths or ([] if not media_path else [media_path]))
+
+    return ace_real_publish_single(conteudo, tipo=tipo, media_path=media_path)
+
+def postar_instagram(conteudo, tipo="reel", media_path=None, media_paths=None):
+    real = ace_real_publish_if_possible(
+        conteudo=conteudo,
+        tipo=tipo,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+    if real.get("ok"):
+        ACE_STATE["last_action_at"] = datetime.datetime.now().isoformat()
+        ACE_STATE["last_action_type"] = tipo
+        log("INFO", "instagram_real_publish_ok_ext", real)
+        return real
+
+    print(f"[INSTAGRAM {tipo.upper()}] {conteudo[:300]}")
+    usar_api("Instagram")
+    ACE_STATE["last_action_at"] = datetime.datetime.now().isoformat()
+    ACE_STATE["last_action_type"] = tipo
+    log("INFO", "instagram_real_publish_fallback_ext", real)
+    return {"ok": False, "fallback": True, "detail": real}
+
+# ---------------------------
+# QUALIDADE DE MÍDIA
+# ---------------------------
+def ace_make_story_image(text, subtitle=None):
+    if Image is None:
+        return None
+    try:
+        out = MEDIA_DIR / f"story_{int(time.time())}_{random.randint(100,999)}.png"
+        img = Image.new("RGB", (1080, 1920), (12, 12, 16))
+        draw = ImageDraw.Draw(img)
+
+        title = (text or "")[:140]
+        subtitle = (subtitle or "")[:220]
+
+        lines = []
+        words = title.split()
+        current = ""
+        for w in words:
+            test = f"{current} {w}".strip()
+            if len(test) <= 22:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+
+        y = 220
+        for line in lines[:6]:
+            draw.text((90, y), line, fill=(255, 255, 255))
+            y += 100
+
+        if subtitle:
+            sub_words = subtitle.split()
+            sub_lines = []
+            cur = ""
+            for w in sub_words:
+                test = f"{cur} {w}".strip()
+                if len(test) <= 36:
+                    cur = test
+                else:
+                    if cur:
+                        sub_lines.append(cur)
+                    cur = w
+            if cur:
+                sub_lines.append(cur)
+
+            y += 80
+            for line in sub_lines[:6]:
+                draw.text((90, y), line, fill=(200, 200, 200))
+                y += 70
+
+        img.save(out)
+        return str(out)
+    except Exception as e:
+        log("WARN", "ace_make_story_image_fail", e)
+        return None
+
+def ace_make_carrossel_slides(slides):
+    media_paths = []
+    for idx, slide_text in enumerate(slides, start=1):
+        path = ace_make_story_image(f"{idx}. {slide_text[:120]}")
+        if path:
+            media_paths.append(path)
+    return media_paths
+
+def ace_make_reel_video(text, audio_path=None):
+    reel = make_reel(text, audio_path=audio_path)
+    if reel:
+        return reel
+    return make_poster(text)
+
+# ---------------------------
+# ORQUESTRAÇÃO GOVERNADA
+# ---------------------------
+def processar_publicacao_governada(trend, estilo, tipo, title, hook, body, media_path=None, media_paths=None):
+    govern = ace_govern_post(
+        trend=trend,
+        content_type=tipo,
+        title=title,
+        hook=hook,
+        body=body
+    )
+
+    if not govern.get("approved"):
+        log("INFO", "post_blocked_layer4_ext", govern)
+        register_post(trend, estilo, tipo, body, media_path, f"blocked:{govern.get('reason')}")
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": govern.get("reason", "blocked"),
+            "score": govern.get("score", 0.0),
+            "content": body,
+            "media_path": media_path,
+            "media_paths": media_paths or [],
+        }
+
+    post_result = postar_instagram(
+        conteudo=body,
+        tipo=tipo,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+
+    register_post(trend, estilo, tipo, body, media_path, "generated")
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": "ok",
+        "score": govern.get("score", 0.0),
+        "content": body,
+        "media_path": media_path,
+        "media_paths": media_paths or [],
+        "publish_result": post_result,
+    }
+
+# ---------------------------
+# REEL MELHORADO
+# ---------------------------
+def criar_reel_autonomo(trend, estilo):
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(
+        f"Crie um roteiro natural, forte e fluido para reel em português do Brasil. "
+        f"Tema: {trend}. Estilo: {estilo}. Hook: {hook}. Base: {ideia}. "
+        f"Estrutura: hook, tensão, insight, fechamento, CTA curto."
+    )
+
+    body = f"{hook}\n\n{roteiro}"
+    audio_path = make_audio(body)
+    reel_path = ace_make_reel_video(body, audio_path=audio_path)
+
+    result = processar_publicacao_governada(
+        trend=trend,
+        estilo=estilo,
+        tipo="reel",
+        title=hook,
+        hook=hook,
+        body=body,
+        media_path=reel_path,
+    )
+    if result.get("ok"):
+        score_hook_memory(hook, 0.05)
+    return result
+
+# ---------------------------
+# CARROSSEL MELHORADO
+# ---------------------------
+def criar_carrossel_autonomo(trend, estilo):
+    hook = get_best_saved_hook(trend)
+    ideia = gerar_ideia_gemini(trend)
+    roteiro = gerar_texto_gpt(
+        f"Crie um carrossel de 5 slides em português do Brasil. "
+        f"Tema: {trend}. Estilo: {estilo}. Hook: {hook}. Base: {ideia}. "
+        f"Slide 1 hook, slide 2 problema, slide 3 contraste, slide 4 solução, slide 5 CTA."
+    )
+
+    slides = [
+        hook,
+        f"PROBLEMA | {trend}",
+        f"CONTRASTE | {ideia[:120]}",
+        f"SOLUÇÃO | {roteiro[:150]}",
+        "CTA | siga @libertaverdades",
+    ]
+
+    media_paths = ace_make_carrossel_slides(slides)
+    body = f"CARROSSEL | {trend} | {' | '.join(slides)}"
+    primary_media = media_paths[0] if media_paths else None
+
+    result = processar_publicacao_governada(
+        trend=trend,
+        estilo=estilo,
+        tipo="carrossel",
+        title=hook,
+        hook=hook,
+        body=body,
+        media_path=primary_media,
+        media_paths=media_paths,
+    )
+    if result.get("ok"):
+        score_hook_memory(hook, 0.03)
+    return result
+
+# ---------------------------
+# FABRICAÇÃO DE PRESENÇA
+# ---------------------------
+def fabricar_presenca_digital(tipo="REEL"):
+    tema, angulo = motor_radar_v7()
+    hook = ace_brain_upgrade(tema)
+    manifesto = gerar_texto_gpt(
+        f"Crie um manifesto forte, claro e fluido sobre {tema} sob a ótica {angulo}. "
+        f"Use o hook: {hook}"
+    )
+
+    body = f"{hook}\n\n{manifesto}"
+
+    if tipo.upper() == "REEL":
+        audio_path = make_audio(body)
+        media_path = ace_make_reel_video(body, audio_path=audio_path)
+        result = processar_publicacao_governada(
+            trend=tema,
+            estilo=ACE_STATE.get("last_style"),
+            tipo="reel",
+            title=hook,
+            hook=hook,
+            body=body,
+            media_path=media_path,
+        )
+        return media_path, manifesto, result
+
+    slides = [
+        hook,
+        f"CONTEXTO | {tema}",
+        f"INSIGHT | {manifesto[:130]}",
+        "CTA | salve e compartilhe",
+    ]
+    media_paths = ace_make_carrossel_slides(slides)
+    media_path = media_paths[0] if media_paths else None
+    result = processar_publicacao_governada(
+        trend=tema,
+        estilo=ACE_STATE.get("last_style"),
+        tipo="carrossel",
+        title=hook,
+        hook=hook,
+        body=body,
+        media_path=media_path,
+        media_paths=media_paths,
+    )
+    return media_path, manifesto, result
+
+# ---------------------------
+# OVERRIDE DAS ROTAS EXISTENTES
+# ---------------------------
+def _instagram_auth_basic_override():
+    url = build_instagram_oauth_url(mode="basic", target="token")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente no ambiente"}), 400
+    return redirect(url, code=302)
+
+def _instagram_auth_url_override():
+    mode = request.args.get("mode", ACE_OAUTH_DEFAULT_MODE)
+    target = request.args.get("target", "token")
+    url = build_instagram_oauth_url(mode=mode, target=target)
+    return jsonify({
+        "ok": bool(url),
+        "auth_url": url,
+        "redirect_uri": ace_ext_build_redirect_uri(target),
+        "mode": mode,
+        "target": target,
+        "force_reauth": ACE_OAUTH_FORCE_REAUTH,
+        "scopes": ace_ext_mode_scopes(mode)
+    })
+
+def _instagram_token_callback_override():
+    code = request.args.get("code", "").strip()
+    error = request.args.get("error")
+    error_reason = request.args.get("error_reason")
+    error_description = request.args.get("error_description")
+
+    if error:
+        return jsonify({
+            "ok": False,
+            "stage": "instagram_auth",
+            "error": error,
+            "error_reason": error_reason,
+            "error_description": error_description
+        }), 400
+
+    if not code:
+        return jsonify({
+            "ok": True,
+            "message": "Endpoint ativo. Use /instagram/auth, /instagram/auth_basic ou /instagram/auth_full para iniciar o login.",
+            "redirect_uri_correto": ace_ext_build_redirect_uri("token"),
+            "token_present": bool(get_ig_token()),
+            "ig_id": get_ig_id(),
+            "default_mode": ACE_OAUTH_DEFAULT_MODE
+        }), 200
+
+    result = ace_exchange_code_for_token_with_redirect(
+        code=code,
+        redirect_uri=ace_ext_build_redirect_uri("token")
+    )
+
+    if result.get("ok"):
+        return jsonify({
+            "ok": True,
+            "message": "Token capturado com sucesso",
+            "user_id": get_ig_id(),
+            "token_present": bool(get_ig_token()),
+            "coloque_no_render": {
+                "IG_TOKEN": get_ig_token(),
+                "IG_ID": get_ig_id()
+            }
+        }), 200
+
+    return jsonify({
+        "ok": False,
+        "message": "Falha ao trocar code por token",
+        "error": result.get("error")
+    }), 400
+
+def _webhook_gateway_override():
+    if request.method == "GET" and request.args.get("code") and ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE:
+        code = request.args.get("code", "").strip()
+        result = ace_exchange_code_for_token_with_redirect(
+            code=code,
+            redirect_uri=ace_ext_build_redirect_uri("webhook")
+        )
+
+        if result.get("ok"):
+            return jsonify({
+                "ok": True,
+                "message": "Token capturado com sucesso via webhook",
+                "user_id": get_ig_id(),
+                "token_present": bool(get_ig_token()),
+                "coloque_no_render": {
+                    "IG_TOKEN": get_ig_token(),
+                    "IG_ID": get_ig_id()
+                }
+            }), 200
+
+        return jsonify({
+            "ok": False,
+            "message": "Falha ao trocar code por token via webhook",
+            "error": result.get("error")
+        }), 400
+
+    if request.method == "GET":
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge", "OK")
+        return "invalid verify token", 403
+
+    data = request.get_json(silent=True) or {}
+    if "entry" in data:
+        for entry in data["entry"]:
+            for msg in entry.get("messaging", []):
+                sender_id = msg.get("sender", {}).get("id")
+                text = msg.get("message", {}).get("text", "")
+                if sender_id and text:
+                    threading.Thread(
+                        target=ace_interaction_engine,
+                        args=(sender_id, text),
+                        daemon=True
+                    ).start()
+
+    return "ACE_ACK", 200
+
+if "instagram_auth" in app.view_functions:
+    app.view_functions["instagram_auth"] = _instagram_auth_basic_override
+
+if "instagram_auth_url" in app.view_functions:
+    app.view_functions["instagram_auth_url"] = _instagram_auth_url_override
+
+if "instagram_token_callback" in app.view_functions:
+    app.view_functions["instagram_token_callback"] = _instagram_token_callback_override
+
+if "webhook_gateway" in app.view_functions:
+    app.view_functions["webhook_gateway"] = _webhook_gateway_override
+
+# ---------------------------
+# NOVAS ROTAS
+# ---------------------------
+def _instagram_auth_full_view():
+    url = build_instagram_oauth_url(mode="full", target="token")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente"}), 400
+    return redirect(url, code=302)
+
+def _instagram_auth_via_webhook_view():
+    if not ACE_ENABLE_WEBHOOK_OAUTH_BRIDGE:
+        return jsonify({"ok": False, "error": "webhook_oauth_bridge_desativado"}), 400
+    url = build_instagram_oauth_url(mode="full", target="webhook")
+    if not url:
+        return jsonify({"ok": False, "error": "INSTAGRAM_APP_ID ausente"}), 400
+    return redirect(url, code=302)
+
+def _ext_health_view():
+    return jsonify({
+        "ok": True,
+        "ext_state": ACE_EXT_STATE,
+        "token_present": bool(get_ig_token()),
+        "ig_id": get_ig_id(),
+        "real_publish_enabled": ACE_ENABLE_REAL_PUBLISH,
+        "public_media_base": ACE_PUBLIC_MEDIA_BASE_URL,
+    })
+
+def _ext_test_openai_view():
+    text = ace_openai_generate_text("Responda em 1 linha: ACE online.")
+    return jsonify({"ok": bool(text), "text": text})
+
+def _ext_test_gemini_view():
+    text = ace_gemini_generate_text("Responda em 1 linha: ACE online.")
+    return jsonify({"ok": bool(text), "text": text})
+
+def _ext_test_carrossel_view():
+    result = criar_carrossel_autonomo(
+        trend=capturar_trend_brasil(),
+        estilo=escolher_personalidade(),
+    )
+    return jsonify(result)
+
+def _ext_test_reel_view():
+    result = criar_reel_autonomo(
+        trend=capturar_trend_brasil(),
+        estilo=escolher_personalidade(),
+    )
+    return jsonify(result)
+
+ace_safe_add_route("/instagram/auth_basic", "instagram_auth_basic_ext_consolidado", _instagram_auth_basic_override, methods=["GET"])
+ace_safe_add_route("/instagram/auth_full", "instagram_auth_full_ext_consolidado", _instagram_auth_full_view, methods=["GET"])
+ace_safe_add_route("/instagram/auth_via_webhook", "instagram_auth_via_webhook_ext_consolidado", _instagram_auth_via_webhook_view, methods=["GET"])
+ace_safe_add_route("/ext/health", "ace_ext_health_consolidado", _ext_health_view, methods=["GET"])
+ace_safe_add_route("/ext/test/openai", "ace_ext_test_openai_consolidado", _ext_test_openai_view, methods=["GET"])
+ace_safe_add_route("/ext/test/gemini", "ace_ext_test_gemini_consolidado", _ext_test_gemini_view, methods=["GET"])
+ace_safe_add_route("/ext/test/carrossel", "ace_ext_test_carrossel_consolidado", _ext_test_carrossel_view, methods=["GET"])
+ace_safe_add_route("/ext/test/reel", "ace_ext_test_reel_consolidado", _ext_test_reel_view, methods=["GET"])
+
+ACE_STATE["mode"] = "EXTENSION_ACTIVE"
+log("INFO", "ace_extension_pack_consolidado_loaded", ACE_EXT_STATE)
+
+# ==========================================================
 # BOOT
 # ==========================================================
 
