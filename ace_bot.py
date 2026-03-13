@@ -7,6 +7,8 @@
 # IMPORTS DE MÓDULOS INTERNOS
 # ==========================================================
 
+queue_executor = QueueExecutor()
+queue_executor.start()
 from ace.core.config import *
 from ace.core.db import *
 from ace.core.state import *
