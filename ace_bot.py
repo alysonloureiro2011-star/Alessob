@@ -5107,6 +5107,76 @@ log("INFO", "ace_adaptive_hotfix_loaded", {
     "blacklist_size": len(ACE_WORLD_HOTFIX_BLACKLIST)
 })
 
+# ==========================================================
+# ACE TOKEN DIAGNOSTIC PATCH
+# COLE ACIMA DE # BOOT
+# ==========================================================
+
+def ace_token_debug_me():
+    token = get_ig_token()
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+
+    try:
+        r = requests.get(
+            "https://graph.facebook.com/v24.0/me",
+            params={"access_token": token},
+            timeout=20,
+        )
+        try:
+            data = r.json()
+        except Exception:
+            data = {"raw": r.text[:1000]}
+
+        return {
+            "ok": r.status_code == 200,
+            "status_code": r.status_code,
+            "data": data,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def ace_token_debug_ig_user():
+    token = get_ig_token()
+    ig_id = get_ig_id()
+
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+    if not ig_id:
+        return {"ok": False, "error": "IG_ID ausente"}
+
+    try:
+        r = requests.get(
+            f"https://graph.facebook.com/v24.0/{ig_id}",
+            params={
+                "fields": "id,username",
+                "access_token": token
+            },
+            timeout=20,
+        )
+        try:
+            data = r.json()
+        except Exception:
+            data = {"raw": r.text[:1000]}
+
+        return {
+            "ok": r.status_code == 200,
+            "status_code": r.status_code,
+            "data": data,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def _ace_debug_token_me():
+    return jsonify(ace_token_debug_me())
+
+def _ace_debug_token_ig():
+    return jsonify(ace_token_debug_ig_user())
+
+ace_safe_add_route("/debug/token/me", "ace_debug_token_me", _ace_debug_token_me, methods=["GET"])
+ace_safe_add_route("/debug/token/ig", "ace_debug_token_ig", _ace_debug_token_ig, methods=["GET"])
+
+log("INFO", "ace_token_diagnostic_patch_loaded", {"ok": True})
         
 # ==========================================================
 # BOOT
