@@ -2968,9 +2968,10 @@ def ace_test_modular():
     except Exception as e:
         return jsonify({
             "ok": False,
-            "error": str(e)
+            "error": str(e),
+            "error_type": type(e).__name__
         }), 500
-
+        
 @app.route("/instagram/token/long_lived")
 def instagram_token_long_lived():
     result = ace_exchange_long_lived_token()
