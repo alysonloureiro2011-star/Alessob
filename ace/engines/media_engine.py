@@ -14,14 +14,10 @@ def generate_image(text, base_dir="ace_media"):
 
     path = build_media_path(base_dir, "image", ".png")
 
-    img = Image.new("RGB", (1080,1080), (20,20,20))
+    img = Image.new("RGB", (1080,1080), (15,15,15))
     draw = ImageDraw.Draw(img)
 
-    draw.text(
-        (80,500),
-        text[:120],
-        fill=(255,255,255)
-    )
+    draw.text((80,500), text[:120], fill=(255,255,255))
 
     img.save(path)
 
@@ -30,7 +26,7 @@ def generate_image(text, base_dir="ace_media"):
 
 def generate_video(text, base_dir="ace_media"):
 
-    image_path = generate_image(text, base_dir)
+    image_path = generate_image(text)
 
     video_path = build_media_path(base_dir, "video", ".mp4")
 
