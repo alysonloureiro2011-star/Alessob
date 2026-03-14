@@ -6310,12 +6310,12 @@ def ace_sv_make_video(text, trend=None):
     clip = zoom.set_audio(audio) if audio else zoom
 
     clip.write_videofile(
-        str(video_path),
-        fps=24,
-        codec="libx264",
-        audio_codec="aac",
-        logger=None
-    )
+    str(video_path),
+    codec="libx264",
+    audio=False,
+    fps=24,
+    threads=2
+)
 
     return str(video_path)
 
@@ -6537,12 +6537,12 @@ def ace_sv_make_video(text, trend=None):
     clip = zoom.with_audio(audio) if audio else zoom
 
     clip.write_videofile(
-        str(video_path),
-        fps=24,
-        codec="libx264",
-        audio_codec="aac",
-        logger=None
-    )
+    str(video_path),
+    codec="libx264",
+    audio=False,
+    fps=24,
+    threads=2
+)
 
     return str(video_path)
 
