@@ -1,7 +1,7 @@
 from pathlib import Path
 import time
 from PIL import Image, ImageDraw
-from moviepy.editor import ImageClip
+from moviepy import ImageClip
 
 
 def build_media_path(base_dir="ace_media", prefix="media", ext=".mp4"):
