@@ -6620,3 +6620,44 @@ if __name__ == "__main__":
     boot()
     log("INFO", "flask_start", {"port": PORT})
     app.run(host="0.0.0.0", port=PORT)
+
+# ==========================================================
+# ACE EXECUTION LOOP
+# ==========================================================
+
+from ace.pipeline.pipeline_runner import run_pipeline
+
+
+def ace_generate_once(trend):
+
+    result = run_pipeline(trend)
+
+    return {
+        "ok": True,
+        "result": result
+}
+
+# ==========================================================
+# ACE VIDEO PATCH (estabilização de render)
+# ==========================================================
+
+def ace_safe_render_video(clip, video_path):
+
+    try:
+        print("ACE: iniciando render de vídeo")
+
+        clip.write_videofile(
+            str(video_path),
+            codec="libx264",
+            fps=24,
+            audio=False,
+            preset="medium",
+            threads=2
+        )
+
+        clip.close()
+
+        print("ACE: render finalizado")
+
+    except Exception as e:
+        print("ACE VIDEO ERROR:", e)
