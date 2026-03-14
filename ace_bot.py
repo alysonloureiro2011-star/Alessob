@@ -6892,7 +6892,9 @@ def ace_run():
         published = publish_content(
             media_path=media["media_path"],
             caption=content["caption"],
-            content_type=plan["content_type"]
+            content_type=plan["content_type"],
+            trend=trend,
+            style=plan["style"]
         )
 
         return {
