@@ -6871,31 +6871,41 @@ if "ACE_VIRAL_MEMORY" in globals():
 # PATCH 6 — HEALTHCHECK
 # ==========================================================
 
-if "app" in globals():
-    try:
-        @app.route("/ext/health/pdca")
-        def ace_pdca_health():
-            return jsonify({
-                "ok": True,
-                "health": ace_health()
-            })
-    except Exception:
-        pass
-
-print("ACE PDCA CONSOLIDADO ATIVO")
-
-
-
-@app.route("/")
-def ace_home():
-    return {
-        "status": "ACE Ω SUPREME",
-        "online": True
-    }
-
 @app.route("/ace/run")
 def ace_run():
-    return {
-        "status": "ACE pipeline ready",
-        "message": "endpoint funcionando"
-    }
+    try:
+        trend = choose_trend()
+
+        plan = build_director_plan(trend)
+
+        content = build_content_package(
+            trend=plan["trend"],
+            style=plan["style"],
+            content_type=plan["content_type"]
+        )
+
+        media = build_media_package(
+            content_type=plan["content_type"],
+            caption=content["caption"]
+        )
+
+        published = publish_content(
+            media_path=media["media_path"],
+            caption=content["caption"],
+            content_type=plan["content_type"]
+        )
+
+        return {
+            "ok": True,
+            "trend": trend,
+            "plan": plan,
+            "content": content,
+            "media": media,
+            "published": published
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }
