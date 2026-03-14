@@ -347,6 +347,7 @@ def log(level, event, detail=""):
 
 ACE_STATE = {
     "boot_at": datetime.datetime.now().isoformat(),
+    "cycles": 0,
     "last_cycle_at": None,
     "last_action_at": None,
     "last_action_type": None,
