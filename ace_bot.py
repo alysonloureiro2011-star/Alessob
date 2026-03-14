@@ -6911,3 +6911,83 @@ def ace_run():
             "ok": False,
             "error": str(e)
         }
+
+# ==========================================================
+# ACE AUTOSCHEDULER PATCH
+# COLE NO FINAL ABSOLUTO DO ace_bot.py
+# ==========================================================
+
+from ace.pipeline.auto_scheduler import (
+    start_ace_autoscheduler,
+    stop_ace_autoscheduler,
+    ace_autoscheduler_status
+)
+
+def ace_run_cycle_safe():
+    try:
+        trend = choose_trend()
+
+        plan = build_director_plan(trend)
+
+        content = build_content_package(
+            trend=plan["trend"],
+            style=plan["style"],
+            content_type=plan["content_type"]
+        )
+
+        media = build_media_package(
+            content_type=plan["content_type"],
+            caption=content["caption"]
+        )
+
+        published = publish_content(
+            media_path=media["media_path"],
+            caption=content["caption"],
+            content_type=plan["content_type"],
+            trend=trend,
+            style=plan["style"]
+        )
+
+        return {
+            "ok": True,
+            "trend": trend,
+            "plan": plan,
+            "content": content,
+            "media": media,
+            "published": published
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }
+
+
+@app.route("/ace/auto/start")
+def ace_auto_start():
+    started = start_ace_autoscheduler(
+        ace_run_cycle_safe,
+        interval_seconds=3600
+    )
+    return {
+        "ok": started,
+        "scheduler": ace_autoscheduler_status()
+    }
+
+
+@app.route("/ace/auto/stop")
+def ace_auto_stop():
+    stop_ace_autoscheduler()
+    return {
+        "ok": True,
+        "scheduler": ace_autoscheduler_status()
+    }
+
+
+@app.route("/ace/auto/status")
+def ace_auto_status():
+    return {
+        "ok": True,
+        "scheduler": ace_autoscheduler_status()
+    }
