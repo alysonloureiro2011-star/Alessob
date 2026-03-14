@@ -12,7 +12,7 @@
 
 from ace.pipeline.queue_executor import QueueExecutor
 from ace.pipeline.supervisor import Supervisor
-
+from ace.core.evolution_engine import learn
 from ace.core.config import *
 from ace.core.db import *
 from ace.core.state import *
