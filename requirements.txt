@@ -13,6 +13,3 @@ decorator
 tqdm
 python-dotenv
 gunicorn
-moviepy
-imageio-ffmpeg
-Pillow
