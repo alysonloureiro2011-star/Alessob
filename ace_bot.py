@@ -72,6 +72,43 @@ import requests
 import numpy as np
 
 # ==========================================================
+# ACE GOVERNANCE PATCH
+# estabiliza pipeline e evita duplicação de execução
+# ==========================================================
+
+ACE_RUNTIME = {
+    "cycle_running": False,
+    "last_cycle": None,
+    "video_lock": False
+}
+
+def ace_guard_cycle():
+    if ACE_RUNTIME["cycle_running"]:
+        print("ACE: ciclo já em execução, ignorando.")
+        return False
+    
+    ACE_RUNTIME["cycle_running"] = True
+    ACE_RUNTIME["last_cycle"] = datetime.datetime.utcnow().isoformat()
+    return True
+
+
+def ace_release_cycle():
+    ACE_RUNTIME["cycle_running"] = False
+
+
+def ace_guard_video():
+    if ACE_RUNTIME["video_lock"]:
+        print("ACE: render de vídeo já em execução.")
+        return False
+    
+    ACE_RUNTIME["video_lock"] = True
+    return True
+
+
+def ace_release_video():
+    ACE_RUNTIME["video_lock"] = False
+
+# ==========================================================
 # PIPELINE MODULAR ACE
 # ==========================================================
 
