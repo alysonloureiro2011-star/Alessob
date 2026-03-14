@@ -6883,3 +6883,19 @@ if "app" in globals():
         pass
 
 print("ACE PDCA CONSOLIDADO ATIVO")
+
+
+
+@app.route("/")
+def ace_home():
+    return {
+        "status": "ACE Ω SUPREME",
+        "online": True
+    }
+
+@app.route("/ace/run")
+def ace_run():
+    return {
+        "status": "ACE pipeline ready",
+        "message": "endpoint funcionando"
+    }
