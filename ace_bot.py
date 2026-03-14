@@ -6661,3 +6661,225 @@ def ace_safe_render_video(clip, video_path):
 
     except Exception as e:
         print("ACE VIDEO ERROR:", e)
+
+    # ==========================================================
+# ACE PDCA CONSOLIDADO — GOVERNANÇA / PUBLISH / MEMORY / TASK
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
+
+# ---- fallbacks seguros caso algum módulo ainda não exista ----
+try:
+    from ace.governance.runtime_guard import safe_call
+except Exception:
+    def safe_call(func, *args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            if result is None:
+                return {"ok": False, "error": "none_return"}
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+try:
+    from ace.governance.publish_guard import normalize_publish_result
+except Exception:
+    def normalize_publish_result(result):
+        if result is None:
+            return {"ok": False, "error": "none_result"}
+        if isinstance(result, dict) and "ok" not in result:
+            result["ok"] = True
+        return result
+
+try:
+    from ace.governance.task_guard import allow_task
+except Exception:
+    _ACE_TASK_ATTEMPTS = {}
+    def allow_task(task_id):
+        count = _ACE_TASK_ATTEMPTS.get(task_id, 0)
+        if count >= 3:
+            return False
+        _ACE_TASK_ATTEMPTS[task_id] = count + 1
+        return True
+
+try:
+    from ace.governance.memory_guard import normalize_memory
+except Exception:
+    def normalize_memory(memory):
+        try:
+            for group in memory.values():
+                if isinstance(group, dict):
+                    for key, value in list(group.items()):
+                        if isinstance(value, (int, float)) and value > 3.0:
+                            group[key] = 3.0
+        except Exception:
+            pass
+
+try:
+    from ace.governance.media_publish_guard import validate_media_for_publish
+except Exception:
+    from pathlib import Path
+    def validate_media_for_publish(media_path, content_type):
+        if not media_path:
+            return {"ok": False, "error": "empty_media_path"}
+        p = Path(media_path)
+        if not p.exists():
+            return {"ok": False, "error": "file_not_found"}
+        suffix = p.suffix.lower()
+        if content_type == "reel" and suffix != ".mp4":
+            return {"ok": False, "error": "invalid_video_format"}
+        if content_type in ["carrossel", "imagem", "story"] and suffix not in [".png", ".jpg", ".jpeg"]:
+            return {"ok": False, "error": "invalid_image_format"}
+        return {"ok": True, "media_path": str(p)}
+
+try:
+    from ace.monitoring.healthcheck import ace_health
+except Exception:
+    import os
+    def ace_health():
+        return {
+            "media_dir": os.path.exists("ace_media"),
+            "memory_dir": os.path.exists("memory"),
+            "status": "ok"
+        }
+
+# ==========================================================
+# HELPERS
+# ==========================================================
+
+def _ace_task_id(task):
+    if isinstance(task, dict):
+        return str(
+            task.get("id")
+            or task.get("task_id")
+            or task.get("type")
+            or hash(str(sorted(task.items())))
+        )
+    return str(hash(str(task)))
+
+# ==========================================================
+# PATCH 1 — EXECUTE_TASK COM LIMITADOR DE TENTATIVA
+# ==========================================================
+
+_ACE_ORIGINAL_EXECUTE_TASK = globals().get("execute_task")
+
+if callable(_ACE_ORIGINAL_EXECUTE_TASK):
+    def execute_task(task, *args, **kwargs):
+        task_id = _ace_task_id(task)
+
+        if not allow_task(task_id):
+            return {
+                "ok": False,
+                "error": "task_blocked_max_attempts",
+                "task_id": task_id
+            }
+
+        result = safe_call(_ACE_ORIGINAL_EXECUTE_TASK, task, *args, **kwargs)
+
+        if isinstance(result, dict) and "ok" not in result:
+            result["ok"] = True
+
+        return result
+
+    globals()["execute_task"] = execute_task
+
+# ==========================================================
+# PATCH 2 — PUBLICAÇÃO NORMALIZADA
+# ==========================================================
+
+_ACE_ORIGINAL_PROCESSAR_PUBLICACAO_GOVERNADA = globals().get("processar_publicacao_governada")
+
+if callable(_ACE_ORIGINAL_PROCESSAR_PUBLICACAO_GOVERNADA):
+    def processar_publicacao_governada(*args, **kwargs):
+        result = safe_call(_ACE_ORIGINAL_PROCESSAR_PUBLICACAO_GOVERNADA, *args, **kwargs)
+        return normalize_publish_result(result)
+
+    globals()["processar_publicacao_governada"] = processar_publicacao_governada
+
+# ==========================================================
+# PATCH 3 — PUBLISH SINGLE VALIDADO
+# ==========================================================
+
+_ACE_ORIGINAL_REAL_PUBLISH_SINGLE = globals().get("ace_real_publish_single")
+
+if callable(_ACE_ORIGINAL_REAL_PUBLISH_SINGLE):
+    def ace_real_publish_single(media_path, *args, **kwargs):
+        check = validate_media_for_publish(media_path, "reel")
+        if not check.get("ok"):
+            return {
+                "ok": False,
+                "error": check.get("error"),
+                "media_path": media_path
+            }
+
+        result = safe_call(_ACE_ORIGINAL_REAL_PUBLISH_SINGLE, media_path, *args, **kwargs)
+        return normalize_publish_result(result)
+
+    globals()["ace_real_publish_single"] = ace_real_publish_single
+
+# ==========================================================
+# PATCH 4 — PUBLISH CARROSSEL VALIDADO
+# ==========================================================
+
+_ACE_ORIGINAL_REAL_PUBLISH_CARROUSSEL = globals().get("ace_real_publish_carrossel")
+
+if callable(_ACE_ORIGINAL_REAL_PUBLISH_CARROUSSEL):
+    def ace_real_publish_carrossel(media_paths, *args, **kwargs):
+        media_paths = media_paths or []
+
+        for media_path in media_paths:
+            check = validate_media_for_publish(media_path, "carrossel")
+            if not check.get("ok"):
+                return {
+                    "ok": False,
+                    "error": check.get("error"),
+                    "media_path": media_path
+                }
+
+        result = safe_call(_ACE_ORIGINAL_REAL_PUBLISH_CARROUSSEL, media_paths, *args, **kwargs)
+        return normalize_publish_result(result)
+
+    globals()["ace_real_publish_carrossel"] = ace_real_publish_carrossel
+
+# ==========================================================
+# PATCH 5 — MEMORY DRIFT
+# ==========================================================
+
+_ACE_ORIGINAL_REFRESH_VIRAL_MEMORY = globals().get("ace_refresh_viral_memory_from_instagram")
+
+if callable(_ACE_ORIGINAL_REFRESH_VIRAL_MEMORY):
+    def ace_refresh_viral_memory_from_instagram(*args, **kwargs):
+        result = safe_call(_ACE_ORIGINAL_REFRESH_VIRAL_MEMORY, *args, **kwargs)
+
+        if "ACE_VIRAL_MEMORY" in globals():
+            try:
+                normalize_memory(globals()["ACE_VIRAL_MEMORY"])
+            except Exception:
+                pass
+
+        return result
+
+    globals()["ace_refresh_viral_memory_from_instagram"] = ace_refresh_viral_memory_from_instagram
+
+# normaliza memória já no boot, se existir
+if "ACE_VIRAL_MEMORY" in globals():
+    try:
+        normalize_memory(globals()["ACE_VIRAL_MEMORY"])
+    except Exception:
+        pass
+
+# ==========================================================
+# PATCH 6 — HEALTHCHECK
+# ==========================================================
+
+if "app" in globals():
+    try:
+        @app.route("/ext/health/pdca")
+        def ace_pdca_health():
+            return jsonify({
+                "ok": True,
+                "health": ace_health()
+            })
+    except Exception:
+        pass
+
+print("ACE PDCA CONSOLIDADO ATIVO")
