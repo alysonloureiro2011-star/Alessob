@@ -1,4 +1,3 @@
-
 import random
 
 
@@ -59,3 +58,7 @@ def pick_best_trend():
 
     ranked = sorted(trends, key=lambda x: x["score"], reverse=True)
     return ranked[0]
+
+
+def choose_trend():
+    return pick_best_trend()["topic"]
