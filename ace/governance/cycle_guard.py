@@ -1,38 +1,81 @@
 import threading
 import time
+import datetime
+
 
 class CycleGuard:
-
     def __init__(self):
-        self._lock = threading.Lock()
-        self._running = False
-        self._last_run = None
+        self._cycle_lock = threading.Lock()
+        self._video_lock = threading.Lock()
 
-    def acquire(self):
+        self.state = {
+            "cycle_running": False,
+            "last_cycle": None,
+            "video_lock": False,
+            "cycles": 0,
+            "last_error": None,
+            "last_duration_sec": None
+        }
 
-        if self._lock.locked():
+        self._started_at = None
+
+    def guard_cycle(self):
+        acquired = self._cycle_lock.acquire(blocking=False)
+
+        if not acquired:
             return False
 
-        acquired = self._lock.acquire(blocking=False)
+        self.state["cycle_running"] = True
+        self.state["last_cycle"] = datetime.datetime.utcnow().isoformat()
+        self.state["last_error"] = None
+        self._started_at = time.time()
+        return True
 
-        if acquired:
-            self._running = True
-            self._last_run = time.time()
+    def release_cycle(self, error=None):
+        if self._cycle_lock.locked():
+            try:
+                self._cycle_lock.release()
+            except Exception:
+                pass
 
-        return acquired
+        self.state["cycle_running"] = False
+        self.state["cycles"] += 1
 
-    def release(self):
+        if self._started_at:
+            self.state["last_duration_sec"] = round(time.time() - self._started_at, 2)
+        else:
+            self.state["last_duration_sec"] = None
 
-        if self._lock.locked():
-            self._lock.release()
+        self.state["last_error"] = error
+        self._started_at = None
 
-        self._running = False
+    def guard_video(self):
+        acquired = self._video_lock.acquire(blocking=False)
 
-    def status(self):
+        if not acquired:
+            return False
 
+        self.state["video_lock"] = True
+        return True
+
+    def release_video(self):
+        if self._video_lock.locked():
+            try:
+                self._video_lock.release()
+            except Exception:
+                pass
+
+        self.state["video_lock"] = False
+
+    def snapshot(self):
         return {
-            "running": self._running,
-            "last_run": self._last_run
+            "cycle_running": self.state["cycle_running"],
+            "last_cycle": self.state["last_cycle"],
+            "video_lock": self.state["video_lock"],
+            "cycles": self.state["cycles"],
+            "last_error": self.state["last_error"],
+            "last_duration_sec": self.state["last_duration_sec"]
         }
+
 
 cycle_guard = CycleGuard()
