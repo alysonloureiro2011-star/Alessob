@@ -6874,10 +6874,9 @@ if "ACE_VIRAL_MEMORY" in globals():
 # ==========================================================
 # PATCH 6 — HEALTHCHECK
 # ==========================================================
-
-@app.route("/ace/run")
 def ace_run():
     try:
+
         trend = choose_trend()
 
         plan = build_director_plan(trend)
