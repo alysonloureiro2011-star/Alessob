@@ -4,6 +4,7 @@ from ace.engines.generator_engine import generate_hook, generate_body
 from ace.engines.media_engine import build_media_package
 from ace.engines.publish_engine import publish_media
 
+
 def run_pipeline():
 
     result = {}
@@ -21,13 +22,13 @@ def run_pipeline():
 
     media = build_media_package(trend, content_type, caption)
 
-    publish_result = publish_media(media, caption)
+    publish = publish_media(media, caption)
 
     result["trend"] = trend
-    result["style"] = style
     result["content_type"] = content_type
+    result["style"] = style
     result["caption"] = caption
     result["media"] = media
-    result["publish"] = publish_result
+    result["publish"] = publish
 
     return result
