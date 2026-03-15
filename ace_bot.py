@@ -362,6 +362,72 @@ load_instagram_auth()
 
 
 # ==========================================================
+# ACE IG TOKEN COMPATIBILITY BRIDGE
+# restaura compatibilidade entre IG_TOKEN, IG_ACCESS_TOKEN
+# INSTAGRAM_TOKEN, runtime e instagram_auth.json
+# ==========================================================
+
+def ace_sync_ig_token_sources():
+    global IG_TOKEN_RUNTIME, IG_ID_RUNTIME, IG_TOKEN_ENV, IG_ID_ENV
+
+    unified_token = (
+        IG_TOKEN_RUNTIME
+        or os.environ.get("IG_TOKEN")
+        or os.environ.get("IG_ACCESS_TOKEN")
+        or os.environ.get("INSTAGRAM_TOKEN")
+        or globals().get("IG_TOKEN_ENV")
+    )
+
+    unified_ig_id = (
+        IG_ID_RUNTIME
+        or os.environ.get("IG_USER_ID")
+        or globals().get("IG_ID_ENV")
+    )
+
+    if unified_token:
+        os.environ["IG_TOKEN"] = unified_token
+        os.environ["IG_ACCESS_TOKEN"] = unified_token
+        os.environ["INSTAGRAM_TOKEN"] = unified_token
+        IG_TOKEN_RUNTIME = unified_token
+        IG_TOKEN_ENV = unified_token
+
+    if unified_ig_id:
+        unified_ig_id = str(unified_ig_id)
+        os.environ["IG_USER_ID"] = unified_ig_id
+        IG_ID_RUNTIME = unified_ig_id
+        IG_ID_ENV = unified_ig_id
+
+    if unified_token or unified_ig_id:
+        try:
+            save_instagram_auth(
+                token=unified_token,
+                user_id=unified_ig_id,
+                meta={"source": "ace_sync_ig_token_sources"}
+            )
+        except Exception:
+            pass
+
+    return {
+        "token_present": bool(unified_token),
+        "ig_id_present": bool(unified_ig_id),
+        "token_preview": (unified_token[:12] + "...") if unified_token and unified_token != "NOVO_TOKEN" else unified_token,
+        "ig_user_id": unified_ig_id,
+    }
+
+
+ace_sync_ig_token_sources()
+
+
+@app.before_request
+def ace_before_request_sync_ig_token():
+    """
+    Garante que rotas antigas como /token/upgrade, que leem os.environ['IG_TOKEN'],
+    sempre enxerguem o token vindo do runtime/json/env unificado.
+    """
+    ace_sync_ig_token_sources()
+
+
+# ==========================================================
 # LOG
 # ==========================================================
 
