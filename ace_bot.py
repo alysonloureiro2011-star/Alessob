@@ -7044,12 +7044,19 @@ install_cycle_governor(ace_runtime, cooldown_minutes=45)
 # Instalar o orquestrador premium de mídia (define o diretório de saída se quiser)
 install_premium_media_orchestrator(ace_runtime, output_dir="ace_media_output")
 
-# Instalar o publish engine real (substitua IG_ACCESS_TOKEN e IG_USER_ID por valores válidos)
-install_publish_engine_real(
-    ace_runtime,
-    ig_token=os.getenv("IG_ACCESS_TOKEN"), 
-    ig_user_id=os.getenv("IG_USER_ID")
-)
+IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
+IG_USER_ID = os.getenv("IG_USER_ID")
+
+if IG_ACCESS_TOKEN and IG_USER_ID:
+    install_publish_engine_real(
+        ace_runtime,
+        ig_token=IG_ACCESS_TOKEN,
+        ig_user_id=IG_USER_ID
+    )
+    print("[ACE] Publish Engine Real ativado.")
+else:
+    print("[ACE] Publish Engine Real desativado (sem token).")
+    ace_runtime.publish_engine_real = None
 
 # (Opcional) iniciar um ciclo imediato no boot:
 # if ace_runtime.cycle_governor:
