@@ -9,7 +9,8 @@
 # ==========================================================
 
 # IMPORTS DE MÓDULOS INTERNOS
-
+from ace.pipeline.run_pipeline import run_pipeline
+from ace.governance.cycle_guard import cycle_guard
 from ace.pipeline.queue_executor import QueueExecutor
 from ace.pipeline.supervisor import Supervisor
 from ace.core.evolution_engine import learn
@@ -6990,4 +6991,23 @@ def ace_auto_status():
     return {
         "ok": True,
         "scheduler": ace_autoscheduler_status()
+        
     }
+
+
+@app.route("/ace/run_new")
+
+def run_new():
+
+    if not cycle_guard.acquire():
+        return {"status": "busy"}
+
+    try:
+
+        result = run_pipeline()
+
+        return result
+
+    finally:
+
+        cycle_guard.release()
