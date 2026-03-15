@@ -6998,9 +6998,7 @@ def ace_auto_status():
         
     }
 
-ace_runtime = sys.modules[__name__]
-install_executor_soberano(ace_runtime)
-ace_runtime.boot_executor_soberano()
+
 @app.route("/ace/run_new")
 
 def run_new():
@@ -7019,3 +7017,6 @@ def run_new():
         cycle_guard.release()
 
 
+ace_runtime = sys.modules[__name__]
+install_executor_soberano(ace_runtime)
+ace_runtime.boot_executor_soberano()
