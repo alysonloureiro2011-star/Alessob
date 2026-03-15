@@ -6875,6 +6875,17 @@ if "ACE_VIRAL_MEMORY" in globals():
 # PATCH 6 — HEALTHCHECK
 # ==========================================================
 def ace_run():
+
+    # 🔒 impede dois ciclos ao mesmo tempo
+    if ACE_RUNTIME["cycle_running"]:
+        return {
+            "ok": False,
+            "error": "ACE já está executando um ciclo"
+        }
+
+    ACE_RUNTIME["cycle_running"] = True
+    ACE_RUNTIME["last_cycle"] = datetime.datetime.utcnow().isoformat()
+
     try:
 
         trend = choose_trend()
@@ -6906,14 +6917,23 @@ def ace_run():
             "plan": plan,
             "content": content,
             "media": media,
-            "published": published
+            "published": published,
+            "runtime": {
+                "cycle_running": ACE_RUNTIME["cycle_running"],
+                "last_cycle": ACE_RUNTIME["last_cycle"]
+            }
         }
 
     except Exception as e:
+
         return {
             "ok": False,
             "error": str(e)
         }
+
+    finally:
+        # 🔓 libera o ciclo mesmo se der erro
+        ACE_RUNTIME["cycle_running"] = False
 
 # ==========================================================
 # ACE AUTOSCHEDULER PATCH
