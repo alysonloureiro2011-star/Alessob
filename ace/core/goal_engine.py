@@ -135,4 +135,101 @@ class GoalEngine:
                 "content_type": "reel",
                 "style_bias": "curiosidade",
                 "intensity_bias": "forte",
-                "creative_bias": "close + hook
+                "creative_bias": "close + hook rápido + tensão inicial"
+            }
+        elif weak == "saves":
+            recommendation = {
+                "content_type": "carrossel",
+                "style_bias": "autoridade",
+                "intensity_bias": "media",
+                "creative_bias": "clareza prática + utilidade alta"
+            }
+        elif weak == "shares":
+            recommendation = {
+                "content_type": "reel",
+                "style_bias": "choque",
+                "intensity_bias": "forte",
+                "creative_bias": "frase memorável + contraste social"
+            }
+        elif weak == "authority":
+            recommendation = {
+                "content_type": "carrossel",
+                "style_bias": "autoridade",
+                "intensity_bias": "media",
+                "creative_bias": "densidade intelectual + estética premium"
+            }
+        elif weak == "novelty":
+            recommendation = {
+                "content_type": "reel",
+                "style_bias": "historia",
+                "intensity_bias": "media",
+                "creative_bias": "ângulo novo + framing não óbvio"
+            }
+        elif weak == "consistency":
+            recommendation = {
+                "content_type": "carrossel",
+                "style_bias": "autoridade",
+                "intensity_bias": "leve",
+                "creative_bias": "padronização visual + repetição inteligente"
+            }
+        else:
+            recommendation = {
+                "content_type": "reel",
+                "style_bias": "choque",
+                "intensity_bias": "forte",
+                "creative_bias": "impacto com qualidade controlada"
+            }
+
+        return {
+            "dominant_goal": dominant,
+            "weakest_goal": weak,
+            "strategic_tension": tension,
+            "recommendation": recommendation
+        }
+
+    # --------------------------------------------------
+    # utilidade composta do ciclo
+    # --------------------------------------------------
+
+    def utility_score(self, cycle: Dict) -> float:
+        utility = (
+            cycle.get("authority_score", 0.0) * self.goals["authority"] +
+            cycle.get("retention_score", 0.0) * self.goals["retention"] +
+            cycle.get("saves_score", 0.0) * self.goals["saves"] +
+            cycle.get("shares_score", 0.0) * self.goals["shares"] +
+            cycle.get("growth_score", 0.0) * self.goals["growth"] +
+            cycle.get("quality_score", 0.0) * self.goals["quality"] +
+            cycle.get("novelty_score", 0.0) * self.goals["novelty"] +
+            cycle.get("consistency_score", 0.0) * self.goals["consistency"]
+        )
+
+        return round(float(utility), 6)
+
+    # --------------------------------------------------
+    # resumo executivo
+    # --------------------------------------------------
+
+    def summary(self) -> Dict:
+        if not self.history:
+            return {
+                "total_cycles": 0,
+                "dominant_goal": self.dominant_goal(),
+                "weakest_goal": None,
+                "strategic_tension": self.strategic_tension(),
+                "recommendation": self.recommend_focus()
+            }
+
+        recent = self.history[-10:]
+        avg_utility = sum(self.utility_score(x) for x in recent) / len(recent)
+
+        return {
+            "total_cycles": len(self.history),
+            "dominant_goal": self.dominant_goal(),
+            "weakest_goal": self.weakest_goal(),
+            "avg_recent_utility": round(avg_utility, 6),
+            "strategic_tension": self.strategic_tension(),
+            "recommendation": self.recommend_focus()
+        }
+
+
+goal_engine = GoalEngine()
