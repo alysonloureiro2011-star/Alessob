@@ -6874,66 +6874,46 @@ if "ACE_VIRAL_MEMORY" in globals():
 # ==========================================================
 # PATCH 6 — HEALTHCHECK
 # ==========================================================
-def ace_run():
 
-    # 🔒 impede dois ciclos ao mesmo tempo
-    if ACE_RUNTIME["cycle_running"]:
-        return {
-            "ok": False,
-            "error": "ACE já está executando um ciclo"
-        }
+# ==========================================================
+# ACE GOVERNANCE PATCH
+# estabiliza pipeline e evita duplicação de execução
+# ==========================================================
 
-    ACE_RUNTIME["cycle_running"] = True
-    ACE_RUNTIME["last_cycle"] = datetime.datetime.utcnow().isoformat()
+from ace.governance.cycle_guard import cycle_guard
 
-    try:
+ACE_RUNTIME = cycle_guard.state
 
-        trend = choose_trend()
+def ace_guard_cycle():
+    ok = cycle_guard.guard_cycle()
 
-        plan = build_director_plan(trend)
+    if not ok:
+        print("ACE: ciclo já em execução, ignorando.")
 
-        content = build_content_package(
-            trend=plan["trend"],
-            style=plan["style"],
-            content_type=plan["content_type"]
-        )
+    return ok
 
-        media = build_media_package(
-            content_type=plan["content_type"],
-            caption=content["caption"]
-        )
 
-        published = publish_content(
-            media_path=media["media_path"],
-            caption=content["caption"],
-            content_type=plan["content_type"],
-            trend=trend,
-            style=plan["style"]
-        )
+def ace_release_cycle(error=None):
+    cycle_guard.release_cycle(error=error)
 
-        return {
-            "ok": True,
-            "trend": trend,
-            "plan": plan,
-            "content": content,
-            "media": media,
-            "published": published,
-            "runtime": {
-                "cycle_running": ACE_RUNTIME["cycle_running"],
-                "last_cycle": ACE_RUNTIME["last_cycle"]
-            }
-        }
 
-    except Exception as e:
+def ace_guard_video():
+    ok = cycle_guard.guard_video()
 
-        return {
-            "ok": False,
-            "error": str(e)
-        }
+    if not ok:
+        print("ACE: render de vídeo já em execução.")
 
-    finally:
-        # 🔓 libera o ciclo mesmo se der erro
-        ACE_RUNTIME["cycle_running"] = False
+    return ok
+
+
+def ace_release_video():
+    cycle_guard.release_video()
+
+
+def ace_runtime_snapshot():
+    return cycle_guard.snapshot()
+
+
 
 # ==========================================================
 # ACE AUTOSCHEDULER PATCH
