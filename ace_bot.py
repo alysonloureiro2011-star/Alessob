@@ -3116,6 +3116,9 @@ def generate_reel_route():
     res = processar_publicacao_governada(trend, style, "reel", hook, hook, body, media_path)
     return jsonify(res)
 
+@app.route("/media/<path:filename>")
+def serve_media(filename):
+    return send_from_directory("ace_media", filename)
 
 @app.route("/generate/carrossel")
 def generate_carrossel_route():
