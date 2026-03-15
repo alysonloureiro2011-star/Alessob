@@ -7017,6 +7017,36 @@ def run_new():
         cycle_guard.release()
 
 
+
+
+# === Instalação dos módulos novos ===
+# Este código deve ser executado após a definição de ace_runtime (ex: 'ace' ou 'globals()').
+
+ace_runtime = sys.modules[__name__]
+
+# Instalar a fusão de sinais (antes do integrador)
+install_signal_fusion(ace_runtime)
+
+# Instalar o integrador cognitivo
+install_cognitive_integrator(ace_runtime)
+
+# Instalar o governante de ciclo (define cooldown de 45 minutos, ajuste conforme necessário)
+install_cycle_governor(ace_runtime, cooldown_minutes=45)
+
+# Instalar o orquestrador premium de mídia (define o diretório de saída se quiser)
+install_premium_media_orchestrator(ace_runtime, output_dir="ace_media_output")
+
+# Instalar o publish engine real (substitua IG_ACCESS_TOKEN e IG_USER_ID por valores válidos)
+install_publish_engine_real(
+    ace_runtime,
+    ig_token=os.getenv("IG_ACCESS_TOKEN"), 
+    ig_user_id=os.getenv("IG_USER_ID")
+)
+
+# (Opcional) iniciar um ciclo imediato no boot:
+# if ace_runtime.cycle_governor:
+#     ace_runtime.cycle_governor.start_cycle()
+
 ace_runtime = sys.modules[__name__]
 install_executor_soberano(ace_runtime)
 ace_runtime.boot_executor_soberano()
