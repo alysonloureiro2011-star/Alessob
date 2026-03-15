@@ -9,6 +9,8 @@
 # ==========================================================
 
 # IMPORTS DE MÓDULOS INTERNOS
+import sys
+from ace.core.ace_executor_soberano import install_executor_soberano
 from ace.pipeline.run_pipeline import run_pipeline
 from ace.governance.cycle_guard import cycle_guard
 from ace.pipeline.queue_executor import QueueExecutor
@@ -6996,7 +6998,9 @@ def ace_auto_status():
         
     }
 
-
+ace_runtime = sys.modules[__name__]
+install_executor_soberano(ace_runtime)
+ace_runtime.boot_executor_soberano()
 @app.route("/ace/run_new")
 
 def run_new():
@@ -7013,3 +7017,5 @@ def run_new():
     finally:
 
         cycle_guard.release()
+
+
