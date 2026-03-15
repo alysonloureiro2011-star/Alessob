@@ -47,6 +47,14 @@ from ace.engines.publish_engine import (
     publish_content
 )
 
+
+# Instalação de módulos cognitivos e operacionais
+from ace.core.cycle_governor import install_cycle_governor
+from ace.core.cognitive_integrator import install_cognitive_integrator
+from ace.media.premium_orchestrator import install_premium_media_orchestrator
+from ace.publish.publish_engine_real import install_publish_engine_real
+from ace.core.signal_fusion import install_signal_fusion
+
 # ==========================================================
 # IMPORTS DO SISTEMA
 # ==========================================================
