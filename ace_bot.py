@@ -8048,7 +8048,215 @@ if "ACE_RUNTIME_SOVEREIGN_PATCH_V1_LOADED" not in globals():
 
 
 
+# ==========================================================
+# ACE Ω — BLOCO 2 CONSOLIDADO FINAL: OPENAI REAL V2
+# COLE ESTE BLOCO NO FINAL DO ARQUIVO ace_bot.py
+# ==========================================================
 
+if "ACE_OPENAI_REAL_PATCH_V2_LOADED" not in globals():
+    ACE_OPENAI_REAL_PATCH_V2_LOADED = True
+
+    import datetime
+
+    ACE_OPENAI_V2_STATE = {
+        "enabled": True,
+        "last_call_at": None,
+        "last_ok": None,
+        "last_reason": None,
+        "last_error": None,
+        "last_model": None,
+        "last_text_preview": None,
+    }
+
+    def ace_openai_v2_now_iso():
+        return datetime.datetime.now().isoformat()
+
+    def ace_openai_v2_extract_text(data):
+        if not isinstance(data, dict):
+            return None
+
+        direct = data.get("output_text")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+
+        output = data.get("output", [])
+        if isinstance(output, list):
+            chunks = []
+
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+
+                content = item.get("content", [])
+                if isinstance(content, list):
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+
+                        text = part.get("text")
+                        if isinstance(text, str) and text.strip():
+                            chunks.append(text.strip())
+
+                item_text = item.get("text")
+                if isinstance(item_text, str) and item_text.strip():
+                    chunks.append(item_text.strip())
+
+            joined = "\n".join([c for c in chunks if c]).strip()
+            if joined:
+                return joined
+
+        message = data.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+
+        return None
+
+    def ace_openai_generate_text_safe_v2(prompt, model=None):
+        """
+        Geração segura paralela.
+        NÃO substitui a função principal antiga.
+        Serve para diagnóstico e evolução controlada.
+        """
+        ACE_OPENAI_V2_STATE["last_call_at"] = ace_openai_v2_now_iso()
+        ACE_OPENAI_V2_STATE["last_model"] = model or globals().get("OPENAI_MODEL", "gpt-4.1-mini")
+        ACE_OPENAI_V2_STATE["last_ok"] = False
+        ACE_OPENAI_V2_STATE["last_reason"] = None
+        ACE_OPENAI_V2_STATE["last_error"] = None
+        ACE_OPENAI_V2_STATE["last_text_preview"] = None
+
+        if globals().get("ACE_DISABLE_OPENAI", False):
+            ACE_OPENAI_V2_STATE["last_reason"] = "openai_desabilitado"
+            return None
+
+        api_key = globals().get("OPENAI_API_KEY")
+        if not api_key:
+            ACE_OPENAI_V2_STATE["last_reason"] = "openai_key_ausente"
+            return None
+
+        chosen_model = model or globals().get("OPENAI_MODEL", "gpt-4.1-mini")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": chosen_model,
+            "input": prompt,
+        }
+
+        try:
+            result = ace_http_post(
+                "https://api.openai.com/v1/responses",
+                headers=headers,
+                json_payload=payload,
+                timeout=60,
+            )
+        except Exception as e:
+            ACE_OPENAI_V2_STATE["last_reason"] = "openai_http_exception"
+            ACE_OPENAI_V2_STATE["last_error"] = str(e)
+            try:
+                log("WARN", "ace_openai_generate_text_safe_v2_http_exception", str(e))
+            except Exception:
+                pass
+            return None
+
+        if not isinstance(result, dict) or not result.get("ok"):
+            ACE_OPENAI_V2_STATE["last_reason"] = "openai_http_fail"
+            ACE_OPENAI_V2_STATE["last_error"] = str(result)
+            try:
+                log("WARN", "ace_openai_generate_text_safe_v2_http_fail", result)
+            except Exception:
+                pass
+            return None
+
+        data = result.get("data", {})
+        text = ace_openai_v2_extract_text(data)
+
+        if text:
+            ACE_OPENAI_V2_STATE["last_ok"] = True
+            ACE_OPENAI_V2_STATE["last_text_preview"] = text[:180]
+
+            try:
+                if "ACE_EXT_STATE" in globals() and isinstance(ACE_EXT_STATE, dict):
+                    ACE_EXT_STATE["last_llm_used"] = "openai_v2"
+                if "ACE_STATE" in globals() and isinstance(ACE_STATE, dict):
+                    ACE_STATE["last_error"] = None
+            except Exception:
+                pass
+
+            return text
+
+        ACE_OPENAI_V2_STATE["last_reason"] = "openai_sem_texto_util"
+        ACE_OPENAI_V2_STATE["last_error"] = str(data)[:1500]
+
+        try:
+            log("WARN", "ace_openai_generate_text_safe_v2_sem_texto", data)
+        except Exception:
+            pass
+
+        return None
+
+    def ace_openai_v2_status_payload():
+        return {
+            "ok": True,
+            "provider": "openai",
+            "diagnostic_mode": "safe_v2",
+            "model": globals().get("OPENAI_MODEL", "gpt-4.1-mini"),
+            "disabled": bool(globals().get("ACE_DISABLE_OPENAI", False)),
+            "api_key_present": bool(globals().get("OPENAI_API_KEY")),
+            "runtime_state": ACE_OPENAI_V2_STATE,
+        }
+
+    def ace_openai_runtime_view_v2():
+        payload = ace_openai_v2_status_payload()
+        payload["timestamp"] = ace_openai_v2_now_iso()
+        return jsonify(payload)
+
+    def ace_openai_test_view_v3():
+        prompt = "Responda em 1 linha, em português do Brasil, sem enfeite: ACE online."
+        text = ace_openai_generate_text_safe_v2(prompt)
+
+        payload = ace_openai_v2_status_payload()
+        payload["ok"] = bool(text)
+        payload["text"] = text
+
+        if text:
+            payload["reason"] = None
+            payload["error_detail"] = None
+        else:
+            payload["reason"] = ACE_OPENAI_V2_STATE.get("last_reason")
+            payload["error_detail"] = ACE_OPENAI_V2_STATE.get("last_error")
+
+        return jsonify(payload)
+
+    # substitui SOMENTE a rota de teste
+    if "ace_ext_test_openai_consolidado" in app.view_functions:
+        app.view_functions["ace_ext_test_openai_consolidado"] = ace_openai_test_view_v3
+
+    # endpoint de diagnóstico extra
+    try:
+        if "ace_ext_openai_runtime_v2" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/openai/runtime",
+                endpoint="ace_ext_openai_runtime_v2",
+                view_func=ace_openai_runtime_view_v2,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_openai_real_patch_v2_loaded", {
+            "enabled": True,
+            "diagnostic_mode": "safe_v2",
+            "model": globals().get("OPENAI_MODEL", "gpt-4.1-mini"),
+            "api_key_present": bool(globals().get("OPENAI_API_KEY")),
+        })
+    except Exception:
+        pass
 
 
 
