@@ -10,17 +10,30 @@ except Exception:
     myth_run_cycle = None
 
 
+def build_myth_narrative_line(myth):
+    if not myth:
+        return None
+
+    stage = myth.get("chapter_stage")
+    anchor = myth.get("symbolic_anchor")
+    tension = myth.get("dominant_tension")
+
+    if not stage or not anchor or not tension:
+        return None
+
+    if stage == "abrir":
+        return f"Talvez o verdadeiro eixo aqui seja {anchor}."
+
+    if stage == "aprofundar":
+        return f"O conflito real começa quando {anchor} deixa de ser ideia e vira prática."
+
+    return f"No fim, tudo converge para {anchor}."
+
+
+
 def run_pipeline(trend=None):
     """
     Pipeline modular oficial do ACE Ω com integração leve do Living Myth Engine.
-
-    Regras:
-    - Se trend vier vazio, usa choose_trend()
-    - Se trend vier preenchido, usa esse valor
-    - Tenta normalizar o trend sem quebrar o fluxo
-    - Executa o Living Myth Engine como camada consultiva
-    - Mantém as chaves antigas
-    - Adiciona chaves ricas para evolução futura
     """
 
     result = {}
@@ -34,7 +47,7 @@ def run_pipeline(trend=None):
     except Exception:
         pass
 
-    # 2) Living Myth Engine (camada consultiva, nunca bloqueante)
+    # 2) Living Myth Engine
     myth = None
     if myth_run_cycle is not None:
         try:
@@ -42,20 +55,27 @@ def run_pipeline(trend=None):
         except Exception:
             myth = None
 
-    # 3) Decisão de formato e estilo
+    # 3) Formato e estilo
     content_type = choose_content_type()
     style = choose_style()
 
     # 4) Geração textual principal
     hook = generate_hook(trend, style)
     body = generate_body(trend, style)
-    caption = f"{hook}\n\n{body}"
 
-    # 5) Mídia e publicação
+    # 5) Enriquecimento narrativo leve
+    myth_line = build_myth_narrative_line(myth)
+
+    if myth_line:
+        caption = f"{hook}\n\n{body}\n\n{myth_line}"
+    else:
+        caption = f"{hook}\n\n{body}"
+
+    # 6) Mídia e publicação
     media = build_media_package(trend, content_type, caption)
     publish = publish_media(media, caption)
 
-    # 6) Chaves clássicas
+    # 7) Chaves clássicas
     result["trend"] = trend
     result["content_type"] = content_type
     result["style"] = style
@@ -63,7 +83,7 @@ def run_pipeline(trend=None):
     result["media"] = media
     result["publish"] = publish
 
-    # 7) Chaves ricas de compatibilidade
+    # 8) Chaves ricas
     result["plan"] = {
         "trend": trend,
         "content_type": content_type,
@@ -80,11 +100,10 @@ def run_pipeline(trend=None):
         "narrative_direction": myth.get("narrative_direction") if myth else None,
         "symbolic_anchor": myth.get("symbolic_anchor") if myth else None,
         "cta_mode": myth.get("cta_mode") if myth else None,
+        "myth_line": myth_line,
     }
 
     result["published"] = publish
-
-    # 8) Saída completa do myth engine
     result["myth"] = myth
 
     return result
