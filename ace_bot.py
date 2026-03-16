@@ -8047,3 +8047,235 @@ if "ACE_RUNTIME_SOVEREIGN_PATCH_V1_LOADED" not in globals():
         pass
 
 
+# ==========================================================
+# ACE Ω — BLOCO 2: OPENAI REAL V1
+# COLE ESTE BLOCO NO FINAL DO ARQUIVO ace_bot.py
+# ==========================================================
+
+if "ACE_OPENAI_REAL_PATCH_V1_LOADED" not in globals():
+    ACE_OPENAI_REAL_PATCH_V1_LOADED = True
+
+    import datetime
+
+    ACE_OPENAI_RUNTIME_STATE = {
+        "enabled": True,
+        "last_call_at": None,
+        "last_ok": None,
+        "last_error": None,
+        "last_reason": None,
+        "last_model": None,
+        "last_text_preview": None,
+    }
+
+    _ACE_OPENAI_ORIGINALS = {
+        "ace_openai_generate_text": globals().get("ace_openai_generate_text"),
+    }
+
+    def ace_openai_now_iso():
+        return datetime.datetime.now().isoformat()
+
+    def ace_openai_extract_text(data):
+        """
+        Extrai texto de vários formatos possíveis da Responses API.
+        """
+        if not isinstance(data, dict):
+            return None
+
+        # formato direto
+        direct = data.get("output_text")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+
+        # formatos em output[]
+        output = data.get("output", [])
+        if isinstance(output, list):
+            chunks = []
+
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+
+                # content em lista
+                content = item.get("content", [])
+                if isinstance(content, list):
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+
+                        # output_text tradicional
+                        if part.get("type") == "output_text":
+                            text = part.get("text")
+                            if isinstance(text, str) and text.strip():
+                                chunks.append(text.strip())
+
+                        # fallback genérico
+                        text = part.get("text")
+                        if isinstance(text, str) and text.strip():
+                            chunks.append(text.strip())
+
+                # alguns formatos alternativos
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text.strip())
+
+            joined = "\n".join([c for c in chunks if c]).strip()
+            if joined:
+                return joined
+
+        # fallback final: message/content
+        message = data.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+
+        return None
+
+    def ace_openai_generate_text_v2(prompt, model=None):
+        """
+        Versão mais robusta da geração OpenAI.
+        """
+        ACE_OPENAI_RUNTIME_STATE["last_call_at"] = ace_openai_now_iso()
+        ACE_OPENAI_RUNTIME_STATE["last_model"] = model or globals().get("OPENAI_MODEL")
+
+        if globals().get("ACE_DISABLE_OPENAI", False):
+            ACE_OPENAI_RUNTIME_STATE["last_ok"] = False
+            ACE_OPENAI_RUNTIME_STATE["last_reason"] = "openai_desabilitado"
+            ACE_OPENAI_RUNTIME_STATE["last_error"] = None
+            return None
+
+        api_key = globals().get("OPENAI_API_KEY")
+        if not api_key:
+            ACE_OPENAI_RUNTIME_STATE["last_ok"] = False
+            ACE_OPENAI_RUNTIME_STATE["last_reason"] = "openai_key_ausente"
+            ACE_OPENAI_RUNTIME_STATE["last_error"] = None
+            return None
+
+        chosen_model = model or globals().get("OPENAI_MODEL", "gpt-4.1-mini")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": chosen_model,
+            "input": prompt,
+        }
+
+        try:
+            result = ace_http_post(
+                "https://api.openai.com/v1/responses",
+                headers=headers,
+                json_payload=payload,
+                timeout=90,
+            )
+        except Exception as e:
+            ACE_OPENAI_RUNTIME_STATE["last_ok"] = False
+            ACE_OPENAI_RUNTIME_STATE["last_reason"] = "openai_http_exception"
+            ACE_OPENAI_RUNTIME_STATE["last_error"] = str(e)
+            try:
+                log("WARN", "ace_openai_generate_text_v2_http_exception", str(e))
+            except Exception:
+                pass
+            return None
+
+        if not isinstance(result, dict) or not result.get("ok"):
+            ACE_OPENAI_RUNTIME_STATE["last_ok"] = False
+            ACE_OPENAI_RUNTIME_STATE["last_reason"] = "openai_http_fail"
+            ACE_OPENAI_RUNTIME_STATE["last_error"] = str(result)
+            try:
+                log("WARN", "ace_openai_generate_text_v2_http_fail", result)
+            except Exception:
+                pass
+            return None
+
+        data = result.get("data", {})
+        text = ace_openai_extract_text(data)
+
+        if text:
+            ACE_OPENAI_RUNTIME_STATE["last_ok"] = True
+            ACE_OPENAI_RUNTIME_STATE["last_reason"] = None
+            ACE_OPENAI_RUNTIME_STATE["last_error"] = None
+            ACE_OPENAI_RUNTIME_STATE["last_text_preview"] = text[:180]
+
+            try:
+                if "ACE_EXT_STATE" in globals() and isinstance(ACE_EXT_STATE, dict):
+                    ACE_EXT_STATE["last_llm_used"] = "openai"
+            except Exception:
+                pass
+
+            return text
+
+        ACE_OPENAI_RUNTIME_STATE["last_ok"] = False
+        ACE_OPENAI_RUNTIME_STATE["last_reason"] = "openai_sem_texto_util"
+        ACE_OPENAI_RUNTIME_STATE["last_error"] = str(data)[:1500]
+        ACE_OPENAI_RUNTIME_STATE["last_text_preview"] = None
+
+        try:
+            log("WARN", "ace_openai_generate_text_v2_sem_texto", data)
+        except Exception:
+            pass
+
+        return None
+
+    globals()["ace_openai_generate_text"] = ace_openai_generate_text_v2
+
+    def ace_openai_status_payload():
+        return {
+            "enabled": True,
+            "provider": "openai",
+            "model": globals().get("OPENAI_MODEL"),
+            "disabled": bool(globals().get("ACE_DISABLE_OPENAI", False)),
+            "api_key_present": bool(globals().get("OPENAI_API_KEY")),
+            "runtime_state": ACE_OPENAI_RUNTIME_STATE,
+        }
+
+    def ace_openai_test_view_v2():
+        prompt = "Responda em 1 linha, em português do Brasil, sem enfeite: ACE online."
+        text = ace_openai_generate_text_v2(prompt)
+
+        payload = ace_openai_status_payload()
+        payload["ok"] = bool(text)
+        payload["text"] = text
+
+        if text:
+            payload["reason"] = None
+        else:
+            payload["reason"] = ACE_OPENAI_RUNTIME_STATE.get("last_reason")
+            payload["error_detail"] = ACE_OPENAI_RUNTIME_STATE.get("last_error")
+
+        return jsonify(payload)
+
+    def ace_openai_runtime_view():
+        payload = ace_openai_status_payload()
+        payload["ok"] = True
+        payload["timestamp"] = ace_openai_now_iso()
+        return jsonify(payload)
+
+    # Override da rota de teste já existente
+    if "ace_ext_test_openai_consolidado" in app.view_functions:
+        app.view_functions["ace_ext_test_openai_consolidado"] = ace_openai_test_view_v2
+
+    # Endpoint adicional de diagnóstico
+    try:
+        if "ace_ext_openai_runtime_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/openai/runtime",
+                endpoint="ace_ext_openai_runtime_v1",
+                view_func=ace_openai_runtime_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_openai_real_patch_v1_loaded", {
+            "enabled": True,
+            "model": globals().get("OPENAI_MODEL"),
+            "api_key_present": bool(globals().get("OPENAI_API_KEY")),
+        })
+    except Exception:
+        pass
+
+
