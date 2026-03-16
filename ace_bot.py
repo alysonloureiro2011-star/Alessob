@@ -8257,12 +8257,74 @@ if "ACE_OPENAI_REAL_PATCH_V2_LOADED" not in globals():
 
 
 
+# ==========================================================
+# ACE Ω — BLOCO 3
+# DIAGNÓSTICO DO DISPATCHER SOBERANO
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
 
+if "ACE_RUNTIME_PIPELINE_DIAG_V1_LOADED" not in globals():
+    ACE_RUNTIME_PIPELINE_DIAG_V1_LOADED = True
+
+    def ace_runtime_pipeline_diag_view():
+        try:
+            state = globals().get("ACE_RUNTIME_SOVEREIGN_STATE", {}) or {}
+            originals = globals().get("ACE_RUNTIME_SOVEREIGN_ORIGINALS", {}) or {}
+
+            return jsonify({
+                "ok": True,
+                "runtime_mode": "SOVEREIGN_PIPELINE_DISPATCH",
+                "official_pipeline_available": bool(globals().get("ACE_OFFICIAL_RUN_PIPELINE")),
+                "fallback_pipeline_available": bool(globals().get("ACE_FALLBACK_RUN_PIPELINE")),
+                "legacy_local_pipeline_available": bool(originals.get("ace_run_modular_pipeline")),
+                "last_pipeline_used": state.get("last_pipeline_used"),
+                "last_pipeline_error": state.get("last_pipeline_error"),
+                "last_runtime_action": state.get("last_runtime_action"),
+                "last_runtime_action_at": state.get("last_runtime_action_at"),
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "route": "ace_runtime_pipeline_diag_view",
+            }), 500
+
+    try:
+        if "ace_runtime_pipeline_diag_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/runtime/pipeline",
+                endpoint="ace_runtime_pipeline_diag_v1",
+                view_func=ace_runtime_pipeline_diag_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_runtime_pipeline_diag_v1_loaded", {
+            "enabled": True,
+            "route": "/ext/runtime/pipeline",
+        })
+    except Exception:
+        pass
         
 
 
 
 
     
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
