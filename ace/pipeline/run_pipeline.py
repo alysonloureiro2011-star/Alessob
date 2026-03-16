@@ -10,6 +10,9 @@ except Exception:
     myth_run_cycle = None
 
 
+PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V2_DIAG"
+
+
 def build_myth_narrative_line(myth):
     if not myth:
         return None
@@ -30,10 +33,9 @@ def build_myth_narrative_line(myth):
     return f"No fim, tudo converge para {anchor}."
 
 
-
 def run_pipeline(trend=None):
     """
-    Pipeline modular oficial do ACE Ω com integração leve do Living Myth Engine.
+    Pipeline modular oficial do ACE Ω com Living Myth Engine em modo diagnóstico.
     """
 
     result = {}
@@ -47,7 +49,7 @@ def run_pipeline(trend=None):
     except Exception:
         pass
 
-    # 2) Living Myth Engine
+    # 2) Living Myth Engine (nunca bloqueante)
     myth = None
     if myth_run_cycle is not None:
         try:
@@ -59,11 +61,11 @@ def run_pipeline(trend=None):
     content_type = choose_content_type()
     style = choose_style()
 
-    # 4) Geração textual principal
+    # 4) Geração textual
     hook = generate_hook(trend, style)
     body = generate_body(trend, style)
 
-    # 5) Enriquecimento narrativo leve
+    # 5) Linha narrativa leve
     myth_line = build_myth_narrative_line(myth)
 
     if myth_line:
@@ -105,5 +107,6 @@ def run_pipeline(trend=None):
 
     result["published"] = publish
     result["myth"] = myth
+    result["pipeline_version"] = PIPELINE_VERSION
 
     return result
