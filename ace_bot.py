@@ -6692,6 +6692,221 @@ def boot():
     log("INFO", "boot_ok", "Supervisor e executor da fila ativos")
 
 
+
+# ==========================================================
+# ACE ROUTE STABILIZER PATCH V1
+# cole este bloco acima de # MAIN
+# ==========================================================
+
+def ace_route_safe_error(name, err):
+    return {
+        "ok": False,
+        "route": name,
+        "error": str(err),
+        "error_type": err.__class__.__name__,
+        "timestamp": datetime.datetime.now().isoformat(),
+    }
+
+def ace_route_publish_readiness():
+    token = get_ig_token()
+    ig_id = get_ig_id()
+
+    return {
+        "instagram_connected": bool(token and ig_id),
+        "token_present": bool(token),
+        "ig_id_present": bool(ig_id),
+        "ig_id": ig_id,
+        "real_publish_enabled": bool(ACE_ENABLE_REAL_PUBLISH),
+        "public_media_base_url": ACE_PUBLIC_MEDIA_BASE_URL,
+        "disable_openai": bool(ACE_DISABLE_OPENAI),
+        "disable_gemini": bool(ACE_DISABLE_GEMINI),
+        "disable_pytrends": bool(ACE_DISABLE_PYTRENDS),
+        "llm_provider": ACE_EXT_STATE.get("llm_provider"),
+        "last_llm_used": ACE_EXT_STATE.get("last_llm_used"),
+        "last_publish_mode": ACE_EXT_STATE.get("last_publish_mode"),
+        "last_trend_source": ACE_EXT_STATE.get("last_trend_source"),
+    }
+
+def _ext_health_view_v2():
+    try:
+        readiness = ace_route_publish_readiness()
+        return jsonify({
+            "ok": True,
+            "status": APP_NAME,
+            "online": True,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "ext_state": ACE_EXT_STATE,
+            "publish_readiness": readiness,
+            "token_present": readiness["token_present"],
+            "ig_id": readiness["ig_id"],
+            "real_publish_enabled": readiness["real_publish_enabled"],
+            "public_media_base": ACE_PUBLIC_MEDIA_BASE_URL,
+        })
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_health", e)), 500
+
+def _ext_instagram_status_view_v2():
+    try:
+        readiness = ace_route_publish_readiness()
+        return jsonify({
+            "ok": True,
+            "status": "instagram_status",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "instagram_connected": readiness["instagram_connected"],
+            "token_present": readiness["token_present"],
+            "ig_id": readiness["ig_id"],
+            "real_publish_enabled": readiness["real_publish_enabled"],
+            "oauth_default_mode": ACE_EXT_STATE.get("oauth_default_mode"),
+            "oauth_force_reauth": ACE_EXT_STATE.get("oauth_force_reauth"),
+            "public_media_base_url": ACE_PUBLIC_MEDIA_BASE_URL,
+            "last_publish_mode": ACE_EXT_STATE.get("last_publish_mode"),
+        })
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_instagram_status", e)), 500
+
+def _ext_instagram_auth_view_v2():
+    try:
+        url = build_instagram_oauth_url(mode="full", target="token")
+        if not url:
+            return jsonify({
+                "ok": False,
+                "error": "instagram_oauth_url_indisponivel",
+                "reason": "INSTAGRAM_APP_ID ausente ou configuração inválida"
+            }), 400
+        return redirect(url, code=302)
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_instagram_auth", e)), 500
+
+def _ext_test_openai_view_v2():
+    try:
+        if ACE_DISABLE_OPENAI:
+            return jsonify({
+                "ok": False,
+                "provider": "openai",
+                "disabled": True,
+                "text": None,
+                "reason": "ACE_DISABLE_OPENAI ativo"
+            })
+
+        text = ace_openai_generate_text("Responda em 1 linha: ACE online.")
+        return jsonify({
+            "ok": bool(text),
+            "provider": "openai",
+            "disabled": False,
+            "text": text,
+            "reason": None if text else "openai_sem_resposta"
+        })
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_test_openai", e)), 500
+
+def _ext_test_reel_view_v2():
+    try:
+        trend = capturar_trend_brasil()
+        estilo = escolher_personalidade()
+
+        result = criar_reel_autonomo(
+            trend=trend,
+            estilo=estilo,
+        )
+
+        if not isinstance(result, dict):
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_reel",
+                "error": "resultado_invalido",
+                "raw_result_type": str(type(result)),
+            }), 500
+
+        return jsonify({
+            "ok": bool(result.get("ok")),
+            "route": "ext_test_reel",
+            "trend": trend,
+            "style": estilo,
+            "result": result,
+        })
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_test_reel", e)), 500
+
+def _ext_test_publish_view_v2():
+    try:
+        readiness = ace_route_publish_readiness()
+
+        live = str(request.args.get("live", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+        payload = {
+            "ok": True,
+            "route": "ext_test_publish",
+            "mode": "live" if live else "diagnostic",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "readiness": readiness,
+        }
+
+        if not readiness["real_publish_enabled"]:
+            payload["ok"] = False
+            payload["reason"] = "real_publish_disabled"
+            return jsonify(payload)
+
+        if not readiness["token_present"]:
+            payload["ok"] = False
+            payload["reason"] = "token_ausente"
+            return jsonify(payload)
+
+        if not readiness["ig_id_present"]:
+            payload["ok"] = False
+            payload["reason"] = "ig_id_ausente"
+            return jsonify(payload)
+
+        if not live:
+            payload["message"] = "publish_diagnostic_ok"
+            payload["ready"] = True
+            payload["next_step"] = "Use /ext/test/publish?live=1 quando quiser tentar execução real."
+            return jsonify(payload)
+
+        trend = capturar_trend_brasil()
+        estilo = escolher_personalidade()
+
+        result = criar_reel_autonomo(
+            trend=trend,
+            estilo=estilo,
+        )
+
+        payload["live_result"] = result
+        payload["ready"] = bool(isinstance(result, dict) and result.get("ok"))
+        payload["message"] = "publish_live_executed"
+
+        return jsonify(payload)
+
+    except Exception as e:
+        return jsonify(ace_route_safe_error("ext_test_publish", e)), 500
+
+# ----------------------------------------------------------
+# REGISTRO / OVERRIDE DE ROTAS
+# ----------------------------------------------------------
+
+# aliases novos
+ace_safe_add_route("/ext/instagram/status", "ace_ext_instagram_status_v2", _ext_instagram_status_view_v2, methods=["GET"])
+ace_safe_add_route("/ext/instagram/auth", "ace_ext_instagram_auth_v2", _ext_instagram_auth_view_v2, methods=["GET"])
+ace_safe_add_route("/ext/test/publish", "ace_ext_test_publish_v2", _ext_test_publish_view_v2, methods=["GET"])
+
+# override das rotas já existentes
+if "ace_ext_health_consolidado" in app.view_functions:
+    app.view_functions["ace_ext_health_consolidado"] = _ext_health_view_v2
+
+if "ace_ext_test_openai_consolidado" in app.view_functions:
+    app.view_functions["ace_ext_test_openai_consolidado"] = _ext_test_openai_view_v2
+
+if "ace_ext_test_reel_consolidado" in app.view_functions:
+    app.view_functions["ace_ext_test_reel_consolidado"] = _ext_test_reel_view_v2
+
+log("INFO", "ace_route_stabilizer_patch_v1_loaded", {
+    "health_override": True,
+    "openai_override": True,
+    "reel_override": True,
+    "instagram_status_alias": True,
+    "instagram_auth_alias": True,
+    "publish_test_alias": True,
+})
+
 # ==========================================================
 # MAIN
 # ==========================================================
