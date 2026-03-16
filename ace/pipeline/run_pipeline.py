@@ -10,7 +10,7 @@ except Exception:
     myth_run_cycle = None
 
 
-PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V2_DIAG"
+PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V3_MEDIA_FIX"
 
 
 def build_myth_narrative_line(myth):
@@ -35,7 +35,8 @@ def build_myth_narrative_line(myth):
 
 def run_pipeline(trend=None):
     """
-    Pipeline modular oficial do ACE Ω com Living Myth Engine em modo diagnóstico.
+    Pipeline modular oficial do ACE Ω com Living Myth Engine.
+    Corrigido para usar a assinatura real de build_media_package.
     """
 
     result = {}
@@ -74,7 +75,10 @@ def run_pipeline(trend=None):
         caption = f"{hook}\n\n{body}"
 
     # 6) Mídia e publicação
-    media = build_media_package(trend, content_type, caption)
+    media = build_media_package(
+        content_type=content_type,
+        caption=caption
+    )
     publish = publish_media(media, caption)
 
     # 7) Chaves clássicas
