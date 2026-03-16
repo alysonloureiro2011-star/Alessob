@@ -7346,3 +7346,406 @@ else:
 ace_runtime = sys.modules[__name__]
 install_executor_soberano(ace_runtime)
 ace_runtime.boot_executor_soberano()
+
+
+    # ==========================================================
+# ACE Ω — MODO SOBERANO ECONÔMICO V3
+# COLE ESTE BLOCO NO FINAL DO ARQUIVO ace_bot.py
+# ==========================================================
+
+if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
+    ACE_ECO_MODE_PATCH_V3_LOADED = True
+
+    import time
+    import gc
+    import hashlib
+    import threading
+    import datetime
+
+    # -----------------------
+    # ESTADO DO MODO ECONÔMICO
+    # -----------------------
+    ACE_ECO_STATE = {
+        "enabled": True,
+        "quality_first": True,
+        "single_task_mode": True,
+        "single_render_mode": True,
+        "allow_live_publish": False,        # começa travado
+        "trend_ttl_seconds": 1800,          # cache de tendência: 30 min
+        "llm_ttl_seconds": 1800,            # cache de LLM: 30 min
+        "publish_interval_seconds": 1800,   # intervalos entre publicações ao vivo: 30 min
+        "last_trend": None,
+        "last_trend_at": None,
+        "last_llm_key": None,
+        "last_llm_text": None,
+        "last_llm_at": None,
+        "last_live_publish_at": None,
+        "active_render": False,
+        "active_render_started_at": None,
+        "last_queue_action": None,
+        "last_queue_action_at": None,
+    }
+
+    # Locks para concorrência
+    ACE_ECO_LOCK = threading.Lock()
+    ACE_ECO_RENDER_LOCK = threading.Lock()
+
+    # Referências às funções originais
+    _ACE_ECO_ORIGINALS = {
+        "capturar_trend_brasil": globals().get("capturar_trend_brasil"),
+        "ace_openai_generate_text": globals().get("ace_openai_generate_text"),
+        "queue_task": globals().get("queue_task"),
+        "criar_reel": globals().get("criar_reel"),
+        "criar_carrossel": globals().get("criar_carrossel"),
+        "execute_task": globals().get("execute_task"),
+        "criar_reel_autonomo": globals().get("criar_reel_autonomo"),
+    }
+
+    # --- Funções utilitárias ---
+    def _eco_now():
+        return time.time()
+
+    def _eco_now_iso():
+        return datetime.datetime.now().isoformat()
+
+    def _eco_recent(ts, ttl):
+        """Verifica se timestamp ts ainda está dentro do TTL (em segundos)."""
+        if not ts:
+            return False
+        return (_eco_now() - float(ts)) <= float(ttl)
+
+    def _eco_hash(value):
+        """Hash simples para cachear prompts de IA."""
+        return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+    # --- Controle de render ---
+    def _eco_mark_render_start():
+        ACE_ECO_STATE["active_render"] = True
+        ACE_ECO_STATE["active_render_started_at"] = _eco_now_iso()
+
+    def _eco_mark_render_end():
+        ACE_ECO_STATE["active_render"] = False
+        ACE_ECO_STATE["active_render_started_at"] = None
+        # realiza uma coleta de lixo para liberar memória no Render Free
+        try:
+            gc.collect()
+        except Exception:
+            pass
+
+    # --- Cache de tendência ---
+    def _eco_get_trend():
+        if ACE_ECO_STATE.get("last_trend") and _eco_recent(
+            ACE_ECO_STATE.get("last_trend_at"),
+            ACE_ECO_STATE["trend_ttl_seconds"],
+        ):
+            return ACE_ECO_STATE["last_trend"]
+        return None
+
+    def _eco_set_trend(trend):
+        if trend:
+            ACE_ECO_STATE["last_trend"] = trend
+            ACE_ECO_STATE["last_trend_at"] = _eco_now()
+
+    # --- Cache de LLM ---
+    def _eco_get_llm(prompt):
+        key = _eco_hash(prompt)
+        if (
+            ACE_ECO_STATE.get("last_llm_key") == key
+            and ACE_ECO_STATE.get("last_llm_text")
+            and _eco_recent(
+                ACE_ECO_STATE.get("last_llm_at"),
+                ACE_ECO_STATE["llm_ttl_seconds"],
+            )
+        ):
+            return ACE_ECO_STATE["last_llm_text"]
+        return None
+
+    def _eco_set_llm(prompt, text):
+        if text:
+            ACE_ECO_STATE["last_llm_key"] = _eco_hash(prompt)
+            ACE_ECO_STATE["last_llm_text"] = text
+            ACE_ECO_STATE["last_llm_at"] = _eco_now()
+
+    # --- Controle de live publish ---
+    def _eco_can_live_publish():
+        last = ACE_ECO_STATE.get("last_live_publish_at")
+        if not last:
+            return True
+        return (_eco_now() - float(last)) >= float(ACE_ECO_STATE["publish_interval_seconds"])
+
+    def _eco_mark_live_publish():
+        ACE_ECO_STATE["last_live_publish_at"] = _eco_now()
+
+    # --- Trend wrapper ---
+    def _eco_capturar_trend_brasil(*args, **kwargs):
+        cached = _eco_get_trend()
+        if cached:
+            return cached
+        original = _ACE_ECO_ORIGINALS.get("capturar_trend_brasil")
+        if not original:
+            trend = "disciplina com inteligência"
+            _eco_set_trend(trend)
+            return trend
+        trend = original(*args, **kwargs)
+        _eco_set_trend(trend)
+        return trend
+
+    globals()["capturar_trend_brasil"] = _eco_capturar_trend_brasil
+
+    # --- OpenAI wrapper ---
+    def _eco_openai_generate_text(prompt, *args, **kwargs):
+        cached = _eco_get_llm(prompt)
+        if cached:
+            return cached
+        original = _ACE_ECO_ORIGINALS.get("ace_openai_generate_text")
+        if not original:
+            return None
+        text = original(prompt, *args, **kwargs)
+        if text:
+            _eco_set_llm(prompt, text)
+        return text
+
+    globals()["ace_openai_generate_text"] = _eco_openai_generate_text
+
+    # --- Queue wrapper ---
+    def _eco_queue_task(task_type, trend=None, style=None, priority=1.0, retries=0):
+        original = _ACE_ECO_ORIGINALS.get("queue_task")
+        if not original:
+            return {"ok": False, "error": "queue_task_original_ausente"}
+        with ACE_ECO_LOCK:
+            try:
+                # se já existe tarefa na fila e o modo single_task está ativo, não duplica
+                if "TASK_QUEUE" in globals() and ACE_ECO_STATE["single_task_mode"]:
+                    if len(TASK_QUEUE) > 0:
+                        current = TASK_QUEUE[0]
+                        current_priority = float(current.get("priority", 0))
+                        new_priority = float(priority or 0)
+                        if current_priority >= new_priority:
+                            ACE_ECO_STATE["last_queue_action"] = "kept_existing"
+                            ACE_ECO_STATE["last_queue_action_at"] = _eco_now_iso()
+                            return {
+                                "ok": True,
+                                "queued": False,
+                                "reason": "eco_mode_kept_existing_task",
+                                "current_task": current,
+                            }
+                        # remove a fila e substitui por tarefa melhor
+                        try:
+                            TASK_QUEUE.clear()
+                        except Exception:
+                            pass
+                # adiciona a nova tarefa
+                result = original(
+                    task_type=task_type,
+                    trend=trend,
+                    style=style,
+                    priority=priority,
+                    retries=retries,
+                )
+                # garante que a fila não passe de 1 item
+                if "TASK_QUEUE" in globals() and len(TASK_QUEUE) > 1:
+                    TASK_QUEUE[:] = TASK_QUEUE[:1]
+                ACE_ECO_STATE["last_queue_action"] = "queued"
+                ACE_ECO_STATE["last_queue_action_at"] = _eco_now_iso()
+                return result
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": str(e),
+                    "reason": "eco_queue_fail",
+                }
+
+    globals()["queue_task"] = _eco_queue_task
+
+    # --- Render guards para reel e carrossel ---
+    def _eco_wrap_render(original_name):
+        original = _ACE_ECO_ORIGINALS.get(original_name)
+        if not original:
+            return
+        def wrapper(*args, **kwargs):
+            if ACE_ECO_STATE.get("active_render"):
+                return {
+                    "ok": False,
+                    "reason": "render_ja_em_execucao",
+                    "eco_mode": True,
+                    "quality_first": True,
+                    "render_function": original_name,
+                }
+            acquired = ACE_ECO_RENDER_LOCK.acquire(blocking=False)
+            if not acquired:
+                return {
+                    "ok": False,
+                    "reason": "render_lock_ocupado",
+                    "eco_mode": True,
+                    "quality_first": True,
+                    "render_function": original_name,
+                }
+            try:
+                _eco_mark_render_start()
+                return original(*args, **kwargs)
+            finally:
+                _eco_mark_render_end()
+                try:
+                    ACE_ECO_RENDER_LOCK.release()
+                except Exception:
+                    pass
+        globals()[original_name] = wrapper
+
+    _eco_wrap_render("criar_reel")
+    _eco_wrap_render("criar_carrossel")
+
+    # --- Execute task wrapper ---
+    def _eco_execute_task(task, *args, **kwargs):
+        original = _ACE_ECO_ORIGINALS.get("execute_task")
+        if not original:
+            return {"ok": False, "error": "execute_task_original_ausente"}
+        # Bloqueia execução de render se já há um render ativo
+        try:
+            task_type = str(task.get("type", "")).strip().lower()
+        except Exception:
+            task_type = ""
+        if task_type in ("reel", "carrossel", "presenca") and ACE_ECO_STATE.get("active_render"):
+            return {
+                "ok": False,
+                "reason": "render_em_andamento",
+                "eco_mode": True,
+                "task": task,
+            }
+        return original(task, *args, **kwargs)
+
+    globals()["execute_task"] = _eco_execute_task
+
+    # --- Readiness simplificado ---
+    def _eco_publish_readiness():
+        token = get_ig_token() if "get_ig_token" in globals() else None
+        ig_id = get_ig_id() if "get_ig_id" in globals() else None
+        return {
+            "instagram_connected": bool(token and ig_id),
+            "token_present": bool(token),
+            "ig_id_present": bool(ig_id),
+            "ig_id": ig_id,
+            "real_publish_enabled": bool(globals().get("ACE_ENABLE_REAL_PUBLISH", False)),
+            "public_media_base_url": globals().get("ACE_PUBLIC_MEDIA_BASE_URL"),
+            "disable_openai": bool(globals().get("ACE_DISABLE_OPENAI", False)),
+            "disable_gemini": bool(globals().get("ACE_DISABLE_GEMINI", False)),
+            "disable_pytrends": bool(globals().get("ACE_DISABLE_PYTRENDS", False)),
+            "eco_mode": True,
+            "quality_first": True,
+            "single_task_mode": True,
+            "single_render_mode": True,
+        }
+
+    # --- Endpoints do modo econômico ---
+    def _eco_mode_view():
+        return jsonify({
+            "ok": True,
+            "mode": "ACE_ECO_QUALITY_FIRST_V3",
+            "timestamp": _eco_now_iso(),
+            "eco_state": ACE_ECO_STATE,
+            "publish_readiness": _eco_publish_readiness(),
+        })
+
+    def _eco_test_publish_view():
+        """Endpoint para testar publicação de forma segura."""
+        try:
+            readiness = _eco_publish_readiness()
+            live = str(request.args.get("live", "0")).strip().lower() in ("1", "true", "yes", "on")
+
+            payload = {
+                "ok": True,
+                "route": "ext_test_publish",
+                "mode": "live" if live else "diagnostic",
+                "timestamp": _eco_now_iso(),
+                "eco_mode": True,
+                "quality_first": True,
+                "single_render_mode": True,
+                "readiness": readiness,
+            }
+
+            # Verificações de prontidão
+            if not readiness["real_publish_enabled"]:
+                payload.update({"ok": False, "reason": "real_publish_disabled"})
+                return jsonify(payload)
+
+            if not readiness["token_present"]:
+                payload.update({"ok": False, "reason": "token_ausente"})
+                return jsonify(payload)
+
+            if not readiness["ig_id_present"]:
+                payload.update({"ok": False, "reason": "ig_id_ausente"})
+                return jsonify(payload)
+
+            if not live:
+                payload.update({
+                    "ready": True,
+                    "message": "publish_diagnostic_ok",
+                    "next_step": "Use live somente quando quiser 1 execução controlada.",
+                })
+                return jsonify(payload)
+
+            if not ACE_ECO_STATE.get("allow_live_publish", False):
+                payload.update({"ok": False, "reason": "publish_live_bloqueado_no_modo_economico"})
+                return jsonify(payload)
+
+            if not _eco_can_live_publish():
+                payload.update({"ok": False, "reason": "janela_minima_entre_publicacoes_ativa"})
+                return jsonify(payload)
+
+            trend = capturar_trend_brasil()
+            estilo = escolher_personalidade() if "escolher_personalidade" in globals() else "direto"
+
+            original_auto = _ACE_ECO_ORIGINALS.get("criar_reel_autonomo")
+            if not original_auto:
+                payload.update({"ok": False, "reason": "criar_reel_autonomo_original_ausente"})
+                return jsonify(payload)
+
+            result = original_auto(trend, estilo)
+            payload.update({
+                "live_result": result,
+                "ready": bool(isinstance(result, dict) and result.get("ok")),
+                "message": "publish_live_executed",
+            })
+            if payload["ready"]:
+                _eco_mark_live_publish()
+            return jsonify(payload)
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_publish",
+                "error": str(e),
+                "error_type": e.__class__.__name__,
+                "timestamp": _eco_now_iso(),
+            }), 500
+
+    # Adiciona novos endpoints sem sobrescrever existentes
+    def _eco_route_exists(rule):
+        try:
+            for r in app.url_map.iter_rules():
+                if str(r.rule) == str(rule):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _eco_safe_add_route(rule, endpoint, view_func, methods=None):
+        if endpoint in app.view_functions:
+            return
+        if _eco_route_exists(rule):
+            return
+        app.add_url_rule(rule, endpoint=endpoint, view_func=view_func, methods=methods or ["GET"])
+
+    _eco_safe_add_route("/ext/mode", "ace_ext_mode_v3", _eco_mode_view, methods=["GET"])
+    _eco_safe_add_route("/ext/test/publish", "ace_ext_test_publish_v5", _eco_test_publish_view, methods=["GET"])
+
+    # Loga que o patch foi carregado
+    log("INFO", "ace_eco_mode_patch_v3_loaded", {
+        "enabled": True,
+        "quality_first": True,
+        "single_task_mode": True,
+        "single_render_mode": True,
+        "allow_live_publish": ACE_ECO_STATE["allow_live_publish"],
+        "trend_ttl_seconds": ACE_ECO_STATE["trend_ttl_seconds"],
+        "llm_ttl_seconds": ACE_ECO_STATE["llm_ttl_seconds"],
+    })
+
