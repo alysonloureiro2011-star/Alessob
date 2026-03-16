@@ -8378,9 +8378,67 @@ if "ACE_LIVING_MYTH_ROUTE_V1_LOADED" not in globals():
 
 
 
+# ==========================================================
+# ACE Ω — BLOCO 4.2
+# DIAGNÓSTICO BRUTO DO PIPELINE OFICIAL
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
 
+if "ACE_OFFICIAL_PIPELINE_RAW_TEST_V1_LOADED" not in globals():
+    ACE_OFFICIAL_PIPELINE_RAW_TEST_V1_LOADED = True
 
+    def ace_official_pipeline_raw_test_view():
+        try:
+            trend = request.args.get("trend", "").strip()
+            pipeline_fn = globals().get("ACE_OFFICIAL_RUN_PIPELINE")
 
+            if pipeline_fn is None:
+                return jsonify({
+                    "ok": False,
+                    "route": "/ext/pipeline/raw",
+                    "error": "ACE_OFFICIAL_RUN_PIPELINE_ausente",
+                }), 500
+
+            try:
+                if trend:
+                    raw_result = pipeline_fn(trend)
+                else:
+                    raw_result = pipeline_fn()
+            except TypeError:
+                raw_result = pipeline_fn()
+
+            return jsonify({
+                "ok": True,
+                "route": "/ext/pipeline/raw",
+                "trend_used": trend or None,
+                "raw_result": raw_result,
+            })
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "/ext/pipeline/raw",
+                "error": str(e),
+            }), 500
+
+    try:
+        if "ace_official_pipeline_raw_test_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/pipeline/raw",
+                endpoint="ace_official_pipeline_raw_test_v1",
+                view_func=ace_official_pipeline_raw_test_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_official_pipeline_raw_test_v1_loaded", {
+            "enabled": True,
+            "route": "/ext/pipeline/raw",
+        })
+    except Exception:
+        pass
 
 
 
