@@ -4,44 +4,58 @@ from ace.engines.generator_engine import generate_hook, generate_body
 from ace.engines.media_engine import build_media_package
 from ace.engines.publish_engine import publish_media
 
+try:
+    from ace.engines.living_myth_engine import myth_run_cycle
+except Exception:
+    myth_run_cycle = None
+
+
 def run_pipeline(trend=None):
     """
-    Executa o pipeline modular ACE.
+    Pipeline modular oficial do ACE Ω com integração leve do Living Myth Engine.
 
-    Se um `trend` for passado, usa esse valor (depois tenta normalizá-lo).
-    Caso contrário, escolhe uma tendência via `choose_trend()`.
-    Retorna um dicionário contendo as chaves originais (trend, content_type, style,
-    caption, media, publish) e também chaves de compatibilidade (plan, content, published).
+    Regras:
+    - Se trend vier vazio, usa choose_trend()
+    - Se trend vier preenchido, usa esse valor
+    - Tenta normalizar o trend sem quebrar o fluxo
+    - Executa o Living Myth Engine como camada consultiva
+    - Mantém as chaves antigas
+    - Adiciona chaves ricas para evolução futura
     """
 
     result = {}
 
-    # 1) Usar o trend fornecido ou selecionar automaticamente
+    # 1) Trend
     if trend is None:
         trend = choose_trend()
 
-    # 2) Tentar normalizar o trend; se falhar, usa o valor original
     try:
         trend = normalize_trend(trend)
     except Exception:
         pass
 
-    # 3) Escolher tipo de conteúdo e estilo
+    # 2) Living Myth Engine (camada consultiva, nunca bloqueante)
+    myth = None
+    if myth_run_cycle is not None:
+        try:
+            myth = myth_run_cycle(trend)
+        except Exception:
+            myth = None
+
+    # 3) Decisão de formato e estilo
     content_type = choose_content_type()
     style = choose_style()
 
-    # 4) Gerar hook e body
+    # 4) Geração textual principal
     hook = generate_hook(trend, style)
     body = generate_body(trend, style)
-
-    # 5) Construir a legenda (caption)
     caption = f"{hook}\n\n{body}"
 
-    # 6) Construir mídia e publicar
+    # 5) Mídia e publicação
     media = build_media_package(trend, content_type, caption)
     publish = publish_media(media, caption)
 
-    # 7) Preencher as chaves principais
+    # 6) Chaves clássicas
     result["trend"] = trend
     result["content_type"] = content_type
     result["style"] = style
@@ -49,9 +63,28 @@ def run_pipeline(trend=None):
     result["media"] = media
     result["publish"] = publish
 
-    # 8) Chaves de compatibilidade (podem ser preenchidas futuramente)
-    result["plan"] = None
-    result["content"] = None
-    result["published"] = None
+    # 7) Chaves ricas de compatibilidade
+    result["plan"] = {
+        "trend": trend,
+        "content_type": content_type,
+        "style": style,
+        "myth_direction": myth.get("narrative_direction") if myth else None,
+        "myth_tension": myth.get("dominant_tension") if myth else None,
+        "myth_stage": myth.get("chapter_stage") if myth else None,
+    }
+
+    result["content"] = {
+        "hook": hook,
+        "body": body,
+        "caption": caption,
+        "narrative_direction": myth.get("narrative_direction") if myth else None,
+        "symbolic_anchor": myth.get("symbolic_anchor") if myth else None,
+        "cta_mode": myth.get("cta_mode") if myth else None,
+    }
+
+    result["published"] = publish
+
+    # 8) Saída completa do myth engine
+    result["myth"] = myth
 
     return result
