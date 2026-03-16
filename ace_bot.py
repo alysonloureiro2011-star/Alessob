@@ -8312,7 +8312,68 @@ if "ACE_RUNTIME_PIPELINE_DIAG_V1_LOADED" not in globals():
 
 
 
-    
+    # ==========================================================
+# ACE Ω — LIVING MYTH ENGINE V1
+# BLOCO 2 — ROTA DE TESTE
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
+
+if "ACE_LIVING_MYTH_ROUTE_V1_LOADED" not in globals():
+    ACE_LIVING_MYTH_ROUTE_V1_LOADED = True
+
+    try:
+        from ace.engines.living_myth_engine import myth_run_cycle
+    except Exception:
+        myth_run_cycle = None
+
+    def ace_living_myth_test_view():
+        try:
+            trend = request.args.get("trend", "").strip()
+            if not trend:
+                trend = "disciplina emocional"
+
+            if myth_run_cycle is None:
+                return jsonify({
+                    "ok": False,
+                    "error": "living_myth_engine_indisponivel",
+                    "route": "/ext/myth/test",
+                    "trend": trend,
+                }), 500
+
+            result = myth_run_cycle(trend)
+
+            return jsonify({
+                "ok": True,
+                "route": "/ext/myth/test",
+                "trend": trend,
+                "living_myth": result,
+            })
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "/ext/myth/test",
+                "error": str(e),
+            }), 500
+
+    try:
+        if "ace_living_myth_test_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/myth/test",
+                endpoint="ace_living_myth_test_v1",
+                view_func=ace_living_myth_test_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_living_myth_route_v1_loaded", {
+            "enabled": True,
+            "route": "/ext/myth/test",
+        })
+    except Exception:
+        pass
 
 
 
