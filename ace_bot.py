@@ -7749,3 +7749,301 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
         "llm_ttl_seconds": ACE_ECO_STATE["llm_ttl_seconds"],
     })
 
+
+# ==========================================================
+# ACE Ω — BLOCO 1: CONSOLIDAÇÃO DO RUNTIME SOBERANO V1
+# COLE ESTE BLOCO NO FINAL DO ARQUIVO ace_bot.py
+# ==========================================================
+
+if "ACE_RUNTIME_SOVEREIGN_PATCH_V1_LOADED" not in globals():
+    ACE_RUNTIME_SOVEREIGN_PATCH_V1_LOADED = True
+
+    import datetime
+    import traceback
+
+    # ------------------------------------------------------
+    # ESTADO SOBERANO DO RUNTIME
+    # ------------------------------------------------------
+    ACE_RUNTIME_SOVEREIGN_STATE = {
+        "enabled": True,
+        "boot_consolidated": False,
+        "legacy_loops_disabled": True,
+        "official_pipeline": "ace.pipeline.run_pipeline",
+        "fallback_pipeline": "ace.pipeline.pipeline_runner",
+        "last_pipeline_used": None,
+        "last_pipeline_error": None,
+        "last_runtime_action_at": None,
+        "last_runtime_action": None,
+    }
+
+    _ACE_RUNTIME_SOVEREIGN_ORIGINALS = {
+        "boot": globals().get("boot"),
+        "ace_generate_once": globals().get("ace_generate_once"),
+        "ace_run_modular_pipeline": globals().get("ace_run_modular_pipeline"),
+        "queue_executor_loop": globals().get("queue_executor_loop"),
+        "supervisor_loop": globals().get("supervisor_loop"),
+    }
+
+    def ace_runtime_now_iso():
+        return datetime.datetime.now().isoformat()
+
+    # ------------------------------------------------------
+    # IMPORTS OFICIAIS E FALLBACKS
+    # ------------------------------------------------------
+    try:
+        from ace.pipeline.run_pipeline import run_pipeline as ACE_OFFICIAL_RUN_PIPELINE
+    except Exception:
+        ACE_OFFICIAL_RUN_PIPELINE = None
+
+    try:
+        from ace.pipeline.pipeline_runner import run_pipeline as ACE_FALLBACK_RUN_PIPELINE
+    except Exception:
+        ACE_FALLBACK_RUN_PIPELINE = None
+
+    def ace_runtime_safe_state_update(**kwargs):
+        try:
+            if "ACE_STATE" in globals() and isinstance(ACE_STATE, dict):
+                ACE_STATE.update(kwargs)
+        except Exception:
+            pass
+
+    def ace_runtime_use_pipeline(name):
+        ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_used"] = name
+        ACE_RUNTIME_SOVEREIGN_STATE["last_runtime_action_at"] = ace_runtime_now_iso()
+        ACE_RUNTIME_SOVEREIGN_STATE["last_runtime_action"] = "pipeline_dispatch"
+
+    def ace_runtime_pipeline_dispatch(trend=None):
+        """
+        Dispatcher soberano:
+        1) pipeline modular oficial
+        2) pipeline_runner como fallback
+        3) ace_run_modular_pipeline legado como último fallback
+        """
+
+        errors = []
+
+        # 1) PIPELINE OFICIAL
+        if ACE_OFFICIAL_RUN_PIPELINE:
+            try:
+                if trend is None:
+                    result = ACE_OFFICIAL_RUN_PIPELINE()
+                else:
+                    try:
+                        result = ACE_OFFICIAL_RUN_PIPELINE(trend)
+                    except TypeError:
+                        result = ACE_OFFICIAL_RUN_PIPELINE()
+                ace_runtime_use_pipeline("ace.pipeline.run_pipeline")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = None
+                return result
+            except Exception as e:
+                errors.append(f"official:{e}")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = str(e)
+
+        # 2) FALLBACK PIPELINE_RUNNER
+        if ACE_FALLBACK_RUN_PIPELINE:
+            try:
+                if trend is None:
+                    result = ACE_FALLBACK_RUN_PIPELINE()
+                else:
+                    try:
+                        result = ACE_FALLBACK_RUN_PIPELINE(trend)
+                    except TypeError:
+                        result = ACE_FALLBACK_RUN_PIPELINE()
+                ace_runtime_use_pipeline("ace.pipeline.pipeline_runner")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = None
+                return result
+            except Exception as e:
+                errors.append(f"fallback:{e}")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = str(e)
+
+        # 3) FALLBACK FINAL: PIPELINE MODULAR LEGADO LOCAL
+        old_local_pipeline = _ACE_RUNTIME_SOVEREIGN_ORIGINALS.get("ace_run_modular_pipeline")
+        if old_local_pipeline:
+            try:
+                local_trend = trend or "disciplina com inteligência"
+                result = old_local_pipeline(local_trend)
+                ace_runtime_use_pipeline("ace_bot.ace_run_modular_pipeline")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = None
+                return result
+            except Exception as e:
+                errors.append(f"local:{e}")
+                ACE_RUNTIME_SOVEREIGN_STATE["last_pipeline_error"] = str(e)
+
+        raise RuntimeError(" | ".join(errors) if errors else "nenhum pipeline soberano disponível")
+
+    # torna o nome global run_pipeline consistente
+    globals()["run_pipeline"] = ace_runtime_pipeline_dispatch
+
+    # ------------------------------------------------------
+    # DESATIVAÇÃO DE LOOPS LEGADOS
+    # ------------------------------------------------------
+    def queue_executor_loop():
+        log("INFO", "queue_executor_loop_disabled_by_sovereign_runtime", {
+            "disabled": True,
+            "reason": "modular_runtime_is_official"
+        })
+        return None
+
+    def supervisor_loop():
+        log("INFO", "supervisor_loop_disabled_by_sovereign_runtime", {
+            "disabled": True,
+            "reason": "modular_runtime_is_official"
+        })
+        return None
+
+    globals()["queue_executor_loop"] = queue_executor_loop
+    globals()["supervisor_loop"] = supervisor_loop
+
+    # ------------------------------------------------------
+    # BOOT SOBERANO
+    # ------------------------------------------------------
+    _ACE_RUNTIME_SOVEREIGN_BOOT_STARTED = False
+
+    def boot():
+        global _ACE_RUNTIME_SOVEREIGN_BOOT_STARTED
+
+        if _ACE_RUNTIME_SOVEREIGN_BOOT_STARTED:
+            return
+
+        _ACE_RUNTIME_SOVEREIGN_BOOT_STARTED = True
+
+        ACE_RUNTIME_SOVEREIGN_STATE["boot_consolidated"] = True
+        ACE_RUNTIME_SOVEREIGN_STATE["last_runtime_action_at"] = ace_runtime_now_iso()
+        ACE_RUNTIME_SOVEREIGN_STATE["last_runtime_action"] = "boot"
+
+        # Não sobe loops legados
+        # Não força ação pesada automática
+        # Assume queue_executor e supervisor modulares como oficiais
+
+        ace_runtime_safe_state_update(
+            runtime_mode="SOVEREIGN_MODULAR",
+            legacy_threads_started=False,
+            healthy=True
+        )
+
+        try:
+            log("INFO", "ace_runtime_sovereign_boot_loaded", {
+                "official_pipeline": ACE_RUNTIME_SOVEREIGN_STATE["official_pipeline"],
+                "fallback_pipeline": ACE_RUNTIME_SOVEREIGN_STATE["fallback_pipeline"],
+                "legacy_loops_disabled": True,
+                "boot_consolidated": True,
+            })
+        except Exception:
+            pass
+
+    globals()["boot"] = boot
+
+    # ------------------------------------------------------
+    # GERAÇÃO ÚNICA SOBERANA
+    # ------------------------------------------------------
+    def ace_generate_once(trend=None):
+        try:
+            result = ace_runtime_pipeline_dispatch(trend)
+            ace_runtime_safe_state_update(
+                last_error=None,
+                last_action_at=ace_runtime_now_iso(),
+                last_action_type="ace_generate_once",
+            )
+            return {
+                "ok": True,
+                "runtime_mode": "SOVEREIGN_MODULAR",
+                "result": result
+            }
+        except Exception as e:
+            ace_runtime_safe_state_update(
+                last_error=str(e),
+                last_action_at=ace_runtime_now_iso(),
+                last_action_type="ace_generate_once_fail",
+            )
+            return {
+                "ok": False,
+                "runtime_mode": "SOVEREIGN_MODULAR",
+                "error": str(e)
+            }
+
+    globals()["ace_generate_once"] = ace_generate_once
+
+    # ------------------------------------------------------
+    # PIPELINE MODULAR SOBERANO LOCAL
+    # ------------------------------------------------------
+    def ace_run_modular_pipeline(trend):
+        return ace_runtime_pipeline_dispatch(trend)
+
+    globals()["ace_run_modular_pipeline"] = ace_run_modular_pipeline
+
+    # ------------------------------------------------------
+    # ROTA /ace/run_new SOBERANA
+    # ------------------------------------------------------
+    def ace_run_new_view_v2():
+        if "cycle_guard" in globals():
+            try:
+                if not cycle_guard.acquire():
+                    return {"status": "busy", "runtime_mode": "SOVEREIGN_MODULAR"}
+            except Exception:
+                pass
+
+        try:
+            result = ace_runtime_pipeline_dispatch()
+            return {
+                "ok": True,
+                "runtime_mode": "SOVEREIGN_MODULAR",
+                "result": result
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "runtime_mode": "SOVEREIGN_MODULAR",
+                "error": str(e)
+            }
+        finally:
+            if "cycle_guard" in globals():
+                try:
+                    cycle_guard.release()
+                except Exception:
+                    pass
+
+    if "run_new" in app.view_functions:
+        app.view_functions["run_new"] = ace_run_new_view_v2
+
+    # ------------------------------------------------------
+    # ROTA DE DIAGNÓSTICO DO RUNTIME
+    # ------------------------------------------------------
+    def ace_runtime_status_view():
+        return jsonify({
+            "ok": True,
+            "runtime_mode": "SOVEREIGN_MODULAR",
+            "timestamp": ace_runtime_now_iso(),
+            "runtime_state": ACE_RUNTIME_SOVEREIGN_STATE,
+            "ace_state_snapshot": globals().get("ACE_STATE", {}),
+            "queue_executor_present": "queue_executor" in globals(),
+            "supervisor_present": "supervisor" in globals(),
+            "official_pipeline_loaded": bool(ACE_OFFICIAL_RUN_PIPELINE),
+            "fallback_pipeline_loaded": bool(ACE_FALLBACK_RUN_PIPELINE),
+        })
+
+    try:
+        if "ace_ext_runtime_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/runtime",
+                endpoint="ace_ext_runtime_v1",
+                view_func=ace_runtime_status_view,
+                methods=["GET"]
+            )
+    except Exception:
+        pass
+
+    # ------------------------------------------------------
+    # LOG FINAL
+    # ------------------------------------------------------
+    try:
+        log("INFO", "ace_runtime_sovereign_patch_v1_loaded", {
+            "enabled": True,
+            "official_pipeline": ACE_RUNTIME_SOVEREIGN_STATE["official_pipeline"],
+            "fallback_pipeline": ACE_RUNTIME_SOVEREIGN_STATE["fallback_pipeline"],
+            "legacy_loops_disabled": True,
+            "boot_consolidated": True,
+        })
+    except Exception:
+        pass
+
+
