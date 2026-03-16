@@ -8043,10 +8043,7 @@ if "ACE_RUNTIME_SOVEREIGN_PATCH_V1_LOADED" not in globals():
             "legacy_loops_disabled": True,
             "boot_consolidated": True,
         })
-    except Exception:
-: OPENAI REAL V1
-
-
+    except Exception:pass
 
 # ==========================================================
 # ACE Ω — BLOCO 2 CONSOLIDADO FINAL: OPENAI REAL V2
