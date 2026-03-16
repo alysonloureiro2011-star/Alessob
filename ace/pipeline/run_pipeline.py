@@ -4,46 +4,44 @@ from ace.engines.generator_engine import generate_hook, generate_body
 from ace.engines.media_engine import build_media_package
 from ace.engines.publish_engine import publish_media
 
-
 def run_pipeline(trend=None):
     """
-    Pipeline modular leve com compatibilidade ampliada.
+    Executa o pipeline modular ACE.
 
-    Regras:
-    - Se trend vier vazio, usa choose_trend()
-    - Se trend vier preenchido, usa esse valor
-    - Tenta normalizar sem quebrar o fluxo
-    - Mantém as chaves antigas
-    - Adiciona chaves de compatibilidade úteis para integração futura
+    Se um `trend` for passado, usa esse valor (depois tenta normalizá-lo).
+    Caso contrário, escolhe uma tendência via `choose_trend()`.
+    Retorna um dicionário contendo as chaves originais (trend, content_type, style,
+    caption, media, publish) e também chaves de compatibilidade (plan, content, published).
     """
 
     result = {}
 
-    # 1) Trend
+    # 1) Usar o trend fornecido ou selecionar automaticamente
     if trend is None:
         trend = choose_trend()
 
+    # 2) Tentar normalizar o trend; se falhar, usa o valor original
     try:
         trend = normalize_trend(trend)
     except Exception:
         pass
 
-    # 2) Decisão de formato/estilo
+    # 3) Escolher tipo de conteúdo e estilo
     content_type = choose_content_type()
     style = choose_style()
 
-    # 3) Geração textual
+    # 4) Gerar hook e body
     hook = generate_hook(trend, style)
     body = generate_body(trend, style)
+
+    # 5) Construir a legenda (caption)
     caption = f"{hook}\n\n{body}"
 
-    # 4) Mídia
+    # 6) Construir mídia e publicar
     media = build_media_package(trend, content_type, caption)
-
-    # 5) Publicação
     publish = publish_media(media, caption)
 
-    # 6) Chaves atuais
+    # 7) Preencher as chaves principais
     result["trend"] = trend
     result["content_type"] = content_type
     result["style"] = style
@@ -51,19 +49,9 @@ def run_pipeline(trend=None):
     result["media"] = media
     result["publish"] = publish
 
-    # 7) Chaves de compatibilidade úteis
-    result["plan"] = {
-        "trend": trend,
-        "content_type": content_type,
-        "style": style,
-    }
-
-    result["content"] = {
-        "hook": hook,
-        "body": body,
-        "caption": caption,
-    }
-
-    result["published"] = publish
+    # 8) Chaves de compatibilidade (podem ser preenchidas futuramente)
+    result["plan"] = None
+    result["content"] = None
+    result["published"] = None
 
     return result
