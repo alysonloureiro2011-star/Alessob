@@ -8444,6 +8444,61 @@ if "ACE_OFFICIAL_PIPELINE_RAW_TEST_V1_LOADED" not in globals():
 
 
 
+# ==========================================================
+# ACE Ω — BLOCO MESTRE 5
+# ROTA DE DIAGNÓSTICO DA MEMÓRIA EPISÓDICA
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
 
+if "ACE_EPISODIC_MEMORY_ROUTE_V1_LOADED" not in globals():
+    ACE_EPISODIC_MEMORY_ROUTE_V1_LOADED = True
+
+    try:
+        from ace.engines.episodic_memory_engine import build_memory_summary
+    except Exception:
+        build_memory_summary = None
+
+    def ace_episodic_memory_view():
+        try:
+            if build_memory_summary is None:
+                return jsonify({
+                    "ok": False,
+                    "route": "/ext/memory/episodes",
+                    "error": "episodic_memory_engine_indisponivel",
+                }), 500
+
+            summary = build_memory_summary()
+
+            return jsonify({
+                "ok": True,
+                "route": "/ext/memory/episodes",
+                "memory": summary,
+            })
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "/ext/memory/episodes",
+                "error": str(e),
+            }), 500
+
+    try:
+        if "ace_episodic_memory_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/memory/episodes",
+                endpoint="ace_episodic_memory_v1",
+                view_func=ace_episodic_memory_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_episodic_memory_route_v1_loaded", {
+            "enabled": True,
+            "route": "/ext/memory/episodes",
+        })
+    except Exception:
+        pass
 
 
