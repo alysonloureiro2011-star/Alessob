@@ -8,8 +8,13 @@ try:
 except Exception:
     myth_run_cycle = None
 
+try:
+    from ace.engines.episodic_memory_engine import register_pipeline_result
+except Exception:
+    register_pipeline_result = None
 
-PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V4_LEGACY_ALIGNED"
+
+PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V5_EPISODIC_MEMORY"
 
 
 def build_myth_narrative_line(myth):
@@ -65,12 +70,13 @@ def enrich_content_with_myth(content, myth_line):
 
 def run_pipeline(trend=None):
     """
-    Pipeline oficial do ACE Ω alinhado ao caminho legado validado.
+    Pipeline oficial do ACE Ω alinhado ao caminho legado validado,
+    agora com Living Myth Engine e Episodic Memory.
     """
 
     trend = str(trend or "").strip() or "disciplina com inteligência"
 
-    # 1) Myth engine como camada consultiva
+    # 1) Myth engine consultivo
     myth = None
     if myth_run_cycle is not None:
         try:
@@ -80,12 +86,12 @@ def run_pipeline(trend=None):
 
     myth_line = build_myth_narrative_line(myth)
 
-    # 2) Diretor — mesma lógica do legado
+    # 2) Diretor
     plan = build_director_plan(trend)
     content_type = plan["content_type"]
     style = plan["style"]
 
-    # 3) Gerador — mesma lógica do legado
+    # 3) Gerador
     content = build_content_package(
         trend=trend,
         style=style,
@@ -94,16 +100,15 @@ def run_pipeline(trend=None):
 
     # 4) Enriquecimento narrativo leve
     content = enrich_content_with_myth(content, myth_line)
-
     caption = content.get("caption", "")
 
-    # 5) Mídia — assinatura já validada no legado
+    # 5) Mídia
     media = build_media_package(
         content_type=content_type,
         caption=caption
     )
 
-    # 6) Publicação — mesma lógica do legado
+    # 6) Publicação
     published = publish_content(
         trend=trend,
         style=style,
@@ -112,13 +117,13 @@ def run_pipeline(trend=None):
         media_path=media.get("media_path")
     )
 
-    # 7) Expandir plan com myth sem quebrar legado
+    # 7) Expandir plan
     plan = dict(plan)
     plan["myth_direction"] = myth.get("narrative_direction") if myth else None
     plan["myth_tension"] = myth.get("dominant_tension") if myth else None
     plan["myth_stage"] = myth.get("chapter_stage") if myth else None
 
-    # 8) Expandir content com myth sem quebrar legado
+    # 8) Expandir content
     if isinstance(content, dict):
         content = dict(content)
         content["narrative_direction"] = myth.get("narrative_direction") if myth else None
@@ -126,7 +131,7 @@ def run_pipeline(trend=None):
         content["cta_mode"] = myth.get("cta_mode") if myth else None
         content["myth_line"] = myth_line
 
-    return {
+    result = {
         "trend": trend,
         "plan": plan,
         "content": content,
@@ -135,3 +140,12 @@ def run_pipeline(trend=None):
         "myth": myth,
         "pipeline_version": PIPELINE_VERSION,
     }
+
+    # 9) Registrar episódio sem bloquear pipeline
+    if register_pipeline_result is not None:
+        try:
+            register_pipeline_result(result)
+        except Exception:
+            pass
+
+    return result
