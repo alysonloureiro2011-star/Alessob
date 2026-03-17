@@ -8502,3 +8502,103 @@ if "ACE_EPISODIC_MEMORY_ROUTE_V1_LOADED" not in globals():
         pass
 
 
+
+# ==========================================================
+# ACE Ω — MACROBLOCO 6
+# RELEASE GATE + ÚLTIMA PUBLICAÇÃO
+# COLE NO FINAL DO ace_bot.py
+# ==========================================================
+
+if "ACE_PUBLISH_RELEASE_GATE_V1_LOADED" not in globals():
+    ACE_PUBLISH_RELEASE_GATE_V1_LOADED = True
+
+    try:
+        from ace.engines.episodic_memory_engine import build_memory_summary
+    except Exception:
+        build_memory_summary = None
+
+    def ace_publish_release_gate_view():
+        try:
+            state = globals().get("ACE_ECO_STATE") or globals().get("ACE_ECO_MODE") or {}
+            allow_live = bool(state.get("allow_live_publish", False))
+
+            readiness = {
+                "instagram_connected": bool(get_ig_token() and get_ig_id()),
+                "token_present": bool(get_ig_token()),
+                "ig_id_present": bool(get_ig_id()),
+                "real_publish_enabled": bool(globals().get("ACE_ENABLE_REAL_PUBLISH", False)),
+                "public_media_base_url": globals().get("ACE_PUBLIC_MEDIA_BASE_URL"),
+                "allow_live_publish": allow_live,
+            }
+
+            memory = build_memory_summary() if callable(build_memory_summary) else None
+
+            return jsonify({
+                "ok": True,
+                "route": "/ext/publish/release_gate",
+                "readiness": readiness,
+                "last_publish_receipt": (memory or {}).get("last_publish_receipt") if isinstance(memory, dict) else None,
+                "last_publish_error": (memory or {}).get("last_publish_error") if isinstance(memory, dict) else None,
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "/ext/publish/release_gate",
+                "error": str(e),
+            }), 500
+
+    def ace_last_publish_view():
+        try:
+            if not callable(build_memory_summary):
+                return jsonify({
+                    "ok": False,
+                    "route": "/ext/publish/last",
+                    "error": "memory_summary_indisponivel",
+                }), 500
+
+            memory = build_memory_summary()
+
+            return jsonify({
+                "ok": True,
+                "route": "/ext/publish/last",
+                "last_publish_receipt": memory.get("last_publish_receipt"),
+                "last_publish_error": memory.get("last_publish_error"),
+                "last_episode": memory.get("last_episode"),
+            })
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "route": "/ext/publish/last",
+                "error": str(e),
+            }), 500
+
+    try:
+        if "ace_publish_release_gate_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/publish/release_gate",
+                endpoint="ace_publish_release_gate_v1",
+                view_func=ace_publish_release_gate_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        if "ace_last_publish_v1" not in app.view_functions:
+            app.add_url_rule(
+                "/ext/publish/last",
+                endpoint="ace_last_publish_v1",
+                view_func=ace_last_publish_view,
+                methods=["GET"],
+            )
+    except Exception:
+        pass
+
+    try:
+        log("INFO", "ace_publish_release_gate_v1_loaded", {
+            "enabled": True,
+            "route_release_gate": "/ext/publish/release_gate",
+            "route_last_publish": "/ext/publish/last",
+        })
+    except Exception:
+        pass
