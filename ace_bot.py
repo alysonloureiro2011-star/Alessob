@@ -7370,7 +7370,9 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
         "quality_first": True,
         "single_task_mode": True,
         "single_render_mode": True,
-        "allow_live_publish": False,        # começa travado
+        "allow_live_publish": str(os.getenv("ACE_ALLOW_LIVE_PUBLISH", "0")).strip().lower() in ("1", "true", "yes", "on"),  
+                                           
+                                            # começa travado
         "trend_ttl_seconds": 1800,          # cache de tendência: 30 min
         "llm_ttl_seconds": 1800,            # cache de LLM: 30 min
         "publish_interval_seconds": 1800,   # intervalos entre publicações ao vivo: 30 min
