@@ -7647,78 +7647,135 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
             "publish_readiness": _eco_publish_readiness(),
         })
 
-    def _eco_test_publish_view():
-        """Endpoint para testar publicação de forma segura."""
-        try:
-            readiness = _eco_publish_readiness()
-            live = str(request.args.get("live", "0")).strip().lower() in ("1", "true", "yes", "on")
 
-            payload = {
-                "ok": True,
-                "route": "ext_test_publish",
-                "mode": "live" if live else "diagnostic",
-                "timestamp": _eco_now_iso(),
-                "eco_mode": True,
-                "quality_first": True,
-                "single_render_mode": True,
-                "readiness": readiness,
-            }
 
-            # Verificações de prontidão
-            if not readiness["real_publish_enabled"]:
-                payload.update({"ok": False, "reason": "real_publish_disabled"})
-                return jsonify(payload)
+def _eco_test_publish_view():
+    """Endpoint para testar publicação de forma leve e segura."""
+    try:
+        readiness = _eco_publish_readiness()
+        live = str(request.args.get("live", "0")).strip().lower() in ("1", "true", "yes", "on")
 
-            if not readiness["token_present"]:
-                payload.update({"ok": False, "reason": "token_ausente"})
-                return jsonify(payload)
+        payload = {
+            "ok": True,
+            "route": "ext_test_publish",
+            "mode": "live" if live else "diagnostic",
+            "timestamp": _eco_now_iso(),
+            "eco_mode": True,
+            "quality_first": True,
+            "single_render_mode": True,
+            "readiness": readiness,
+        }
 
-            if not readiness["ig_id_present"]:
-                payload.update({"ok": False, "reason": "ig_id_ausente"})
-                return jsonify(payload)
-
-            if not live:
-                payload.update({
-                    "ready": True,
-                    "message": "publish_diagnostic_ok",
-                    "next_step": "Use live somente quando quiser 1 execução controlada.",
-                })
-                return jsonify(payload)
-
-            if not ACE_ECO_STATE.get("allow_live_publish", False):
-                payload.update({"ok": False, "reason": "publish_live_bloqueado_no_modo_economico"})
-                return jsonify(payload)
-
-            if not _eco_can_live_publish():
-                payload.update({"ok": False, "reason": "janela_minima_entre_publicacoes_ativa"})
-                return jsonify(payload)
-
-            trend = capturar_trend_brasil()
-            estilo = escolher_personalidade() if "escolher_personalidade" in globals() else "direto"
-
-            original_auto = _ACE_ECO_ORIGINALS.get("criar_reel_autonomo")
-            if not original_auto:
-                payload.update({"ok": False, "reason": "criar_reel_autonomo_original_ausente"})
-                return jsonify(payload)
-
-            result = original_auto(trend, estilo)
-            payload.update({
-                "live_result": result,
-                "ready": bool(isinstance(result, dict) and result.get("ok")),
-                "message": "publish_live_executed",
-            })
-            if payload["ready"]:
-                _eco_mark_live_publish()
+        if not readiness["real_publish_enabled"]:
+            payload.update({"ok": False, "reason": "real_publish_disabled"})
             return jsonify(payload)
 
-        except Exception as e:
-            return jsonify({
+        if not readiness["token_present"]:
+            payload.update({"ok": False, "reason": "token_ausente"})
+            return jsonify(payload)
+
+        if not readiness["ig_id_present"]:
+            payload.update({"ok": False, "reason": "ig_id_ausente"})
+            return jsonify(payload)
+
+        if not live:
+            payload.update({
+                "ready": True,
+                "message": "publish_diagnostic_ok",
+                "next_step": "Use live somente quando quiser 1 execução controlada.",
+            })
+            return jsonify(payload)
+
+        if not ACE_ECO_STATE.get("allow_live_publish", False):
+            payload.update({"ok": False, "reason": "publish_live_bloqueado_no_modo_economico"})
+            return jsonify(payload)
+
+        if not _eco_can_live_publish():
+            payload.update({"ok": False, "reason": "janela_minima_entre_publicacoes_ativa"})
+            return jsonify(payload)
+
+        trend = capturar_trend_brasil()
+        estilo = escolher_personalidade() if "escolher_personalidade" in globals() else "direto"
+
+        hook = f"O que quase ninguém percebe sobre {trend}"
+        caption = f"{hook}\n\nTeste soberano ACE Ω.\n\nEstilo: {estilo}"
+
+        media_path = None
+
+        if "ace_make_story_image" in globals():
+            try:
+                media_path = ace_make_story_image(caption, subtitle=trend)
+            except Exception:
+                media_path = None
+
+        if not media_path and "make_poster" in globals():
+            try:
+                media_path = make_poster(caption)
+            except Exception:
+                media_path = None
+
+        if not media_path:
+            payload.update({
                 "ok": False,
-                "route": "ext_test_publish",
+                "reason": "media_test_generation_fail",
+            })
+            return jsonify(payload)
+
+        publish_result = ace_real_publish_if_possible(
+            conteudo=caption,
+            tipo="image",
+            media_path=media_path
+        )
+
+        receipt = {
+            "ok": bool(isinstance(publish_result, dict) and publish_result.get("ok")),
+            "publish_status": "published" if isinstance(publish_result, dict) and publish_result.get("ok") else "failed",
+            "trend": trend,
+            "style": estilo,
+            "media_path": media_path,
+            "media_url": ace_media_public_url_from_path(media_path),
+            "created_at": _eco_now_iso(),
+            "container_id": ((publish_result or {}).get("container") or {}).get("id") if isinstance(publish_result, dict) else None,
+            "media_publish_id": ((publish_result or {}).get("published") or {}).get("id") if isinstance(publish_result, dict) else None,
+            "publish_result": publish_result,
+        }
+
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_receipt, set_last_publish_error
+            if receipt["ok"]:
+                set_last_publish_receipt(receipt)
+            else:
+                set_last_publish_error(receipt)
+        except Exception:
+            pass
+
+        payload.update({
+            "live_result": publish_result,
+            "publish_receipt": receipt,
+            "ready": bool(receipt["ok"]),
+            "message": "publish_live_executed",
+        })
+
+        if payload["ready"]:
+            _eco_mark_live_publish()
+
+        return jsonify(payload)
+
+    except Exception as e:
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_error
+            set_last_publish_error({
+                "ok": False,
+                "publish_status": "failed",
                 "error": str(e),
-                "error_type": e.__class__.__name__,
-                "timestamp": _eco_now_iso(),
-            }), 500
+                "created_at": _eco_now_iso(),
+            })
+        except Exception:
+            pass
+
+        return jsonify(ace_route_safe_error("ext_test_publish", e)), 500
+
+
 
     # Adiciona novos endpoints sem sobrescrever existentes
     def _eco_route_exists(rule):
