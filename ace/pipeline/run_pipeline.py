@@ -1,8 +1,7 @@
-from ace.engines.trend_engine import choose_trend, normalize_trend
-from ace.engines.director_engine import choose_content_type, choose_style
-from ace.engines.generator_engine import generate_hook, generate_body
+from ace.engines.director_engine import build_director_plan
+from ace.engines.generator_engine import build_content_package
 from ace.engines.media_engine import build_media_package
-from ace.engines.publish_engine import publish_media
+from ace.engines.publish_engine import publish_content
 
 try:
     from ace.engines.living_myth_engine import myth_run_cycle
@@ -10,7 +9,7 @@ except Exception:
     myth_run_cycle = None
 
 
-PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V3_MEDIA_FIX"
+PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V4_LEGACY_ALIGNED"
 
 
 def build_myth_narrative_line(myth):
@@ -33,24 +32,45 @@ def build_myth_narrative_line(myth):
     return f"No fim, tudo converge para {anchor}."
 
 
+def enrich_content_with_myth(content, myth_line):
+    if not isinstance(content, dict):
+        return content
+
+    if not myth_line:
+        return content
+
+    content = dict(content)
+
+    base_caption = str(content.get("caption", "")).strip()
+    base_text = str(content.get("text", "")).strip()
+    base_body = str(content.get("body", "")).strip()
+
+    if base_caption:
+        content["caption"] = f"{base_caption}\n\n{myth_line}"
+    else:
+        content["caption"] = myth_line
+
+    if base_text:
+        content["text"] = f"{base_text}\n\n{myth_line}"
+    else:
+        content["text"] = myth_line
+
+    if base_body:
+        content["body"] = f"{base_body}\n\n{myth_line}"
+    else:
+        content["body"] = myth_line
+
+    return content
+
+
 def run_pipeline(trend=None):
     """
-    Pipeline modular oficial do ACE Ω com Living Myth Engine.
-    Corrigido para usar a assinatura real de build_media_package.
+    Pipeline oficial do ACE Ω alinhado ao caminho legado validado.
     """
 
-    result = {}
+    trend = str(trend or "").strip() or "disciplina com inteligência"
 
-    # 1) Trend
-    if trend is None:
-        trend = choose_trend()
-
-    try:
-        trend = normalize_trend(trend)
-    except Exception:
-        pass
-
-    # 2) Living Myth Engine (nunca bloqueante)
+    # 1) Myth engine como camada consultiva
     myth = None
     if myth_run_cycle is not None:
         try:
@@ -58,59 +78,60 @@ def run_pipeline(trend=None):
         except Exception:
             myth = None
 
-    # 3) Formato e estilo
-    content_type = choose_content_type()
-    style = choose_style()
-
-    # 4) Geração textual
-    hook = generate_hook(trend, style)
-    body = generate_body(trend, style)
-
-    # 5) Linha narrativa leve
     myth_line = build_myth_narrative_line(myth)
 
-    if myth_line:
-        caption = f"{hook}\n\n{body}\n\n{myth_line}"
-    else:
-        caption = f"{hook}\n\n{body}"
+    # 2) Diretor — mesma lógica do legado
+    plan = build_director_plan(trend)
+    content_type = plan["content_type"]
+    style = plan["style"]
 
-    # 6) Mídia e publicação
+    # 3) Gerador — mesma lógica do legado
+    content = build_content_package(
+        trend=trend,
+        style=style,
+        content_type=content_type
+    )
+
+    # 4) Enriquecimento narrativo leve
+    content = enrich_content_with_myth(content, myth_line)
+
+    caption = content.get("caption", "")
+
+    # 5) Mídia — assinatura já validada no legado
     media = build_media_package(
         content_type=content_type,
         caption=caption
     )
-    publish = publish_media(media, caption)
 
-    # 7) Chaves clássicas
-    result["trend"] = trend
-    result["content_type"] = content_type
-    result["style"] = style
-    result["caption"] = caption
-    result["media"] = media
-    result["publish"] = publish
+    # 6) Publicação — mesma lógica do legado
+    published = publish_content(
+        trend=trend,
+        style=style,
+        content_type=content_type,
+        caption=caption,
+        media_path=media.get("media_path")
+    )
 
-    # 8) Chaves ricas
-    result["plan"] = {
+    # 7) Expandir plan com myth sem quebrar legado
+    plan = dict(plan)
+    plan["myth_direction"] = myth.get("narrative_direction") if myth else None
+    plan["myth_tension"] = myth.get("dominant_tension") if myth else None
+    plan["myth_stage"] = myth.get("chapter_stage") if myth else None
+
+    # 8) Expandir content com myth sem quebrar legado
+    if isinstance(content, dict):
+        content = dict(content)
+        content["narrative_direction"] = myth.get("narrative_direction") if myth else None
+        content["symbolic_anchor"] = myth.get("symbolic_anchor") if myth else None
+        content["cta_mode"] = myth.get("cta_mode") if myth else None
+        content["myth_line"] = myth_line
+
+    return {
         "trend": trend,
-        "content_type": content_type,
-        "style": style,
-        "myth_direction": myth.get("narrative_direction") if myth else None,
-        "myth_tension": myth.get("dominant_tension") if myth else None,
-        "myth_stage": myth.get("chapter_stage") if myth else None,
+        "plan": plan,
+        "content": content,
+        "media": media,
+        "published": published,
+        "myth": myth,
+        "pipeline_version": PIPELINE_VERSION,
     }
-
-    result["content"] = {
-        "hook": hook,
-        "body": body,
-        "caption": caption,
-        "narrative_direction": myth.get("narrative_direction") if myth else None,
-        "symbolic_anchor": myth.get("symbolic_anchor") if myth else None,
-        "cta_mode": myth.get("cta_mode") if myth else None,
-        "myth_line": myth_line,
-    }
-
-    result["published"] = publish
-    result["myth"] = myth
-    result["pipeline_version"] = PIPELINE_VERSION
-
-    return result
