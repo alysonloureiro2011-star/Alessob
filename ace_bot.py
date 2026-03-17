@@ -4248,12 +4248,158 @@ def _ext_test_gemini_view():
     text = ace_gemini_generate_text("Responda em 1 linha: ACE online.")
     return jsonify({"ok": bool(text), "text": text})
 
+
+
 def _ext_test_carrossel_view():
-    result = criar_carrossel_autonomo(
-        trend=capturar_trend_brasil(),
-        estilo=escolher_personalidade(),
-    )
-    return jsonify(result)
+    try:
+        trend = capturar_trend_brasil()
+        estilo = escolher_personalidade()
+
+        readiness = {
+            "real_publish_enabled": bool(ACE_ENABLE_REAL_PUBLISH),
+            "token_present": bool(get_ig_token()),
+            "ig_id_present": bool(get_ig_id()),
+            "instagram_connected": bool(get_ig_token() and get_ig_id()),
+            "public_media_base_url": ACE_PUBLIC_MEDIA_BASE_URL,
+        }
+
+        if not readiness["real_publish_enabled"]:
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_carrossel",
+                "reason": "real_publish_disabled",
+                "readiness": readiness,
+            })
+
+        if not readiness["token_present"]:
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_carrossel",
+                "reason": "token_ausente",
+                "readiness": readiness,
+            })
+
+        if not readiness["ig_id_present"]:
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_carrossel",
+                "reason": "ig_id_ausente",
+                "readiness": readiness,
+            })
+
+        hook = get_best_saved_hook(trend)
+        ideia = gerar_ideia_gemini(trend)
+
+        slide_1 = f"{hook}\n\n{trend}"
+        slide_2 = f"{ideia}\n\nEstilo: {estilo}"
+
+        media_paths = []
+
+        if "ace_make_story_image" in globals():
+            try:
+                p1 = ace_make_story_image(slide_1, subtitle="Slide 1")
+                p2 = ace_make_story_image(slide_2, subtitle="Slide 2")
+                if p1:
+                    media_paths.append(p1)
+                if p2:
+                    media_paths.append(p2)
+            except Exception:
+                pass
+
+        if len(media_paths) < 2 and "make_poster" in globals():
+            try:
+                while len(media_paths) < 2:
+                    candidate = make_poster(slide_1 if len(media_paths) == 0 else slide_2)
+                    if candidate:
+                        media_paths.append(candidate)
+                    else:
+                        break
+            except Exception:
+                pass
+
+        if len(media_paths) < 2:
+            return jsonify({
+                "ok": False,
+                "route": "ext_test_carrossel",
+                "reason": "carrossel_precisa_de_2_midias_reais",
+                "trend": trend,
+                "style": estilo,
+                "media_paths": media_paths,
+                "readiness": readiness,
+            }), 500
+
+        caption = f"{hook}\n\n{ideia}\n\nTeste soberano ACE Ω — carrossel"
+
+        publish_result = ace_real_publish_if_possible(
+            conteudo=caption,
+            tipo="carrossel",
+            media_paths=media_paths,
+        )
+
+        receipt = {
+            "ok": bool(isinstance(publish_result, dict) and publish_result.get("ok")),
+            "publish_status": "published" if isinstance(publish_result, dict) and publish_result.get("ok") else "failed",
+            "trend": trend,
+            "style": estilo,
+            "caption": caption,
+            "media_paths": media_paths,
+            "media_urls": [ace_media_public_url_from_path(p) for p in media_paths],
+            "created_at": datetime.datetime.now().isoformat(),
+            "children_ids": (publish_result or {}).get("children_ids") if isinstance(publish_result, dict) else None,
+            "parent_id": (((publish_result or {}).get("parent") or {}).get("id")) if isinstance(publish_result, dict) else None,
+            "media_publish_id": (((publish_result or {}).get("published") or {}).get("id")) if isinstance(publish_result, dict) else None,
+            "publish_result": publish_result,
+        }
+
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_receipt, set_last_publish_error
+            if receipt["ok"]:
+                set_last_publish_receipt(receipt)
+            else:
+                set_last_publish_error(receipt)
+        except Exception:
+            pass
+
+        try:
+            ACE_STATE["last_action_at"] = datetime.datetime.now().isoformat()
+            ACE_STATE["last_action_type"] = "carrossel"
+            ACE_STATE["last_trend"] = trend
+            ACE_STATE["last_error"] = None if receipt["ok"] else str(receipt.get("publish_result"))
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": receipt["ok"],
+            "route": "ext_test_carrossel",
+            "trend": trend,
+            "style": estilo,
+            "caption": caption,
+            "media_paths": media_paths,
+            "publish_receipt": receipt,
+            "readiness": readiness,
+        })
+
+    except Exception as e:
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_error
+            set_last_publish_error({
+                "ok": False,
+                "publish_status": "failed",
+                "error": str(e),
+                "created_at": datetime.datetime.now().isoformat(),
+                "route": "ext_test_carrossel",
+            })
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": False,
+            "route": "ext_test_carrossel",
+            "error": str(e),
+            "error_type": e.__class__.__name__,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }), 500
+
 
 def _ext_test_reel_view():
     result = criar_reel_autonomo(
