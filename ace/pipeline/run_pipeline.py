@@ -14,7 +14,7 @@ except Exception:
     register_pipeline_result = None
 
 
-PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V5_EPISODIC_MEMORY"
+PIPELINE_VERSION = "RUN_PIPELINE_LIVING_MYTH_V6_PUBLISH_RECEIPT"
 
 
 def build_myth_narrative_line(myth):
@@ -68,15 +68,39 @@ def enrich_content_with_myth(content, myth_line):
     return content
 
 
-def run_pipeline(trend=None):
-    """
-    Pipeline oficial do ACE Ω alinhado ao caminho legado validado,
-    agora com Living Myth Engine e Episodic Memory.
-    """
+def normalize_published_payload(published, media):
+    published = dict(published or {})
+    publish_result = published.get("publish_result") or {}
 
+    if isinstance(publish_result, dict) and publish_result.get("ok"):
+        receipt = {
+            "ok": True,
+            "publish_status": "published",
+            "media_url": publish_result.get("media_url"),
+            "container": publish_result.get("container"),
+            "published": publish_result.get("published"),
+            "published_at": published.get("created_at"),
+            "media_path": (media or {}).get("media_path"),
+        }
+        published["publish_receipt"] = receipt
+        published["status"] = "published"
+    else:
+        receipt = {
+            "ok": False,
+            "publish_status": "generated",
+            "media_path": (media or {}).get("media_path"),
+            "published_at": published.get("created_at"),
+            "detail": publish_result if isinstance(publish_result, dict) else None,
+        }
+        published["publish_receipt"] = receipt
+        published["status"] = published.get("status") or "generated"
+
+    return published
+
+
+def run_pipeline(trend=None):
     trend = str(trend or "").strip() or "disciplina com inteligência"
 
-    # 1) Myth engine consultivo
     myth = None
     if myth_run_cycle is not None:
         try:
@@ -86,29 +110,24 @@ def run_pipeline(trend=None):
 
     myth_line = build_myth_narrative_line(myth)
 
-    # 2) Diretor
     plan = build_director_plan(trend)
     content_type = plan["content_type"]
     style = plan["style"]
 
-    # 3) Gerador
     content = build_content_package(
         trend=trend,
         style=style,
         content_type=content_type
     )
 
-    # 4) Enriquecimento narrativo leve
     content = enrich_content_with_myth(content, myth_line)
     caption = content.get("caption", "")
 
-    # 5) Mídia
     media = build_media_package(
         content_type=content_type,
         caption=caption
     )
 
-    # 6) Publicação
     published = publish_content(
         trend=trend,
         style=style,
@@ -117,13 +136,13 @@ def run_pipeline(trend=None):
         media_path=media.get("media_path")
     )
 
-    # 7) Expandir plan
+    published = normalize_published_payload(published, media)
+
     plan = dict(plan)
     plan["myth_direction"] = myth.get("narrative_direction") if myth else None
     plan["myth_tension"] = myth.get("dominant_tension") if myth else None
     plan["myth_stage"] = myth.get("chapter_stage") if myth else None
 
-    # 8) Expandir content
     if isinstance(content, dict):
         content = dict(content)
         content["narrative_direction"] = myth.get("narrative_direction") if myth else None
@@ -141,7 +160,6 @@ def run_pipeline(trend=None):
         "pipeline_version": PIPELINE_VERSION,
     }
 
-    # 9) Registrar episódio sem bloquear pipeline
     if register_pipeline_result is not None:
         try:
             register_pipeline_result(result)
