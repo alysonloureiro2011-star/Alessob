@@ -7830,8 +7830,7 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
             "publish_readiness": _eco_publish_readiness(),
         })
 
-
-        def _eco_test_publish_view():
+def _eco_test_publish_view():
     """Teste de publicação leve, com recibo real e erro bruto."""
     try:
         readiness = _eco_publish_readiness()
