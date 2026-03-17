@@ -72,6 +72,43 @@ import traceback
 import hashlib
 import unicodedata
 
+# ==========================================================
+# SQLITE HOTFIX — ANTI "database is locked"
+# ==========================================================
+
+_ACE_SQLITE_CONNECT_ORIGINAL = sqlite3.connect
+
+def ace_sqlite_connect(*args, **kwargs):
+    kwargs.setdefault("timeout", 30)
+    kwargs.setdefault("check_same_thread", False)
+
+    conn = _ACE_SQLITE_CONNECT_ORIGINAL(*args, **kwargs)
+
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("PRAGMA busy_timeout=30000;")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("PRAGMA temp_store=MEMORY;")
+    except Exception:
+        pass
+
+    return conn
+
+sqlite3.connect = ace_sqlite_connect
+
+
 from pathlib import Path
 from difflib import SequenceMatcher
 from urllib.parse import urlencode
