@@ -7831,10 +7831,7 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
         })
 
 
-
-   
-
-def _eco_test_publish_view():
+        def _eco_test_publish_view():
     """Teste de publicação leve, com recibo real e erro bruto."""
     try:
         readiness = _eco_publish_readiness()
@@ -7874,11 +7871,17 @@ def _eco_test_publish_view():
             return jsonify(payload)
 
         if not ACE_ECO_STATE.get("allow_live_publish", False):
-            payload.update({"ok": False, "reason": "publish_live_bloqueado_no_modo_economico"})
+            payload.update({
+                "ok": False,
+                "reason": "publish_live_bloqueado_no_modo_economico"
+            })
             return jsonify(payload)
 
         if not _eco_can_live_publish():
-            payload.update({"ok": False, "reason": "janela_minima_entre_publicacoes_ativa"})
+            payload.update({
+                "ok": False,
+                "reason": "janela_minima_entre_publicacoes_ativa"
+            })
             return jsonify(payload)
 
         trend = capturar_trend_brasil()
@@ -7917,7 +7920,9 @@ def _eco_test_publish_view():
             if len(media_paths) < 2 and "make_poster" in globals():
                 try:
                     while len(media_paths) < 2:
-                        candidate = make_poster(f"{hook}\n\n{trend}" if len(media_paths) == 0 else f"{body}\n\n{trend}")
+                        candidate = make_poster(
+                            f"{hook}\n\n{trend}" if len(media_paths) == 0 else f"{body}\n\n{trend}"
+                        )
                         if candidate:
                             media_paths.append(candidate)
                         else:
@@ -7972,6 +7977,80 @@ def _eco_test_publish_view():
                     "style": estilo,
                 })
                 return jsonify(payload), 500
+
+            publish_result = ace_real_publish_if_possible(
+                conteudo=caption,
+                tipo="image",
+                media_path=media_path,
+            )
+
+            receipt.update({
+                "media_path": media_path,
+                "media_url": ace_media_public_url_from_path(media_path),
+                "container_id": (((publish_result or {}).get("container") or {}).get("id")) if isinstance(publish_result, dict) else None,
+                "media_publish_id": (((publish_result or {}).get("published") or {}).get("id")) if isinstance(publish_result, dict) else None,
+            })
+
+        receipt["ok"] = bool(isinstance(publish_result, dict) and publish_result.get("ok"))
+        receipt["publish_status"] = "published" if receipt["ok"] else "failed"
+        receipt["publish_result"] = publish_result or {}
+
+        if not receipt["ok"]:
+            receipt["error"] = str(publish_result)
+
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_receipt, set_last_publish_error
+            if receipt["ok"]:
+                set_last_publish_receipt(receipt)
+            else:
+                set_last_publish_error(receipt)
+        except Exception:
+            pass
+
+        try:
+            ACE_STATE["last_action_at"] = _eco_now_iso()
+            ACE_STATE["last_action_type"] = f"publish_{content_type}"
+            ACE_STATE["last_trend"] = trend
+            ACE_STATE["last_error"] = None if receipt["ok"] else receipt["error"]
+        except Exception:
+            pass
+
+        if receipt["ok"]:
+            _eco_mark_live_publish()
+
+        payload.update({
+            "ok": receipt["ok"],
+            "trend": trend,
+            "style": estilo,
+            "caption": caption,
+            "publish_receipt": receipt,
+            "live_result": publish_result,
+            "message": "publish_live_executed",
+            "ready": bool(receipt["ok"]),
+        })
+        return jsonify(payload)
+
+    except Exception as e:
+        try:
+            from ace.engines.episodic_memory_engine import set_last_publish_error
+            set_last_publish_error({
+                "ok": False,
+                "publish_status": "failed",
+                "error": str(e),
+                "created_at": _eco_now_iso(),
+                "route": "ext_test_publish",
+            })
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": False,
+            "route": "ext_test_publish",
+            "error": str(e),
+            "error_type": e.__class__.__name__,
+            "timestamp": _eco_now_iso(),
+        }), 500
+
 
             publish_result = ace_real_publish_if_possible(
                 conteudo=caption,
