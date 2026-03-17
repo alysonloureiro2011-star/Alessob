@@ -11,6 +11,8 @@ MAX_EPISODES = 50
 
 DEFAULT_MEMORY = {
     "episodes": [],
+    "last_publish_receipt": None,
+    "last_publish_error": None,
     "updated_at": None,
 }
 
@@ -38,7 +40,6 @@ def load_episodic_memory() -> Dict[str, Any]:
                     return merged
     except Exception:
         pass
-
     return dict(DEFAULT_MEMORY)
 
 
@@ -72,6 +73,16 @@ def build_episode_from_pipeline_result(result: Dict[str, Any]) -> Dict[str, Any]
     published = result.get("published") or {}
     myth = result.get("myth") or {}
 
+    publish_receipt = published.get("publish_receipt") or {}
+    publish_result = published.get("publish_result") or {}
+
+    publish_status = (
+        published.get("status")
+        or publish_receipt.get("publish_status")
+        or ("published" if publish_receipt.get("ok") else None)
+        or "generated"
+    )
+
     episode = {
         "at": episodic_now_iso(),
         "trend": result.get("trend"),
@@ -84,8 +95,10 @@ def build_episode_from_pipeline_result(result: Dict[str, Any]) -> Dict[str, Any]
         "narrative_direction": content.get("narrative_direction") or plan.get("myth_direction"),
         "caption_preview": safe_short_text(content.get("caption") or result.get("caption")),
         "media_path": media.get("media_path"),
-        "publish_status": published.get("status"),
+        "publish_status": publish_status,
         "pipeline_version": result.get("pipeline_version"),
+        "publish_receipt": publish_receipt if isinstance(publish_receipt, dict) else None,
+        "publish_result": publish_result if isinstance(publish_result, dict) else None,
     }
 
     return episode
@@ -94,17 +107,40 @@ def build_episode_from_pipeline_result(result: Dict[str, Any]) -> Dict[str, Any]
 def append_episode(episode: Dict[str, Any]) -> Dict[str, Any]:
     memory = load_episodic_memory()
     episodes = memory.get("episodes", []) or []
-
     episodes.append(episode)
     memory["episodes"] = trim_episodes(episodes)
+    save_episodic_memory(memory)
+    return memory
 
+
+def set_last_publish_receipt(receipt: Dict[str, Any]) -> Dict[str, Any]:
+    memory = load_episodic_memory()
+    memory["last_publish_receipt"] = receipt
+    save_episodic_memory(memory)
+    return memory
+
+
+def set_last_publish_error(error: Dict[str, Any]) -> Dict[str, Any]:
+    memory = load_episodic_memory()
+    memory["last_publish_error"] = error
     save_episodic_memory(memory)
     return memory
 
 
 def register_pipeline_result(result: Dict[str, Any]) -> Dict[str, Any]:
     episode = build_episode_from_pipeline_result(result)
-    return append_episode(episode)
+    memory = append_episode(episode)
+
+    published = (result or {}).get("published") or {}
+    receipt = published.get("publish_receipt")
+    if isinstance(receipt, dict):
+        set_last_publish_receipt(receipt)
+
+    publish_result = published.get("publish_result")
+    if isinstance(publish_result, dict) and not publish_result.get("ok", False):
+        set_last_publish_error(publish_result)
+
+    return memory
 
 
 def get_recent_episodes(limit: int = 10) -> List[Dict[str, Any]]:
@@ -131,4 +167,6 @@ def build_memory_summary() -> Dict[str, Any]:
         "updated_at": memory.get("updated_at"),
         "last_episode": last_episode,
         "recent_episodes": episodes[-10:],
+        "last_publish_receipt": memory.get("last_publish_receipt"),
+        "last_publish_error": memory.get("last_publish_error"),
     }
