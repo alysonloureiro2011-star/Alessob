@@ -7832,11 +7832,13 @@ if "ACE_ECO_MODE_PATCH_V3_LOADED" not in globals():
 
 
 
-def _eco_test_publish_view():
-    """Endpoint para testar publicação de forma leve e segura."""
+
+            def _eco_test_publish_view():
+    """Teste de publicação leve, com recibo real e erro bruto."""
     try:
         readiness = _eco_publish_readiness()
         live = str(request.args.get("live", "0")).strip().lower() in ("1", "true", "yes", "on")
+        content_type = str(request.args.get("type", "image")).strip().lower()
 
         payload = {
             "ok": True,
@@ -7847,17 +7849,18 @@ def _eco_test_publish_view():
             "quality_first": True,
             "single_render_mode": True,
             "readiness": readiness,
+            "requested_type": content_type,
         }
 
-        if not readiness["real_publish_enabled"]:
+        if not readiness.get("real_publish_enabled"):
             payload.update({"ok": False, "reason": "real_publish_disabled"})
             return jsonify(payload)
 
-        if not readiness["token_present"]:
+        if not readiness.get("token_present"):
             payload.update({"ok": False, "reason": "token_ausente"})
             return jsonify(payload)
 
-        if not readiness["ig_id_present"]:
+        if not readiness.get("ig_id_present"):
             payload.update({"ok": False, "reason": "ig_id_ausente"})
             return jsonify(payload)
 
@@ -7865,7 +7868,7 @@ def _eco_test_publish_view():
             payload.update({
                 "ready": True,
                 "message": "publish_diagnostic_ok",
-                "next_step": "Use live somente quando quiser 1 execução controlada.",
+                "next_step": "Use ?live=1 para executar publicação controlada.",
             })
             return jsonify(payload)
 
@@ -7879,49 +7882,115 @@ def _eco_test_publish_view():
 
         trend = capturar_trend_brasil()
         estilo = escolher_personalidade() if "escolher_personalidade" in globals() else "direto"
-
         hook = f"O que quase ninguém percebe sobre {trend}"
-        caption = f"{hook}\n\nTeste soberano ACE Ω.\n\nEstilo: {estilo}"
+        body = f"Teste soberano ACE Ω.\n\nEstilo: {estilo}"
+        caption = f"{hook}\n\n{body}"
 
-        media_path = None
-
-        if "ace_make_story_image" in globals():
-            try:
-                media_path = ace_make_story_image(caption, subtitle=trend)
-            except Exception:
-                media_path = None
-
-        if not media_path and "make_poster" in globals():
-            try:
-                media_path = make_poster(caption)
-            except Exception:
-                media_path = None
-
-        if not media_path:
-            payload.update({
-                "ok": False,
-                "reason": "media_test_generation_fail",
-            })
-            return jsonify(payload)
-
-        publish_result = ace_real_publish_if_possible(
-            conteudo=caption,
-            tipo="image",
-            media_path=media_path
-        )
-
+        publish_result = {}
         receipt = {
-            "ok": bool(isinstance(publish_result, dict) and publish_result.get("ok")),
-            "publish_status": "published" if isinstance(publish_result, dict) and publish_result.get("ok") else "failed",
+            "ok": False,
+            "publish_status": "failed",
             "trend": trend,
             "style": estilo,
-            "media_path": media_path,
-            "media_url": ace_media_public_url_from_path(media_path),
+            "content_type": content_type,
+            "caption": caption,
             "created_at": _eco_now_iso(),
-            "container_id": ((publish_result or {}).get("container") or {}).get("id") if isinstance(publish_result, dict) else None,
-            "media_publish_id": ((publish_result or {}).get("published") or {}).get("id") if isinstance(publish_result, dict) else None,
-            "publish_result": publish_result,
+            "publish_result": {},
+            "error": None,
         }
+
+        if content_type == "carrossel":
+            media_paths = []
+
+            if "ace_make_story_image" in globals():
+                try:
+                    p1 = ace_make_story_image(f"{hook}\n\n{trend}", subtitle="Slide 1")
+                    p2 = ace_make_story_image(f"{body}\n\n{trend}", subtitle="Slide 2")
+                    if p1:
+                        media_paths.append(p1)
+                    if p2:
+                        media_paths.append(p2)
+                except Exception:
+                    pass
+
+            if len(media_paths) < 2 and "make_poster" in globals():
+                try:
+                    while len(media_paths) < 2:
+                        candidate = make_poster(f"{hook}\n\n{trend}" if len(media_paths) == 0 else f"{body}\n\n{trend}")
+                        if candidate:
+                            media_paths.append(candidate)
+                        else:
+                            break
+                except Exception:
+                    pass
+
+            if len(media_paths) < 2:
+                payload.update({
+                    "ok": False,
+                    "reason": "carrossel_precisa_de_2_midias_reais",
+                    "trend": trend,
+                    "style": estilo,
+                    "media_paths": media_paths,
+                })
+                return jsonify(payload), 500
+
+            publish_result = ace_real_publish_if_possible(
+                conteudo=caption,
+                tipo="carrossel",
+                media_paths=media_paths,
+            )
+
+            receipt.update({
+                "media_paths": media_paths,
+                "media_urls": [ace_media_public_url_from_path(p) for p in media_paths],
+                "children_ids": (publish_result or {}).get("children_ids") if isinstance(publish_result, dict) else None,
+                "parent_id": (((publish_result or {}).get("parent") or {}).get("id")) if isinstance(publish_result, dict) else None,
+                "media_publish_id": (((publish_result or {}).get("published") or {}).get("id")) if isinstance(publish_result, dict) else None,
+            })
+
+        else:
+            media_path = None
+
+            if "ace_make_story_image" in globals():
+                try:
+                    media_path = ace_make_story_image(caption, subtitle=trend)
+                except Exception:
+                    media_path = None
+
+            if not media_path and "make_poster" in globals():
+                try:
+                    media_path = make_poster(caption)
+                except Exception:
+                    media_path = None
+
+            if not media_path:
+                payload.update({
+                    "ok": False,
+                    "reason": "media_test_generation_fail",
+                    "trend": trend,
+                    "style": estilo,
+                })
+                return jsonify(payload), 500
+
+            publish_result = ace_real_publish_if_possible(
+                conteudo=caption,
+                tipo="image",
+                media_path=media_path,
+            )
+
+            receipt.update({
+                "media_path": media_path,
+                "media_url": ace_media_public_url_from_path(media_path),
+                "container_id": (((publish_result or {}).get("container") or {}).get("id")) if isinstance(publish_result, dict) else None,
+                "media_publish_id": (((publish_result or {}).get("published") or {}).get("id")) if isinstance(publish_result, dict) else None,
+            })
+
+        receipt["ok"] = bool(isinstance(publish_result, dict) and publish_result.get("ok"))
+        receipt["publish_status"] = "published" if receipt["ok"] else "failed"
+        receipt["publish_result"] = publish_result or {}
+
+        if not receipt["ok"]:
+            receipt["error"] = str(publish_result)
 
         try:
             from ace.engines.episodic_memory_engine import set_last_publish_receipt, set_last_publish_error
@@ -7932,16 +8001,27 @@ def _eco_test_publish_view():
         except Exception:
             pass
 
-        payload.update({
-            "live_result": publish_result,
-            "publish_receipt": receipt,
-            "ready": bool(receipt["ok"]),
-            "message": "publish_live_executed",
-        })
+        try:
+            ACE_STATE["last_action_at"] = _eco_now_iso()
+            ACE_STATE["last_action_type"] = f"publish_{content_type}"
+            ACE_STATE["last_trend"] = trend
+            ACE_STATE["last_error"] = None if receipt["ok"] else receipt["error"]
+        except Exception:
+            pass
 
-        if payload["ready"]:
+        if receipt["ok"]:
             _eco_mark_live_publish()
 
+        payload.update({
+            "ok": receipt["ok"],
+            "trend": trend,
+            "style": estilo,
+            "caption": caption,
+            "publish_receipt": receipt,
+            "live_result": publish_result,
+            "message": "publish_live_executed",
+            "ready": bool(receipt["ok"]),
+        })
         return jsonify(payload)
 
     except Exception as e:
@@ -7952,13 +8032,18 @@ def _eco_test_publish_view():
                 "publish_status": "failed",
                 "error": str(e),
                 "created_at": _eco_now_iso(),
+                "route": "ext_test_publish",
             })
         except Exception:
             pass
 
-        return jsonify(ace_route_safe_error("ext_test_publish", e)), 500
-
-
+        return jsonify({
+            "ok": False,
+            "route": "ext_test_publish",
+            "error": str(e),
+            "error_type": e.__class__.__name__,
+            "timestamp": _eco_now_iso(),
+        }), 500
 
     # Adiciona novos endpoints sem sobrescrever existentes
     def _eco_route_exists(rule):
