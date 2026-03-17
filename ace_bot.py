@@ -8051,6 +8051,8 @@ def _eco_test_publish_view():
         }), 500
 
 
+if False:  # neutraliza bloco duplicado abaixo
+
             publish_result = ace_real_publish_if_possible(
                 conteudo=caption,
                 tipo="image",
