@@ -8935,3 +8935,6 @@ if "ACE_PUBLISH_RELEASE_GATE_V1_LOADED" not in globals():
         })
     except Exception:
         pass
+
+from ace_runtime_patch import apply_runtime_patch
+apply_runtime_patch(app)
