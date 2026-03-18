@@ -1,4 +1,4 @@
-
+# TESTE_DEPLOY_MAIN
 # ==========================================================
 # ACE Ω SUPREME - CORE BOOTSTRAP
 # Arquivo principal do sistema
