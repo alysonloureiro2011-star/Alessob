@@ -72,6 +72,16 @@ import traceback
 import hashlib
 import unicodedata
 
+
+
+# === ACE Ω Runtime Auto Injection ===
+try:
+    from ACE_RUNTIME_AUTOINJECT import inject_runtime_env
+    inject_runtime_env()
+except Exception as e:
+    print("Runtime auto-injection failed:", e)
+# =====================================
+
 # ==========================================================
 # SQLITE HOTFIX — ANTI "database is locked"
 # ==========================================================
