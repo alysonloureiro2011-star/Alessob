@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -8,14 +7,17 @@ from typing import Any
 
 from .config import AceNextConfig
 from .legacy_bridge import get_legacy_memory_summary, run_legacy_pipeline
-from .publish import PublishService
+from .official_instagram_publish import OfficialInstagramPublishService
+from .publish import PublishReceipt, PublishService, build_placeholder_receipt
 
 
 @dataclass
 class OfficialRuntimeState:
     runtime_mode: str = "ACE_NEXT_OFFICIAL_CORE"
     official_content_handler: str = "ace_next.official_runtime.OfficialRuntime.run"
-    official_publish_handler: str = "legacy_pipeline_then_receipt_persistence"
+    official_publish_handler: str = (
+        "ace_next.official_instagram_publish.OfficialInstagramPublishService"
+    )
     official_queue_handler: str = "manual"
     last_runtime_action: str | None = None
     last_runtime_error: str | None = None
@@ -24,20 +26,38 @@ class OfficialRuntimeState:
 
 
 class OfficialRuntime:
-    def __init__(self, config: AceNextConfig) -> None:
+    def __init__(
+        self,
+        config: AceNextConfig,
+        publish_service: PublishService | None = None,
+    ) -> None:
         self.config = config
-        self.publish = PublishService(config)
+        self.publish = publish_service or PublishService(config)
+        self.instagram = OfficialInstagramPublishService(config)
         self.state = OfficialRuntimeState()
 
+    def instagram_readiness(self) -> dict[str, Any]:
+        return self.instagram.readiness()
+
     def snapshot(self) -> dict[str, Any]:
+        last_publish = self.publish.last_publish()
         data = asdict(self.state)
         data["render_url"] = self.config.render_url
         data["real_publish_enabled"] = self.config.enable_real_publish
         data["token_present"] = bool(self.config.ig_token)
         data["ig_id_present"] = bool(self.config.ig_id)
+        data["instagram_readiness"] = self.instagram_readiness()
+        data["last_receipt"] = last_publish.get("last_publish_receipt")
+        data["last_error"] = last_publish.get("last_publish_error")
+        data["last_episode"] = last_publish.get("last_episode")
         return data
 
-    def _touch(self, action: str, error: str | None = None, source: str | None = None) -> None:
+    def _touch(
+        self,
+        action: str,
+        error: str | None = None,
+        source: str | None = None,
+    ) -> None:
         self.state.last_runtime_action = action
         self.state.last_runtime_error = error
         self.state.last_runtime_action_at = datetime.now().isoformat()
@@ -50,15 +70,60 @@ class OfficialRuntime:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def _persist_receipt_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.publish.receipt_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return payload
+    def _extract_media_paths(self, media: dict[str, Any]) -> list[str]:
+        if not isinstance(media, dict):
+            return []
+
+        media_paths = media.get("media_paths")
+        if isinstance(media_paths, list):
+            return [str(path) for path in media_paths if path]
+
+        media_path = media.get("media_path")
+        if media_path:
+            return [str(media_path)]
+
+        return []
+
+    def _build_receipt(
+        self,
+        *,
+        ok: bool,
+        publish_status: str,
+        created_at: str,
+        content_type: str | None,
+        trend: str | None,
+        style: str | None,
+        caption: str | None,
+        media_path: str | None,
+        media_url: str | None,
+        raw_publish_result: dict[str, Any] | None,
+        error: str | None,
+        creation_id: str | None,
+        media_id: str | None,
+        permalink: str | None,
+    ) -> PublishReceipt:
+        return PublishReceipt(
+            ok=ok,
+            publish_status=publish_status,
+            created_at=created_at,
+            content_type=content_type,
+            trend=trend,
+            style=style,
+            caption=caption,
+            media_path=media_path,
+            media_url=media_url,
+            raw_publish_result=raw_publish_result,
+            error=error,
+            creation_id=creation_id,
+            media_id=media_id,
+            permalink=permalink,
+        )
 
     def run_placeholder(self, trend: str | None = None) -> dict[str, Any]:
-        trend = (trend or "disciplina com inteligência").strip()
+        normalized_trend = (trend or "disciplina com inteligência").strip()
         style = "premium"
         content_type = "reel"
-        caption = f"ACE Ω NEXT | {trend}"
+        caption = f"ACE Ω NEXT | {normalized_trend}"
 
         media_dir = Path(self.config.media_dir)
         media_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +131,7 @@ class OfficialRuntime:
         Path(media_path).write_text(caption, encoding="utf-8")
 
         receipt = self.publish.publish_placeholder(
-            trend=trend,
+            trend=normalized_trend,
             style=style,
             content_type=content_type,
             caption=caption,
@@ -74,63 +139,162 @@ class OfficialRuntime:
         )
 
         self._touch("run_placeholder", None, "ace_next_placeholder")
+
         return {
-            "ok": True,
+            "ok": False,
             "mode": "placeholder",
-            "trend": trend,
+            "trend": normalized_trend,
             "style": style,
             "content_type": content_type,
             "caption": caption,
             "media_path": media_path,
             "publish_receipt": receipt,
+            "instagram_readiness": self.instagram_readiness(),
         }
 
     def run_legacy(self, trend: str | None = None) -> dict[str, Any]:
-        trend = (trend or "disciplina com inteligência").strip()
+        created_at = datetime.utcnow().isoformat()
+
         try:
-            result = run_legacy_pipeline(trend=trend)
-            published = (result or {}).get("published") or {}
-            receipt = published.get("publish_receipt") or {}
-            publish_result = published.get("publish_result") or {}
-            plan = (result or {}).get("plan") or {}
-            content = (result or {}).get("content") or {}
-            media = (result or {}).get("media") or {}
-
-            payload = {
-                "ok": bool(receipt.get("ok", False)),
-                "publish_status": receipt.get("publish_status") or published.get("status") or "generated",
-                "created_at": receipt.get("published_at") or published.get("created_at") or datetime.now().isoformat(),
-                "content_type": plan.get("content_type") or "unknown",
-                "trend": result.get("trend"),
-                "style": plan.get("style"),
-                "caption": content.get("caption"),
-                "media_path": receipt.get("media_path") or media.get("media_path"),
-                "media_url": receipt.get("media_url"),
-                "raw_publish_result": publish_result if isinstance(publish_result, dict) else None,
-                "error": publish_result.get("error") if isinstance(publish_result, dict) else receipt.get("detail"),
-            }
-            self._persist_receipt_payload(payload)
-            if not payload["ok"]:
-                self.publish.save_error(payload)
-
-            self._touch("run_legacy", None, "legacy_pipeline")
-            return {
-                "ok": True,
-                "mode": "legacy_pipeline",
-                "result": result,
-                "memory": self.get_memory_summary(),
-                "last_publish_receipt": payload,
-            }
+            pipeline = run_legacy_pipeline(trend=trend)
         except Exception as exc:
-            self._touch("run_legacy", str(exc), "legacy_pipeline")
+            self._touch("run_legacy_boot_fail", str(exc), "legacy_pipeline")
+            fallback = build_placeholder_receipt(
+                created_at=created_at,
+                content_type="unknown",
+                trend=trend,
+                style=None,
+                caption=None,
+                media_path=None,
+                media_url=None,
+                raw_publish_result=None,
+                error=str(exc),
+            )
+            self.publish.save_error(fallback)
             return {
                 "ok": False,
                 "mode": "legacy_pipeline",
                 "error": str(exc),
-                "fallback": self.run_placeholder(trend=trend),
+                "instagram_readiness": self.instagram_readiness(),
+                "fallback": fallback.to_dict(),
             }
 
-    def run(self, trend: str | None = None, force_placeholder: bool = False) -> dict[str, Any]:
+        plan = pipeline.get("plan") or {}
+        content = pipeline.get("content") or {}
+        media = pipeline.get("media") or {}
+
+        content_type = (
+            plan.get("content_type")
+            or content.get("content_type")
+            or media.get("content_type")
+            or "reel"
+        )
+        style = plan.get("style") or content.get("style")
+        normalized_trend = trend or pipeline.get("trend")
+        caption = (
+            content.get("caption")
+            or content.get("text")
+            or content.get("body")
+            or ""
+        )
+
+        media_paths = self._extract_media_paths(media)
+        media_path = media_paths[0] if media_paths else None
+
+        publish_result: dict[str, Any] | None = None
+
+        try:
+            if str(content_type).strip().lower() == "carrossel":
+                publish_result = self.instagram.publish_carousel(
+                    media_paths=media_paths,
+                    caption=caption,
+                )
+            else:
+                publish_result = self.instagram.publish_single(
+                    media_path=media_path,
+                    caption=caption,
+                    content_type=content_type,
+                )
+
+            publish_result = dict(publish_result or {})
+            receipt = self._build_receipt(
+                ok=bool(publish_result.get("ok")),
+                publish_status="published" if publish_result.get("ok") else "failed",
+                created_at=created_at,
+                content_type=content_type,
+                trend=normalized_trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=publish_result.get("media_url"),
+                raw_publish_result=publish_result,
+                error=publish_result.get("error"),
+                creation_id=publish_result.get("creation_id"),
+                media_id=publish_result.get("media_id"),
+                permalink=publish_result.get("permalink"),
+            )
+
+            pipeline["publish_receipt"] = (
+                self.publish.save_receipt(receipt)
+                if receipt.ok
+                else self.publish.save_error(receipt)
+            )
+            pipeline["instagram_readiness"] = self.instagram_readiness()
+
+            self._touch(
+                "run_legacy",
+                None if receipt.ok else receipt.error,
+                "legacy_pipeline_plus_official_publish",
+            )
+
+            return {
+                "ok": bool(receipt.ok),
+                "mode": "legacy_pipeline",
+                "result": pipeline,
+                "memory": self.get_memory_summary(),
+                "last_publish_receipt": pipeline["publish_receipt"],
+                "instagram_readiness": self.instagram_readiness(),
+            }
+
+        except Exception as exc:
+            placeholder = build_placeholder_receipt(
+                created_at=created_at,
+                content_type=content_type,
+                trend=normalized_trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=self.publish.build_media_url(media_path),
+                raw_publish_result=publish_result,
+                error=str(exc),
+            )
+
+            saved_error = self.publish.save_error(placeholder)
+            pipeline["publish_receipt"] = saved_error
+            pipeline["instagram_readiness"] = self.instagram_readiness()
+
+            self._touch(
+                "run_legacy_publish_fail",
+                str(exc),
+                "legacy_pipeline_plus_official_publish",
+            )
+
+            return {
+                "ok": False,
+                "mode": "legacy_pipeline",
+                "result": pipeline,
+                "error": str(exc),
+                "memory": self.get_memory_summary(),
+                "last_publish_receipt": saved_error,
+                "instagram_readiness": self.instagram_readiness(),
+                "fallback": placeholder.to_dict(),
+            }
+
+    def run(
+        self,
+        trend: str | None = None,
+        force_placeholder: bool = False,
+    ) -> dict[str, Any]:
         if force_placeholder:
             return self.run_placeholder(trend=trend)
         return self.run_legacy(trend=trend)
