@@ -9066,4 +9066,49 @@ except Exception:
 # ==========================================================
 
 
+# ==========================================================
+# ACE Ω RUNTIME STABILITY PATCH — SAFE MODE FOR RENDER
+# ==========================================================
 
+ACE_RUNTIME_LIGHT = str(os.getenv("ACE_RUNTIME_LIGHT", "1")).strip().lower() in ("1", "true", "yes")
+
+def ace_safe_thread_start(target_func):
+    if ACE_RUNTIME_LIGHT:
+        log("INFO", "runtime_light_mode", f"Thread {target_func.__name__} blocked")
+        return
+    try:
+        threading.Thread(target=target_func, daemon=True).start()
+    except Exception as e:
+        log("WARN", "thread_start_fail", str(e))
+
+
+# Override automático para impedir thread no import
+try:
+    # Cancela analytics automático
+    if "ace_analytics_supervisor_loop" in globals():
+        log("INFO", "analytics_thread_override_active", True)
+except Exception:
+    pass
+
+
+# Reconfigura boot para modo seguro
+_original_boot = boot
+
+def boot():
+    global _BOOT_STARTED
+    if _BOOT_STARTED:
+        return
+
+    _BOOT_STARTED = True
+    log("INFO", "boot_safe_start", "Inicializando ACE em modo controlado")
+
+    ace_safe_thread_start(queue_executor_loop)
+    ace_safe_thread_start(supervisor_loop)
+
+    if not ACE_SKIP_BOOT_FORCE:
+        try:
+            smart_force_action()
+        except Exception as e:
+            log("WARN", "boot_smart_force_fail", str(e))
+
+    log("INFO", "boot_safe_ok", "Boot controlado concluído")
