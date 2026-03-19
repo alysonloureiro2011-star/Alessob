@@ -9112,3 +9112,58 @@ def boot():
             log("WARN", "boot_smart_force_fail", str(e))
 
     log("INFO", "boot_safe_ok", "Boot controlado concluído")
+    
+# ==========================================================
+# ACE Ω — FORCE REAL PUBLISH ENDPOINT (CRÍTICO)
+# ==========================================================
+
+@app.route("/force_publish", methods=["GET"])
+def ace_force_publish():
+
+    if not ACE_ENABLE_REAL_PUBLISH:
+        return jsonify({
+            "ok": False,
+            "error": "real_publish_disabled"
+        })
+
+    try:
+        log("INFO", "force_publish_start", "Iniciando publicação manual")
+
+        # 1. Gerar conteúdo
+        trend = capturar_trend_brasil()
+        content = ace_video_creative_core()
+
+        media_path = content.get("media_path")
+
+        if not media_path:
+            return jsonify({
+                "ok": False,
+                "error": "media_not_generated"
+            })
+
+        # 2. Publicar
+        result = safe_call(ace_publish_media_container, media_path)
+
+        result = normalize_publish_result(result)
+
+        # 3. Persistir receipt
+        if result.get("ok"):
+            try:
+                _store_publish_receipt(result)
+            except Exception as e:
+                log("WARN", "receipt_store_fail", str(e))
+
+        # 4. Resposta final
+        return jsonify({
+            "ok": result.get("ok"),
+            "publish_result": result,
+            "trend": trend,
+            "media": media_path
+        })
+
+    except Exception as e:
+        log("ERROR", "force_publish_fail", str(e))
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        })
