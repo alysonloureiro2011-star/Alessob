@@ -24,6 +24,7 @@ class AceNextConfig:
     instagram_app_id: str | None
     instagram_app_secret: str | None
     instagram_redirect_uri: str
+    auth_path: Path
     enable_real_publish: bool
     base_dir: Path
     data_dir: Path
@@ -59,6 +60,7 @@ def load_config() -> AceNextConfig:
         instagram_app_id=instagram_app_id,
         instagram_app_secret=instagram_app_secret,
         instagram_redirect_uri=env("INSTAGRAM_REDIRECT_URI", f"{render_url}/instagram/token") or f"{render_url}/instagram/token",
+        auth_path=Path(env("ACE_INSTAGRAM_AUTH_PATH", str(base_dir / "instagram_auth.json")) or str(base_dir / "instagram_auth.json")),
         enable_real_publish=str(env("ACE_ENABLE_REAL_PUBLISH", "0")).strip().lower() in ("1", "true", "yes", "on"),
         base_dir=base_dir,
         data_dir=data_dir,
