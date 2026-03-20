@@ -108,10 +108,10 @@ def _coerce_json_payload(response):
 
 
 def apply_runtime_patch(app):
-    if app.config.get("ACE_RUNTIME_PATCH_V4_LOADED"):
+    if app.config.get("ACE_RUNTIME_PATCH_V5_LOADED"):
         return
 
-    app.config["ACE_RUNTIME_PATCH_V4_LOADED"] = True
+    app.config["ACE_RUNTIME_PATCH_V5_LOADED"] = True
 
     bridge_state = {
         "loaded": False,
@@ -124,9 +124,10 @@ def apply_runtime_patch(app):
     runtime = None
 
     try:
+        from ace_next.config import load_config
         from ace_next.official_runtime import OfficialRuntime
 
-        runtime = OfficialRuntime()
+        runtime = OfficialRuntime(load_config())
         bridge_state["loaded"] = True
         bridge_state["runtime_available"] = True
 
@@ -192,9 +193,9 @@ def apply_runtime_patch(app):
         }
 
     def _last_publish_payload():
-        if runtime is not None and hasattr(runtime, "publish_service"):
+        if runtime is not None and hasattr(runtime, "publish"):
             try:
-                payload = runtime.publish_service.last_publish()
+                payload = runtime.publish.last_publish()
                 if isinstance(payload, dict):
                     return {
                         "last_publish_receipt": payload.get("last_publish_receipt"),
@@ -323,14 +324,33 @@ def apply_runtime_patch(app):
 
     def ace_next_bridge_test_publish_view():
         trend = str(request.args.get("trend", "")).strip() or None
+        live = _truthy(request.args.get("live"))
+        placeholder = _truthy(request.args.get("placeholder"))
+
+        if not live:
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/ext/test/publish",
+                    "mode": "diagnostic",
+                    "live_requested": False,
+                    "trend": trend,
+                    "instagram_readiness": _legacy_readiness(),
+                    "bridge": dict(bridge_state),
+                }
+            )
 
         if runtime is not None and hasattr(runtime, "run"):
             try:
-                payload = runtime.run(trend=trend) if trend is not None else runtime.run()
+                payload = runtime.run(
+                    trend=trend,
+                    force_placeholder=placeholder,
+                )
                 if isinstance(payload, dict):
                     payload = dict(payload)
                     payload.setdefault("instagram_readiness", _legacy_readiness())
                     payload["bridge"] = dict(bridge_state)
+                    payload["live_requested"] = True
                     return jsonify(payload)
             except Exception as e:
                 return (
@@ -340,6 +360,7 @@ def apply_runtime_patch(app):
                             "route": "/ext/test/publish",
                             "error": str(e),
                             "trend": trend,
+                            "live_requested": True,
                             "bridge": dict(bridge_state),
                         }
                     ),
@@ -353,20 +374,21 @@ def apply_runtime_patch(app):
                 "mode": "bridge_fallback",
                 "reason": "ace_next_runtime_unavailable",
                 "trend": trend,
+                "live_requested": True,
                 "instagram_readiness": _legacy_readiness(),
                 "bridge": dict(bridge_state),
             }
         )
 
     _bind_get_route("/", "home", home_view)
-    _bind_get_route("/health", "ace_runtime_patch_health_v4", health_view)
+    _bind_get_route("/health", "ace_runtime_patch_health_v5", health_view)
     _bind_get_route("/ext/runtime", "ace_ext_runtime_v1", ace_next_bridge_runtime_view)
     _bind_get_route("/ext/publish/last", "ace_last_publish_v1", ace_next_bridge_last_publish_view)
     _bind_get_route("/ext/test/publish", "ace_ext_test_publish_v2", ace_next_bridge_test_publish_view)
 
     _safe_log(
         "INFO",
-        "ace_runtime_patch_v4_loaded",
+        "ace_runtime_patch_v5_loaded",
         {
             "routes": bridge_state["routes"],
             "runtime_available": bridge_state["runtime_available"],
