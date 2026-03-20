@@ -1,6 +1,11 @@
 import os
+import sys
 from datetime import datetime
-from flask import jsonify
+from flask import jsonify, request
+
+
+def _truthy(value):
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _safe_runtime_meta():
@@ -18,52 +23,353 @@ def _safe_publish_memory():
         return {
             "last_publish_receipt": summary.get("last_publish_receipt"),
             "last_publish_error": summary.get("last_publish_error"),
+            "last_episode": summary.get("last_episode"),
         }
     except Exception:
         return {
             "last_publish_receipt": None,
             "last_publish_error": None,
+            "last_episode": None,
         }
 
 
+def _safe_log(level, event, detail=""):
+    ace_bot_mod = sys.modules.get("ace_bot")
+    log_fn = getattr(ace_bot_mod, "log", None)
+    if callable(log_fn):
+        try:
+            log_fn(level, event, detail)
+        except Exception:
+            pass
+
+
+def _legacy_readiness():
+    ace_bot_mod = sys.modules.get("ace_bot")
+
+    token = None
+    ig_id = None
+    real_publish_enabled = os.getenv("ACE_ENABLE_REAL_PUBLISH")
+
+    if ace_bot_mod is not None:
+        try:
+            get_ig_token = getattr(ace_bot_mod, "get_ig_token", None)
+            if callable(get_ig_token):
+                token = get_ig_token()
+        except Exception:
+            token = None
+
+        try:
+            get_ig_id = getattr(ace_bot_mod, "get_ig_id", None)
+            if callable(get_ig_id):
+                ig_id = get_ig_id()
+        except Exception:
+            ig_id = None
+
+        try:
+            if real_publish_enabled is None and hasattr(ace_bot_mod, "ACE_ENABLE_REAL_PUBLISH"):
+                real_publish_enabled = getattr(ace_bot_mod, "ACE_ENABLE_REAL_PUBLISH")
+        except Exception:
+            pass
+
+    return {
+        "instagram_connected": bool(token and ig_id),
+        "token_present": bool(token),
+        "ig_id_present": bool(ig_id),
+        "real_publish_enabled": bool(
+            real_publish_enabled
+            if isinstance(real_publish_enabled, bool)
+            else _truthy(real_publish_enabled)
+        ),
+    }
+
+
+def _coerce_json_payload(response):
+    primary = response[0] if isinstance(response, tuple) and response else response
+
+    if isinstance(primary, dict):
+        return dict(primary)
+
+    get_json = getattr(primary, "get_json", None)
+    if callable(get_json):
+        try:
+            payload = get_json(silent=True)
+        except TypeError:
+            try:
+                payload = get_json()
+            except Exception:
+                payload = None
+        except Exception:
+            payload = None
+
+        if isinstance(payload, dict):
+            return dict(payload)
+
+    return None
+
+
 def apply_runtime_patch(app):
+    if app.config.get("ACE_RUNTIME_PATCH_V4_LOADED"):
+        return
 
-    runtime_meta = _safe_runtime_meta()
-    publish_meta = _safe_publish_memory()
+    app.config["ACE_RUNTIME_PATCH_V4_LOADED"] = True
 
-    # ===============================
-    # HEALTH ROUTE
-    # ===============================
-    @app.route("/health", methods=["GET"])
-    def health():
+    bridge_state = {
+        "loaded": False,
+        "runtime_available": False,
+        "error": None,
+        "routes": ["/", "/health", "/ext/runtime", "/ext/publish/last", "/ext/test/publish"],
+    }
+    app.config["ACE_NEXT_BRIDGE_STATE"] = bridge_state
+
+    runtime = None
+
+    try:
+        from ace_next.official_runtime import OfficialRuntime
+
+        runtime = OfficialRuntime()
+        bridge_state["loaded"] = True
+        bridge_state["runtime_available"] = True
+
+        _safe_log(
+            "INFO",
+            "ace_next_official_bridge_loaded",
+            {
+                "runtime_available": True,
+                "routes": bridge_state["routes"],
+            },
+        )
+    except Exception as e:
+        bridge_state["loaded"] = True
+        bridge_state["runtime_available"] = False
+        bridge_state["error"] = str(e)
+
+        _safe_log(
+            "WARN",
+            "ace_next_official_bridge_import_failed",
+            {
+                "error": str(e),
+                "fallback": True,
+            },
+        )
+
+    def _runtime_snapshot():
+        readiness = _legacy_readiness()
+
+        if runtime is not None:
+            try:
+                payload = runtime.snapshot()
+                if isinstance(payload, dict):
+                    payload = dict(payload)
+                    payload.setdefault("instagram_readiness", readiness)
+                    payload["bridge"] = dict(bridge_state)
+                    return payload
+            except Exception as e:
+                _safe_log(
+                    "WARN",
+                    "ace_next_official_bridge_snapshot_failed",
+                    {
+                        "error": str(e),
+                        "fallback": True,
+                    },
+                )
+
+                return {
+                    "ok": False,
+                    "runtime": "legacy_fallback",
+                    "instagram_readiness": readiness,
+                    "bridge": {
+                        **dict(bridge_state),
+                        "error": str(e),
+                        "runtime_available": False,
+                    },
+                }
+
+        return {
+            "ok": False,
+            "runtime": "legacy_fallback",
+            "instagram_readiness": readiness,
+            "bridge": dict(bridge_state),
+        }
+
+    def _last_publish_payload():
+        if runtime is not None and hasattr(runtime, "publish_service"):
+            try:
+                payload = runtime.publish_service.last_publish()
+                if isinstance(payload, dict):
+                    return {
+                        "last_publish_receipt": payload.get("last_publish_receipt"),
+                        "last_publish_error": payload.get("last_publish_error"),
+                        "last_episode": payload.get("last_episode"),
+                    }
+            except Exception as e:
+                _safe_log(
+                    "WARN",
+                    "ace_next_official_bridge_last_publish_failed",
+                    {
+                        "error": str(e),
+                        "fallback": True,
+                    },
+                )
+
+        return _safe_publish_memory()
+
+    def _bind_get_route(rule, endpoint, view_func):
+        try:
+            for existing_rule in app.url_map.iter_rules():
+                if existing_rule.rule == rule and "GET" in existing_rule.methods:
+                    app.view_functions[existing_rule.endpoint] = view_func
+                    return existing_rule.endpoint
+        except Exception:
+            pass
+
+        if endpoint in app.view_functions:
+            app.view_functions[endpoint] = view_func
+            return endpoint
+
+        app.add_url_rule(
+            rule,
+            endpoint=endpoint,
+            view_func=view_func,
+            methods=["GET"],
+        )
+        return endpoint
+
+    def home_view():
+        readiness = _legacy_readiness()
+        return jsonify(
+            {
+                "status": "ACE Ω SUPREME",
+                "online": True,
+                "timestamp": datetime.utcnow().isoformat(),
+                "instagram_connected": readiness.get("instagram_connected", False),
+            }
+        )
+
+    def health_view():
+        readiness = _legacy_readiness()
+        publish_payload = _last_publish_payload()
+
         data = {
             "ok": True,
             "app": "ACE Ω SUPREME",
             "online": True,
             "timestamp": datetime.utcnow().isoformat(),
-            **runtime_meta,
-            **publish_meta,
+            **_safe_runtime_meta(),
+            **readiness,
+            "bridge": dict(bridge_state),
+            **publish_payload,
         }
         return jsonify(data)
 
-    # ===============================
-    # STATUS ENHANCER
-    # ===============================
     original_status = app.view_functions.get("status")
+    if callable(original_status):
 
-    if original_status:
         def wrapped_status(*args, **kwargs):
             response = original_status(*args, **kwargs)
+            payload = _coerce_json_payload(response)
 
-            try:
-                json_data = response.get_json()
-                if isinstance(json_data, dict):
-                    json_data.update(runtime_meta)
-                    json_data.update(publish_meta)
-                    return jsonify(json_data)
-            except Exception:
-                pass
+            if isinstance(payload, dict):
+                payload.update(_safe_runtime_meta())
+                payload.update(_last_publish_payload())
+                payload.update(_legacy_readiness())
+                payload["bridge"] = dict(bridge_state)
+                return jsonify(payload)
 
             return response
 
         app.view_functions["status"] = wrapped_status
+
+    def ace_next_bridge_runtime_view():
+        try:
+            return jsonify(_runtime_snapshot())
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "route": "/ext/runtime",
+                        "error": str(e),
+                        "bridge": dict(bridge_state),
+                    }
+                ),
+                500,
+            )
+
+    def ace_next_bridge_last_publish_view():
+        try:
+            payload = _last_publish_payload()
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/ext/publish/last",
+                    "last_publish_receipt": payload.get("last_publish_receipt"),
+                    "last_publish_error": payload.get("last_publish_error"),
+                    "last_episode": payload.get("last_episode"),
+                    "bridge": dict(bridge_state),
+                }
+            )
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "route": "/ext/publish/last",
+                        "error": str(e),
+                        "bridge": dict(bridge_state),
+                    }
+                ),
+                500,
+            )
+
+    def ace_next_bridge_test_publish_view():
+        trend = str(request.args.get("trend", "")).strip() or None
+
+        if runtime is not None and hasattr(runtime, "run"):
+            try:
+                payload = runtime.run(trend=trend) if trend is not None else runtime.run()
+                if isinstance(payload, dict):
+                    payload = dict(payload)
+                    payload.setdefault("instagram_readiness", _legacy_readiness())
+                    payload["bridge"] = dict(bridge_state)
+                    return jsonify(payload)
+            except Exception as e:
+                return (
+                    jsonify(
+                        {
+                            "ok": False,
+                            "route": "/ext/test/publish",
+                            "error": str(e),
+                            "trend": trend,
+                            "bridge": dict(bridge_state),
+                        }
+                    ),
+                    500,
+                )
+
+        return jsonify(
+            {
+                "ok": False,
+                "route": "/ext/test/publish",
+                "mode": "bridge_fallback",
+                "reason": "ace_next_runtime_unavailable",
+                "trend": trend,
+                "instagram_readiness": _legacy_readiness(),
+                "bridge": dict(bridge_state),
+            }
+        )
+
+    _bind_get_route("/", "home", home_view)
+    _bind_get_route("/health", "ace_runtime_patch_health_v4", health_view)
+    _bind_get_route("/ext/runtime", "ace_ext_runtime_v1", ace_next_bridge_runtime_view)
+    _bind_get_route("/ext/publish/last", "ace_last_publish_v1", ace_next_bridge_last_publish_view)
+    _bind_get_route("/ext/test/publish", "ace_ext_test_publish_v2", ace_next_bridge_test_publish_view)
+
+    _safe_log(
+        "INFO",
+        "ace_runtime_patch_v4_loaded",
+        {
+            "routes": bridge_state["routes"],
+            "runtime_available": bridge_state["runtime_available"],
+            "error": bridge_state["error"],
+        },
+    )
