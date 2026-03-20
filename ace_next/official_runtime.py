@@ -84,6 +84,36 @@ class OfficialRuntime:
 
         return []
 
+    def _normalize_publish_contract(
+        self,
+        *,
+        content_type: str | None,
+        media_paths: list[str],
+    ) -> dict[str, Any]:
+        requested_content_type = str(content_type or "reel").strip().lower() or "reel"
+        effective_content_type = requested_content_type
+        normalization_applied = False
+        normalization_reason = None
+        normalized_media_paths = [str(path) for path in (media_paths or []) if path]
+        media_path = normalized_media_paths[0] if normalized_media_paths else None
+
+        if requested_content_type == "carrossel":
+            if len(normalized_media_paths) == 1:
+                effective_content_type = "imagem"
+                normalization_applied = True
+                normalization_reason = "single_media_carousel_downgrade"
+            elif len(normalized_media_paths) == 0:
+                normalization_reason = "carousel_without_media"
+
+        return {
+            "requested_content_type": requested_content_type,
+            "effective_content_type": effective_content_type,
+            "normalization_applied": normalization_applied,
+            "normalization_reason": normalization_reason,
+            "media_paths": normalized_media_paths,
+            "media_path": media_path,
+        }
+
     def _build_receipt(
         self,
         *,
@@ -198,13 +228,19 @@ class OfficialRuntime:
             or ""
         )
 
-        media_paths = self._extract_media_paths(media)
-        media_path = media_paths[0] if media_paths else None
+        contract = self._normalize_publish_contract(
+            content_type=content_type,
+            media_paths=self._extract_media_paths(media),
+        )
+        requested_content_type = contract["requested_content_type"]
+        effective_content_type = contract["effective_content_type"]
+        media_paths = contract["media_paths"]
+        media_path = contract["media_path"]
 
         publish_result: dict[str, Any] | None = None
 
         try:
-            if str(content_type).strip().lower() == "carrossel":
+            if effective_content_type == "carrossel":
                 publish_result = self.instagram.publish_carousel(
                     media_paths=media_paths,
                     caption=caption,
@@ -213,15 +249,19 @@ class OfficialRuntime:
                 publish_result = self.instagram.publish_single(
                     media_path=media_path,
                     caption=caption,
-                    content_type=content_type,
+                    content_type=effective_content_type,
                 )
 
-            publish_result = dict(publish_result or {})
+            publish_result = {
+                **contract,
+                **dict(publish_result or {}),
+            }
+
             receipt = self._build_receipt(
                 ok=bool(publish_result.get("ok")),
                 publish_status="published" if publish_result.get("ok") else "failed",
                 created_at=created_at,
-                content_type=content_type,
+                content_type=effective_content_type,
                 trend=normalized_trend,
                 style=style,
                 caption=caption,
@@ -254,12 +294,21 @@ class OfficialRuntime:
                 "memory": self.get_memory_summary(),
                 "last_publish_receipt": pipeline["publish_receipt"],
                 "instagram_readiness": self.instagram_readiness(),
+                "requested_content_type": requested_content_type,
+                "effective_content_type": effective_content_type,
+                "normalization_applied": contract["normalization_applied"],
+                "normalization_reason": contract["normalization_reason"],
             }
 
         except Exception as exc:
+            publish_result = {
+                **contract,
+                **dict(publish_result or {}),
+            }
+
             placeholder = build_placeholder_receipt(
                 created_at=created_at,
-                content_type=content_type,
+                content_type=effective_content_type,
                 trend=normalized_trend,
                 style=style,
                 caption=caption,
@@ -288,6 +337,10 @@ class OfficialRuntime:
                 "last_publish_receipt": saved_error,
                 "instagram_readiness": self.instagram_readiness(),
                 "fallback": placeholder.to_dict(),
+                "requested_content_type": requested_content_type,
+                "effective_content_type": effective_content_type,
+                "normalization_applied": contract["normalization_applied"],
+                "normalization_reason": contract["normalization_reason"],
             }
 
     def run(
