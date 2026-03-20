@@ -43,13 +43,21 @@ def save_instagram_auth(
     user_id: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    path = auth_path(config)
+    existing = _safe_read_json(path)
+    existing_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
+
+    merged_meta = dict(existing_meta)
+    if isinstance(meta, dict):
+        merged_meta.update(meta)
+
     payload = {
         "token": token or config.ig_token,
         "user_id": str(user_id or config.ig_id) if (user_id or config.ig_id) else None,
         "saved_at": datetime.now().isoformat(),
-        "meta": meta or {},
+        "meta": merged_meta,
     }
-    path = auth_path(config)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
@@ -135,8 +143,14 @@ def sync_instagram_token_sources(
             config,
             token=unified_token,
             user_id=unified_user_id,
-            meta={"source": "ace_sync_ig_token_sources"},
+            meta={
+                "source": token_source or "ace_sync_ig_token_sources",
+                "user_id_source": user_id_source,
+                "last_synced_at": datetime.now().isoformat(),
+            },
         )
+
+    meta = payload.get("meta") if isinstance(payload, dict) else (stored.get("meta") or {})
 
     return {
         "ok": True,
@@ -149,4 +163,6 @@ def sync_instagram_token_sources(
         "auth_path": str(auth_path(config)),
         "persisted": bool(payload),
         "saved_at": payload.get("saved_at") if isinstance(payload, dict) else stored.get("saved_at"),
+        "expires_at": meta.get("expires_at") if isinstance(meta, dict) else None,
+        "refreshed_at": meta.get("refreshed_at") if isinstance(meta, dict) else None,
     }
