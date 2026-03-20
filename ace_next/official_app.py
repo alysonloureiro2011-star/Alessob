@@ -69,7 +69,7 @@ def create_official_app() -> Flask:
             "message": "auth resetado"
         })
 
-    @app.post("/publish/test")
+    @app.get("/publish/test")
     def publish_test():
         return jsonify({
             "ok": True,
