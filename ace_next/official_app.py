@@ -72,3 +72,13 @@ def create_official_app() -> Flask:
     return app
 
 app = create_official_app()
+
+@app.get("/publish/test")
+def publish_test():
+    result = runtime.publish.last_publish()
+    return jsonify({
+        "ok": True,
+        "message": "publish test route ativa",
+        "data": result
+    })
+
