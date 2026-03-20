@@ -8,6 +8,11 @@ from flask import Flask, jsonify, request, send_from_directory
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
 from .official_runtime import OfficialRuntime
+from .token_upgrade import (
+    exchange_code_for_token_with_redirect,
+    exchange_instagram_long_lived_token,
+    upgrade_token_via_facebook_exchange,
+)
 
 
 def create_official_app() -> Flask:
@@ -69,10 +74,25 @@ def create_official_app() -> Flask:
                     "INSTAGRAM_TOKEN": bool(os.environ.get("INSTAGRAM_TOKEN")),
                     "IG_ID": os.environ.get("IG_ID"),
                     "IG_USER_ID": os.environ.get("IG_USER_ID"),
+                    "ACE_RENDER_API_KEY": bool(os.environ.get("ACE_RENDER_API_KEY")),
                 },
                 "runtime": runtime.snapshot(),
             }
         )
+
+    @app.get("/debug/token/refresh")
+    def debug_token_refresh() -> object:
+        force = str(request.args.get("force", "0")).strip().lower() in ("1", "true", "yes", "on")
+        result = runtime.ensure_fresh_instagram_token(force=force)
+        status = 200 if result.get("ok") else 400
+        return jsonify(
+            {
+                "ok": result.get("ok"),
+                "route": "/debug/token/refresh",
+                "force": force,
+                **result,
+            }
+        ), status
 
     @app.get("/debug/auth/reset")
     def debug_auth_reset() -> object:
@@ -88,6 +108,73 @@ def create_official_app() -> Flask:
 
         result = reset_instagram_auth(config)
         return jsonify(result)
+
+    @app.post("/instagram/token")
+    @app.get("/instagram/token")
+    def instagram_token_callback() -> object:
+        code = (request.values.get("code") or "").strip()
+        redirect_uri = (request.values.get("redirect_uri") or config.instagram_redirect_uri).strip()
+
+        if not code:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "code ausente",
+                    "redirect_uri": redirect_uri,
+                }
+            ), 400
+
+        result = exchange_code_for_token_with_redirect(
+            config,
+            code=code,
+            redirect_uri=redirect_uri,
+        )
+        runtime.sync_instagram_auth()
+        status = 200 if result.get("ok") else 400
+        return jsonify(
+            {
+                **result,
+                "route": "/instagram/token",
+                "redirect_uri": redirect_uri,
+                "runtime": runtime.snapshot(),
+            }
+        ), status
+
+    @app.get("/instagram/token/long_lived")
+    def instagram_token_long_lived() -> object:
+        runtime.sync_instagram_auth()
+        result = exchange_instagram_long_lived_token(
+            config,
+            current_token=config.ig_token or "",
+            current_user_id=config.ig_id,
+        )
+        runtime.sync_instagram_auth()
+        status = 200 if result.get("ok") else 400
+        return jsonify(
+            {
+                **result,
+                "route": "/instagram/token/long_lived",
+                "runtime": runtime.snapshot(),
+            }
+        ), status
+
+    @app.get("/token/upgrade")
+    def token_upgrade() -> object:
+        runtime.sync_instagram_auth()
+        result = upgrade_token_via_facebook_exchange(
+            config,
+            short_token=config.ig_token or "",
+            current_user_id=config.ig_id,
+        )
+        runtime.sync_instagram_auth()
+        status = 200 if result.get("ok") else 400
+        return jsonify(
+            {
+                **result,
+                "route": "/token/upgrade",
+                "runtime": runtime.snapshot(),
+            }
+        ), status
 
     @app.get("/publish/test")
     def publish_test() -> object:
