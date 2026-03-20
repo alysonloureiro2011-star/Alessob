@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
@@ -43,6 +43,7 @@ def create_official_app() -> Flask:
             {
                 "ok": True,
                 "runtime": runtime.snapshot(),
+                "last_publish": runtime.publish.last_publish(),
             }
         )
 
@@ -102,6 +103,10 @@ def create_official_app() -> Flask:
         )
 
         return jsonify(result)
+
+    @app.get("/media/<path:filename>")
+    def media_file(filename: str) -> object:
+        return send_from_directory(str(config.media_dir), filename)
 
     return app
 
