@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .auth_store import load_instagram_auth, sync_instagram_token_sources
 from .config import AceNextConfig
 from .legacy_bridge import get_legacy_memory_summary, run_legacy_pipeline
 from .official_instagram_publish import OfficialInstagramPublishService
@@ -23,6 +24,7 @@ class OfficialRuntimeState:
     last_runtime_error: str | None = None
     last_runtime_action_at: str | None = None
     last_pipeline_source: str | None = None
+    instagram_auth_loaded_at: str | None = None
 
 
 class OfficialRuntime:
@@ -35,6 +37,26 @@ class OfficialRuntime:
         self.publish = publish_service or PublishService(config)
         self.instagram = OfficialInstagramPublishService(config)
         self.state = OfficialRuntimeState()
+        self._load_instagram_auth_on_boot()
+
+    def _load_instagram_auth_on_boot(self) -> dict[str, Any]:
+        loaded = load_instagram_auth(self.config)
+        synced = sync_instagram_token_sources(
+            self.config,
+            runtime_token=loaded.get("token"),
+            runtime_user_id=(loaded.get("user_id") or loaded.get("ig_id")),
+        )
+        self.state.instagram_auth_loaded_at = datetime.now().isoformat()
+        return {"loaded": loaded, "synced": synced}
+
+    def sync_instagram_auth(self) -> dict[str, Any]:
+        synced = sync_instagram_token_sources(
+            self.config,
+            runtime_token=self.config.ig_token,
+            runtime_user_id=self.config.ig_id,
+        )
+        self.state.instagram_auth_loaded_at = datetime.now().isoformat()
+        return synced
 
     def instagram_readiness(self) -> dict[str, Any]:
         return self.instagram.readiness()
@@ -43,6 +65,7 @@ class OfficialRuntime:
         last_publish = self.publish.last_publish()
         data = asdict(self.state)
         data["render_url"] = self.config.render_url
+        data["auth_path"] = str(self.config.auth_path)
         data["real_publish_enabled"] = self.config.enable_real_publish
         data["token_present"] = bool(self.config.ig_token)
         data["ig_id_present"] = bool(self.config.ig_id)
