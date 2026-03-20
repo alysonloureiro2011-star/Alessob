@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
-from .auth_store import sync_instagram_token_sources
+from .auth_store import load_instagram_auth, sync_instagram_token_sources
 from .config import AceNextConfig
 from .publish import PublishService
+from .render_env_sync import persist_instagram_token_to_render
+from .token_upgrade import refresh_instagram_long_lived_token
 
 try:
     from PIL import Image, ImageDraw
@@ -15,20 +19,137 @@ except Exception:
     ImageDraw = None
 
 
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 class OfficialRuntime:
     def __init__(self, config: AceNextConfig):
         self.config = config
         self.publish = PublishService(config)
         self._boot_sync()
 
+    def _refresh_threshold_days(self) -> int:
+        try:
+            return int(os.environ.get("ACE_TOKEN_REFRESH_THRESHOLD_DAYS", "15"))
+        except Exception:
+            return 15
+
+    def _min_refresh_age_hours(self) -> int:
+        try:
+            return int(os.environ.get("ACE_TOKEN_MIN_REFRESH_AGE_HOURS", "24"))
+        except Exception:
+            return 24
+
+    def _assumed_ttl_days(self) -> int:
+        try:
+            return int(os.environ.get("ACE_TOKEN_ASSUMED_TTL_DAYS", "60"))
+        except Exception:
+            return 60
+
+    def _auth_state(self) -> dict[str, Any]:
+        stored = load_instagram_auth(self.config)
+        meta = stored.get("meta") if isinstance(stored.get("meta"), dict) else {}
+
+        saved_at = _parse_dt(stored.get("saved_at"))
+        expires_at = _parse_dt(meta.get("expires_at"))
+
+        if not expires_at and saved_at:
+            expires_at = saved_at + timedelta(days=self._assumed_ttl_days())
+
+        now = datetime.now(timezone.utc)
+        remaining_days = None
+        if expires_at:
+            remaining_days = (expires_at - now).total_seconds() / 86400
+
+        return {
+            "saved_at": saved_at.isoformat() if saved_at else None,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "remaining_days": remaining_days,
+            "refreshed_at": meta.get("refreshed_at"),
+            "source": meta.get("source"),
+        }
+
+    def _token_needs_refresh(self, force: bool = False) -> tuple[bool, str]:
+        if force:
+            return True, "forced"
+
+        if not self.config.ig_token or not self.config.ig_id:
+            return False, "missing_token_or_ig_id"
+
+        state = self._auth_state()
+        expires_at = _parse_dt(state.get("expires_at"))
+        saved_at = _parse_dt(state.get("saved_at"))
+        now = datetime.now(timezone.utc)
+
+        if saved_at:
+            age_hours = (now - saved_at).total_seconds() / 3600
+            if age_hours < self._min_refresh_age_hours():
+                return False, "token_too_young"
+
+        if not expires_at:
+            return False, "expiry_unknown"
+
+        remaining = expires_at - now
+        if remaining <= timedelta(days=self._refresh_threshold_days()):
+            return True, "refresh_threshold"
+        return False, "healthy"
+
+    def ensure_fresh_instagram_token(self, force: bool = False) -> dict[str, Any]:
+        self.sync_instagram_auth()
+
+        should_refresh, reason = self._token_needs_refresh(force=force)
+        if not should_refresh:
+            return {
+                "ok": True,
+                "attempted": False,
+                "reason": reason,
+                "token_state": self._auth_state(),
+            }
+
+        refresh = refresh_instagram_long_lived_token(
+            self.config,
+            current_token=self.config.ig_token or "",
+            current_user_id=self.config.ig_id,
+        )
+
+        render_sync = {"ok": False, "persisted": False, "skipped": True}
+        if refresh.get("ok"):
+            refreshed_token = refresh.get("token") or ((refresh.get("data") or {}).get("access_token"))
+            if refreshed_token:
+                render_sync = persist_instagram_token_to_render(
+                    token=str(refreshed_token),
+                    user_id=self.config.ig_id,
+                )
+            self.sync_instagram_auth()
+
+        return {
+            "ok": bool(refresh.get("ok")),
+            "attempted": True,
+            "reason": reason,
+            "refresh": refresh,
+            "render_env_sync": render_sync,
+            "token_state": self._auth_state(),
+        }
+
     def _boot_sync(self) -> None:
         sync_instagram_token_sources(self.config)
+        try:
+            self.ensure_fresh_instagram_token(force=False)
+        except Exception:
+            pass
 
     def sync_instagram_auth(self) -> dict:
         return sync_instagram_token_sources(self.config)
 
     def snapshot(self) -> dict:
         sync = self.sync_instagram_auth()
+        token_state = self._auth_state()
         return {
             "timestamp": datetime.now().isoformat(),
             "token_present": bool(self.config.ig_token),
@@ -38,6 +159,10 @@ class OfficialRuntime:
             "user_id_source": sync.get("user_id_source"),
             "auth_path": sync.get("auth_path"),
             "enable_real_publish": self.config.enable_real_publish,
+            "token_expires_at": token_state.get("expires_at"),
+            "token_remaining_days": token_state.get("remaining_days"),
+            "token_meta_source": token_state.get("source"),
+            "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
         }
 
     def _build_test_image(self, trend: str) -> str:
@@ -77,6 +202,8 @@ class OfficialRuntime:
         content_type = "image"
         caption = f"ACE Ω NEXT | {trend}"
 
+        refresh_result = self.ensure_fresh_instagram_token(force=False)
+
         media_path = None
         if not force_placeholder:
             media_path = self._build_test_image(trend)
@@ -105,6 +232,7 @@ class OfficialRuntime:
             "mode": mode,
             "force_placeholder": force_placeholder,
             "trend": trend,
+            "token_refresh": refresh_result,
             "runtime": self.snapshot(),
             "publish_result": publish_result,
             "last_publish": self.publish.last_publish(),
