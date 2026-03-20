@@ -108,16 +108,16 @@ def _coerce_json_payload(response):
 
 
 def apply_runtime_patch(app):
-    if app.config.get("ACE_RUNTIME_PATCH_V3_LOADED"):
+    if app.config.get("ACE_RUNTIME_PATCH_V4_LOADED"):
         return
 
-    app.config["ACE_RUNTIME_PATCH_V3_LOADED"] = True
+    app.config["ACE_RUNTIME_PATCH_V4_LOADED"] = True
 
     bridge_state = {
         "loaded": False,
         "runtime_available": False,
         "error": None,
-        "routes": ["/ext/runtime", "/ext/publish/last", "/ext/test/publish"],
+        "routes": ["/", "/health", "/ext/runtime", "/ext/publish/last", "/ext/test/publish"],
     }
     app.config["ACE_NEXT_BRIDGE_STATE"] = bridge_state
 
@@ -234,6 +234,17 @@ def apply_runtime_patch(app):
         )
         return endpoint
 
+    def home_view():
+        readiness = _legacy_readiness()
+        return jsonify(
+            {
+                "status": "ACE Ω SUPREME",
+                "online": True,
+                "timestamp": datetime.utcnow().isoformat(),
+                "instagram_connected": readiness.get("instagram_connected", False),
+            }
+        )
+
     def health_view():
         readiness = _legacy_readiness()
         publish_payload = _last_publish_payload()
@@ -347,14 +358,15 @@ def apply_runtime_patch(app):
             }
         )
 
-    _bind_get_route("/health", "ace_runtime_patch_health_v3", health_view)
+    _bind_get_route("/", "home", home_view)
+    _bind_get_route("/health", "ace_runtime_patch_health_v4", health_view)
     _bind_get_route("/ext/runtime", "ace_ext_runtime_v1", ace_next_bridge_runtime_view)
     _bind_get_route("/ext/publish/last", "ace_last_publish_v1", ace_next_bridge_last_publish_view)
     _bind_get_route("/ext/test/publish", "ace_ext_test_publish_v2", ace_next_bridge_test_publish_view)
 
     _safe_log(
         "INFO",
-        "ace_runtime_patch_v3_loaded",
+        "ace_runtime_patch_v4_loaded",
         {
             "routes": bridge_state["routes"],
             "runtime_available": bridge_state["runtime_available"],
