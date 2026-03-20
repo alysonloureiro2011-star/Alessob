@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from .config import AceNextConfig
 
 try:
@@ -39,6 +41,26 @@ class PublishReceipt:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
+    created_at = kwargs.get("created_at") or datetime.utcnow().isoformat()
+    return PublishReceipt(
+        ok=bool(kwargs.get("ok", False)),
+        publish_status=kwargs.get("publish_status") or "placeholder",
+        created_at=created_at,
+        content_type=kwargs.get("content_type"),
+        trend=kwargs.get("trend"),
+        style=kwargs.get("style"),
+        caption=kwargs.get("caption"),
+        media_path=kwargs.get("media_path"),
+        media_url=kwargs.get("media_url"),
+        raw_publish_result=kwargs.get("raw_publish_result"),
+        error=kwargs.get("error") or "publish_placeholder_fallback",
+        creation_id=kwargs.get("creation_id"),
+        media_id=kwargs.get("media_id"),
+        permalink=kwargs.get("permalink"),
+    )
 
 
 class PublishService:
@@ -127,6 +149,89 @@ class PublishService:
             "last_episode": None,
         }
 
+    def _graph_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: int = 60,
+    ) -> dict[str, Any]:
+        token = self.config.ig_token
+        if not token:
+            return {"ok": False, "error": "IG_TOKEN ausente"}
+
+        url = f"{self.config.graph_base_url.rstrip('/')}/{path.lstrip('/')}"
+        payload = dict(data or {})
+        query = dict(params or {})
+
+        if method.upper() == "POST":
+            payload["access_token"] = token
+        else:
+            query["access_token"] = token
+
+        try:
+            if method.upper() == "POST":
+                response = requests.post(url, data=payload, timeout=timeout)
+            else:
+                response = requests.get(url, params=query, timeout=timeout)
+
+            try:
+                body = response.json()
+            except Exception:
+                body = {"raw": response.text[:4000]}
+
+            if response.status_code >= 400:
+                return {
+                    "ok": False,
+                    "status_code": response.status_code,
+                    "error": body,
+                    "url": url,
+                }
+
+            return {
+                "ok": True,
+                "status_code": response.status_code,
+                "data": body,
+                "url": url,
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "url": url}
+
+    def _build_error_receipt(
+        self,
+        *,
+        content_type: str,
+        trend: str,
+        style: str,
+        caption: str,
+        media_path: str | None,
+        media_url: str | None,
+        error: str,
+        raw_publish_result: dict[str, Any] | None = None,
+        creation_id: str | None = None,
+        media_id: str | None = None,
+        permalink: str | None = None,
+    ) -> dict[str, Any]:
+        receipt = PublishReceipt(
+            ok=False,
+            publish_status="error",
+            created_at=datetime.now().isoformat(),
+            content_type=content_type,
+            trend=trend,
+            style=style,
+            caption=caption,
+            media_path=media_path,
+            media_url=media_url,
+            raw_publish_result=raw_publish_result,
+            error=error,
+            creation_id=creation_id,
+            media_id=media_id,
+            permalink=permalink,
+        )
+        return self.save_error(receipt)
+
     def publish_placeholder(
         self,
         *,
@@ -154,22 +259,130 @@ class PublishService:
         self.save_error(receipt)
         return saved
 
+    def publish_real(
+        self,
+        *,
+        trend: str,
+        style: str,
+        content_type: str,
+        caption: str,
+        media_path: str | None,
+    ) -> dict[str, Any]:
+        ig_id = self.config.ig_id
+        if not self.config.enable_real_publish:
+            return self.publish_placeholder(
+                trend=trend,
+                style=style,
+                content_type=content_type,
+                caption=caption,
+                media_path=media_path,
+            )
 
-def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
-    created_at = kwargs.get("created_at") or datetime.utcnow().isoformat()
-    return PublishReceipt(
-        ok=bool(kwargs.get("ok", False)),
-        publish_status=kwargs.get("publish_status") or "placeholder",
-        created_at=created_at,
-        content_type=kwargs.get("content_type"),
-        trend=kwargs.get("trend"),
-        style=kwargs.get("style"),
-        caption=kwargs.get("caption"),
-        media_path=kwargs.get("media_path"),
-        media_url=kwargs.get("media_url"),
-        raw_publish_result=kwargs.get("raw_publish_result"),
-        error=kwargs.get("error") or "publish_placeholder_fallback",
-        creation_id=kwargs.get("creation_id"),
-        media_id=kwargs.get("media_id"),
-        permalink=kwargs.get("permalink"),
-    )
+        if not ig_id:
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=self.build_media_url(media_path),
+                error="IG_ID ausente",
+            )
+
+        media_url = self.build_media_url(media_path)
+        if not media_url:
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=None,
+                error="media_url_indisponivel",
+            )
+
+        container = self._graph_request(
+            "POST",
+            f"{ig_id}/media",
+            data={
+                "image_url": media_url,
+                "caption": caption[:2200],
+            },
+        )
+        if not container.get("ok"):
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=media_url,
+                error="container_fail",
+                raw_publish_result={"container": container},
+            )
+
+        creation_id = ((container.get("data") or {}).get("id"))
+        if not creation_id:
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=media_url,
+                error="creation_id_ausente",
+                raw_publish_result={"container": container},
+            )
+
+        published = self._graph_request(
+            "POST",
+            f"{ig_id}/media_publish",
+            data={"creation_id": creation_id},
+        )
+        if not published.get("ok"):
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=media_url,
+                error="publish_fail",
+                raw_publish_result={"container": container, "published": published},
+                creation_id=creation_id,
+            )
+
+        media_id = ((published.get("data") or {}).get("id"))
+        permalink = None
+        info = None
+
+        if media_id:
+            info = self._graph_request(
+                "GET",
+                str(media_id),
+                params={"fields": "id,permalink"},
+            )
+            if info.get("ok"):
+                permalink = ((info.get("data") or {}).get("permalink"))
+
+        receipt = PublishReceipt(
+            ok=True,
+            publish_status="published",
+            created_at=datetime.now().isoformat(),
+            content_type=content_type,
+            trend=trend,
+            style=style,
+            caption=caption,
+            media_path=media_path,
+            media_url=media_url,
+            raw_publish_result={
+                "container": container,
+                "published": published,
+                "info": info,
+            },
+            error=None,
+            creation_id=creation_id,
+            media_id=media_id,
+            permalink=permalink,
+        )
+        return self.save_receipt(receipt)
