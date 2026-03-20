@@ -8948,3 +8948,222 @@ if "ACE_PUBLISH_RELEASE_GATE_V1_LOADED" not in globals():
 
 from ace_runtime_patch import apply_runtime_patch
 apply_runtime_patch(app)
+
+# ==========================================================
+# ACE Ω — RUNTIME OBSERVABILITY PATCH (SAFE ADDITIVE)
+# NÃO REMOVE NADA EXISTENTE
+# ==========================================================
+
+import os
+from datetime import datetime
+from flask import jsonify
+
+def _ace_runtime_meta():
+    return {
+        "runtime_release": os.getenv("ACE_RUNTIME_RELEASE", "unknown"),
+        "runtime_commit": os.getenv("ACE_RUNTIME_COMMIT", "unknown"),
+        "runtime_build": os.getenv("ACE_RUNTIME_BUILD", "unknown"),
+    }
+
+def _ace_publish_meta():
+    try:
+        # tentativa defensiva de capturar memória
+        if "last_publish_receipt" in globals():
+            receipt = globals().get("last_publish_receipt")
+        else:
+            receipt = None
+
+        if "last_publish_error" in globals():
+            error = globals().get("last_publish_error")
+        else:
+            error = None
+
+        return {
+            "last_publish_receipt": receipt,
+            "last_publish_error": error,
+        }
+    except Exception:
+        return {
+            "last_publish_receipt": None,
+            "last_publish_error": None,
+        }
+
+# ===============================
+# ROTA /health
+# ===============================
+
+@app.route("/health", methods=["GET"])
+def ace_health():
+
+    runtime = _ace_runtime_meta()
+    publish = _ace_publish_meta()
+
+    instagram_connected = False
+    token_present = False
+    ig_id_present = False
+
+    try:
+        if "INSTAGRAM_CONNECTED" in globals():
+            instagram_connected = bool(globals().get("INSTAGRAM_CONNECTED"))
+
+        if "IG_ACCESS_TOKEN" in os.environ:
+            token_present = True
+
+        if "IG_ID" in os.environ:
+            ig_id_present = True
+
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "app": "ACE Ω SUPREME",
+        "online": True,
+        "timestamp": datetime.utcnow().isoformat(),
+        **runtime,
+        **publish,
+        "instagram_connected": instagram_connected,
+        "token_present": token_present,
+        "ig_id_present": ig_id_present,
+        "real_publish_enabled": os.getenv("REAL_PUBLISH_ENABLED", "false"),
+    })
+
+
+# ===============================
+# PATCH ADITIVO NO /status
+# ===============================
+
+try:
+    original_status = app.view_functions.get("status")
+
+    if original_status:
+
+        def wrapped_status():
+            base = original_status()
+            try:
+                if hasattr(base, "json"):
+                    data = base.json
+                else:
+                    data = base.get_json()
+            except Exception:
+                return base
+
+            runtime = _ace_runtime_meta()
+            publish = _ace_publish_meta()
+
+            data.update(runtime)
+            data.update(publish)
+
+            return jsonify(data)
+
+        app.view_functions["status"] = wrapped_status
+
+except Exception:
+    pass
+
+# ==========================================================
+# FIM DO PATCH
+# ==========================================================
+
+
+# ==========================================================
+# ACE Ω RUNTIME STABILITY PATCH — SAFE MODE FOR RENDER
+# ==========================================================
+
+ACE_RUNTIME_LIGHT = str(os.getenv("ACE_RUNTIME_LIGHT", "1")).strip().lower() in ("1", "true", "yes")
+
+def ace_safe_thread_start(target_func):
+    if ACE_RUNTIME_LIGHT:
+        log("INFO", "runtime_light_mode", f"Thread {target_func.__name__} blocked")
+        return
+    try:
+        threading.Thread(target=target_func, daemon=True).start()
+    except Exception as e:
+        log("WARN", "thread_start_fail", str(e))
+
+
+# Override automático para impedir thread no import
+try:
+    # Cancela analytics automático
+    if "ace_analytics_supervisor_loop" in globals():
+        log("INFO", "analytics_thread_override_active", True)
+except Exception:
+    pass
+
+
+# Reconfigura boot para modo seguro
+_original_boot = boot
+
+def boot():
+    global _BOOT_STARTED
+    if _BOOT_STARTED:
+        return
+
+    _BOOT_STARTED = True
+    log("INFO", "boot_safe_start", "Inicializando ACE em modo controlado")
+
+    ace_safe_thread_start(queue_executor_loop)
+    ace_safe_thread_start(supervisor_loop)
+
+    if not ACE_SKIP_BOOT_FORCE:
+        try:
+            smart_force_action()
+        except Exception as e:
+            log("WARN", "boot_smart_force_fail", str(e))
+
+    log("INFO", "boot_safe_ok", "Boot controlado concluído")
+    
+# ==========================================================
+# ACE Ω — FORCE REAL PUBLISH ENDPOINT (CRÍTICO)
+# ==========================================================
+
+@app.route("/force_publish", methods=["GET"])
+def ace_force_publish():
+
+    if not ACE_ENABLE_REAL_PUBLISH:
+        return jsonify({
+            "ok": False,
+            "error": "real_publish_disabled"
+        })
+
+    try:
+        log("INFO", "force_publish_start", "Iniciando publicação manual")
+
+        # 1. Gerar conteúdo
+        trend = capturar_trend_brasil()
+        content = ace_video_creative_core()
+
+        media_path = content.get("media_path")
+
+        if not media_path:
+            return jsonify({
+                "ok": False,
+                "error": "media_not_generated"
+            })
+
+        # 2. Publicar
+        result = safe_call(ace_publish_media_container, media_path)
+
+        result = normalize_publish_result(result)
+
+        # 3. Persistir receipt
+        if result.get("ok"):
+            try:
+                _store_publish_receipt(result)
+            except Exception as e:
+                log("WARN", "receipt_store_fail", str(e))
+
+        # 4. Resposta final
+        return jsonify({
+            "ok": result.get("ok"),
+            "publish_result": result,
+            "trend": trend,
+            "media": media_path
+        })
+
+    except Exception as e:
+        log("ERROR", "force_publish_fail", str(e))
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        })
