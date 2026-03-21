@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import textwrap
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -12,13 +10,14 @@ from .creative_planner import build_creative_plan
 from .publish import PublishService
 from .render_env_sync import persist_instagram_token_to_render
 from .token_upgrade import refresh_instagram_long_lived_token
-
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except Exception:
-    Image = None
-    ImageDraw = None
-    ImageFont = None
+from .visual_foundation_pack import (
+    build_carousel_sequence,
+    build_stories_sequence,
+    build_typography_spec,
+    build_visual_identity,
+    evaluate_visual_quality,
+    render_visual_foundation_card,
+)
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -167,85 +166,6 @@ class OfficialRuntime:
             "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
         }
 
-    def _load_font(self, size: int, bold: bool = False):
-        if ImageFont is None:
-            return None
-        candidates = [
-            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ]
-        for path in candidates:
-            try:
-                return ImageFont.truetype(path, size=size)
-            except Exception:
-                continue
-        try:
-            return ImageFont.load_default()
-        except Exception:
-            return None
-
-    def _draw_wrapped(self, draw, text: str, *, x: int, y: int, width: int, font, fill):
-        lines = textwrap.wrap(text or "", width=width) or [""]
-        line_height = getattr(font, "size", 22) + 14 if font else 28
-        current_y = y
-        for line in lines:
-            draw.text((x, current_y), line, fill=fill, font=font)
-            current_y += line_height
-        return current_y
-
-    def _build_test_image(self, *, headline: str, body: str, cta: str) -> str:
-        self.config.media_dir.mkdir(parents=True, exist_ok=True)
-        out = self.config.media_dir / f"ace_next_{uuid.uuid4().hex}.png"
-
-        if Image is None or ImageDraw is None:
-            out.write_bytes(
-                bytes.fromhex(
-                    "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C63F8FFFFFF7F0009FB03FD2A86E38A0000000049454E44AE426082"
-                )
-            )
-            return str(out)
-
-        img = Image.new("RGB", (1080, 1350), (245, 244, 240))
-        draw = ImageDraw.Draw(img)
-
-        title_font = self._load_font(78, bold=True)
-        body_font = self._load_font(42, bold=False)
-        small_font = self._load_font(30, bold=False)
-        brand_font = self._load_font(28, bold=True)
-
-        draw.rectangle((0, 0, 1080, 220), fill=(18, 18, 22))
-        draw.text((70, 78), "ACE Ω NEXT", fill=(255, 255, 255), font=brand_font)
-        draw.text((850, 78), "@ace_next", fill=(180, 180, 188), font=small_font)
-
-        draw.rounded_rectangle((55, 265, 1025, 1145), radius=34, fill=(255, 255, 255))
-        draw.rectangle((82, 320, 98, 540), fill=(26, 92, 255))
-
-        y = self._draw_wrapped(
-            draw,
-            headline,
-            x=130,
-            y=335,
-            width=20,
-            font=title_font,
-            fill=(20, 20, 20),
-        )
-
-        y = self._draw_wrapped(
-            draw,
-            body,
-            x=130,
-            y=y + 45,
-            width=32,
-            font=body_font,
-            fill=(55, 55, 60),
-        )
-
-        draw.text((130, 1060), cta, fill=(26, 92, 255), font=small_font)
-        draw.text((130, 1110), "publicação de teste editorial", fill=(115, 115, 122), font=small_font)
-
-        img.save(out)
-        return str(out)
-
     def run(
         self,
         *,
@@ -254,36 +174,61 @@ class OfficialRuntime:
     ) -> dict:
         trend = (trend or "teste real").strip()
         plan = build_creative_plan(trend)
+        plan_dict = plan.to_dict()
 
-        style = plan.publish_style
-        content_type = plan.publish_format_now
-        caption = plan.caption
+        visual_identity = build_visual_identity(plan_dict)
+        typography = build_typography_spec(plan_dict)
+        visual_qa = evaluate_visual_quality(
+            plan=plan_dict,
+            identity=visual_identity,
+            typography=typography,
+        )
+        carousel_preview = build_carousel_sequence(plan_dict)
+        stories_preview = build_stories_sequence(plan_dict)
 
         refresh_result = self.ensure_fresh_instagram_token(force=False)
 
+        if not visual_qa.approved and not force_placeholder:
+            return {
+                "ok": True,
+                "mode": "blocked",
+                "trend": trend,
+                "creative_plan": plan_dict,
+                "visual_identity": visual_identity.to_dict(),
+                "typography": typography.to_dict(),
+                "visual_qa": visual_qa.to_dict(),
+                "carousel_preview": carousel_preview,
+                "stories_preview": stories_preview,
+                "token_refresh": refresh_result,
+                "runtime": self.snapshot(),
+                "publish_result": None,
+                "last_publish": self.publish.last_publish(),
+            }
+
         media_path = None
         if not force_placeholder:
-            media_path = self._build_test_image(
-                headline=plan.headline,
-                body=plan.body,
-                cta=plan.cta,
+            media_path = render_visual_foundation_card(
+                config=self.config,
+                plan=plan_dict,
+                identity=visual_identity,
+                typography=typography,
             )
 
         if force_placeholder:
             publish_result = self.publish.publish_placeholder(
                 trend=trend,
-                style=style,
-                content_type=content_type,
-                caption=caption,
+                style=str(plan.publish_style),
+                content_type=str(plan.publish_format_now),
+                caption=str(plan.caption),
                 media_path=media_path,
             )
             mode = "placeholder"
         else:
             publish_result = self.publish.publish_real(
                 trend=trend,
-                style=style,
-                content_type=content_type,
-                caption=caption,
+                style=str(plan.publish_style),
+                content_type=str(plan.publish_format_now),
+                caption=str(plan.caption),
                 media_path=media_path,
             )
             mode = "real" if publish_result.get("ok") else "error"
@@ -291,9 +236,13 @@ class OfficialRuntime:
         return {
             "ok": True,
             "mode": mode,
-            "force_placeholder": force_placeholder,
             "trend": trend,
-            "creative_plan": plan.to_dict(),
+            "creative_plan": plan_dict,
+            "visual_identity": visual_identity.to_dict(),
+            "typography": typography.to_dict(),
+            "visual_qa": visual_qa.to_dict(),
+            "carousel_preview": carousel_preview,
+            "stories_preview": stories_preview,
             "token_refresh": refresh_result,
             "runtime": self.snapshot(),
             "publish_result": publish_result,
