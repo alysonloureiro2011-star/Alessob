@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, g
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
@@ -17,12 +17,24 @@ from .token_upgrade import (
 
 def create_official_app() -> Flask:
     config = load_config()
-    runtime = OfficialRuntime(config)
     app = Flask(__name__)
+
+    runtime_holder: dict[str, OfficialRuntime] = {}
+
+    def get_runtime() -> OfficialRuntime:
+        runtime = runtime_holder.get("runtime")
+        if runtime is None:
+            runtime = OfficialRuntime(config)
+            runtime_holder["runtime"] = runtime
+        return runtime
 
     @app.before_request
     def before_request_sync_ig_token() -> None:
-        runtime.sync_instagram_auth()
+        if request.path == "/health":
+            return
+        runtime = runtime_holder.get("runtime")
+        if runtime is not None:
+            runtime.sync_instagram_auth()
 
     @app.get("/")
     def home() -> object:
@@ -38,12 +50,14 @@ def create_official_app() -> Flask:
         return jsonify(
             {
                 "ok": True,
-                "runtime": runtime.snapshot(),
+                "app": "ace_next",
+                "timestamp": datetime.now().isoformat(),
             }
         )
 
     @app.get("/status")
     def status() -> object:
+        runtime = get_runtime()
         return jsonify(
             {
                 "ok": True,
@@ -54,6 +68,7 @@ def create_official_app() -> Flask:
 
     @app.get("/debug/token/source")
     def debug_token_source() -> object:
+        runtime = get_runtime()
         sync = runtime.sync_instagram_auth()
         return jsonify(
             {
@@ -82,6 +97,7 @@ def create_official_app() -> Flask:
 
     @app.get("/debug/token/refresh")
     def debug_token_refresh() -> object:
+        runtime = get_runtime()
         force = str(request.args.get("force", "0")).strip().lower() in ("1", "true", "yes", "on")
         result = runtime.ensure_fresh_instagram_token(force=force)
         status = 200 if result.get("ok") else 400
@@ -112,6 +128,7 @@ def create_official_app() -> Flask:
     @app.post("/instagram/token")
     @app.get("/instagram/token")
     def instagram_token_callback() -> object:
+        runtime = get_runtime()
         code = (request.values.get("code") or "").strip()
         redirect_uri = (request.values.get("redirect_uri") or config.instagram_redirect_uri).strip()
 
@@ -142,6 +159,7 @@ def create_official_app() -> Flask:
 
     @app.get("/instagram/token/long_lived")
     def instagram_token_long_lived() -> object:
+        runtime = get_runtime()
         runtime.sync_instagram_auth()
         result = exchange_instagram_long_lived_token(
             config,
@@ -160,6 +178,7 @@ def create_official_app() -> Flask:
 
     @app.get("/token/upgrade")
     def token_upgrade() -> object:
+        runtime = get_runtime()
         runtime.sync_instagram_auth()
         result = upgrade_token_via_facebook_exchange(
             config,
@@ -178,6 +197,7 @@ def create_official_app() -> Flask:
 
     @app.get("/publish/test")
     def publish_test() -> object:
+        runtime = get_runtime()
         trend = (request.args.get("trend") or "teste real").strip()
         force_placeholder = (
             str(request.args.get("placeholder", "0")).strip().lower()
