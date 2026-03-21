@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -199,6 +200,60 @@ class PublishService:
         except Exception as exc:
             return {"ok": False, "error": str(exc), "url": url}
 
+    def _is_media_not_ready(self, result: dict[str, Any]) -> bool:
+        error = (((result or {}).get("error") or {}).get("error") or {})
+        code = error.get("code")
+        subcode = error.get("error_subcode")
+        message = str(error.get("message") or "").lower()
+        user_message = str(error.get("error_user_msg") or "").lower()
+
+        if code == 9007 and subcode == 2207027:
+            return True
+
+        combined = f"{message} {user_message}"
+        return "media id is not available" in combined or "mídia não está pronta" in combined or "media is not ready" in combined
+
+    def _publish_with_retry(
+        self,
+        *,
+        ig_id: str,
+        creation_id: str,
+        attempts: int = 6,
+        waits: tuple[int, ...] = (3, 5, 8, 12, 15, 20),
+    ) -> dict[str, Any]:
+        last_result: dict[str, Any] | None = None
+
+        for idx in range(attempts):
+            published = self._graph_request(
+                "POST",
+                f"{ig_id}/media_publish",
+                data={"creation_id": creation_id},
+            )
+            last_result = published
+
+            if published.get("ok"):
+                return {
+                    **published,
+                    "retry_attempts": idx + 1,
+                    "retry_waits": list(waits[:idx]),
+                }
+
+            if not self._is_media_not_ready(published):
+                return {
+                    **published,
+                    "retry_attempts": idx + 1,
+                    "retry_waits": list(waits[:idx]),
+                }
+
+            if idx < len(waits):
+                time.sleep(waits[idx])
+
+        return {
+            **(last_result or {"ok": False, "error": "publish_retry_exhausted"}),
+            "retry_attempts": attempts,
+            "retry_waits": list(waits),
+        }
+
     def _build_error_receipt(
         self,
         *,
@@ -334,10 +389,9 @@ class PublishService:
                 raw_publish_result={"container": container},
             )
 
-        published = self._graph_request(
-            "POST",
-            f"{ig_id}/media_publish",
-            data={"creation_id": creation_id},
+        published = self._publish_with_retry(
+            ig_id=str(ig_id),
+            creation_id=str(creation_id),
         )
         if not published.get("ok"):
             return self._build_error_receipt(
