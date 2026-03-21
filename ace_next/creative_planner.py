@@ -7,19 +7,20 @@ from typing import Any
 STOPWORDS = {
     "a", "o", "e", "de", "da", "do", "das", "dos", "em", "na", "no", "nas", "nos",
     "para", "por", "com", "sem", "um", "uma", "uns", "umas", "que", "é", "se",
-    "ao", "aos", "às", "as", "os", "mais", "menos", "sobre", "como", "real", "teste"
+    "ao", "aos", "às", "as", "os", "mais", "menos", "sobre", "como",
 }
+
+WEAK_INPUTS = {"teste", "teste real", "test", "oi", "hello", "aaa", "123"}
 
 
 def _clean_text(value: str) -> str:
     value = (value or "").strip()
-    value = re.sub(r"\s+", " ", value)
-    return value
+    return re.sub(r"\s+", " ", value)
 
 
 def _topic_seed(trend: str) -> str:
     value = _clean_text(trend).lower()
-    if not value or value in {"teste", "teste real", "test"}:
+    if not value or value in WEAK_INPUTS:
         return "clareza, disciplina e direção"
     return value
 
@@ -34,11 +35,7 @@ def _keywords(topic: str) -> list[str]:
             continue
         if word not in unique:
             unique.append(word)
-    return unique[:6]
-
-
-def _title_case(value: str) -> str:
-    return " ".join(part.capitalize() for part in _clean_text(value).split())
+    return unique[:8]
 
 
 def _hashtags(keywords: list[str]) -> list[str]:
@@ -57,10 +54,19 @@ def _hashtags(keywords: list[str]) -> list[str]:
     return tags[:8]
 
 
+def _choose_color_profile(keywords: list[str]) -> str:
+    if any(word in {"clareza", "foco", "disciplina", "direção"} for word in keywords):
+        return "electric_blue"
+    if any(word in {"crescimento", "resultado", "execução"} for word in keywords):
+        return "amber_gold"
+    return "editorial_violet"
+
+
 @dataclass
 class CreativePlan:
     trend_input: str
     topic_seed: str
+    series_name: str
     objective: str
     strategic_target_format: str
     publish_format_now: str
@@ -68,11 +74,13 @@ class CreativePlan:
     hook: str
     headline: str
     body: str
+    support_points: list[str]
     caption: str
     first_comment: str
     hashtags: list[str]
     cta: str
     visual_style: str
+    color_profile: str
     publish_style: str
     quality_score: int
     notes: list[str]
@@ -82,53 +90,70 @@ class CreativePlan:
 
 
 def build_creative_plan(trend: str) -> CreativePlan:
-    topic = _topic_seed(trend)
-    words = _keywords(topic)
-    primary = words[0] if words else "clareza"
-    secondary = words[1] if len(words) > 1 else "direção"
+    clean_input = _clean_text(trend)
+    topic = _topic_seed(clean_input)
+    keywords = _keywords(topic)
 
-    headline = _title_case(f"{primary} muda o resultado")
+    primary = keywords[0] if keywords else "clareza"
+    secondary = keywords[1] if len(keywords) > 1 else "disciplina"
+    tertiary = keywords[2] if len(keywords) > 2 else "direção"
+
     hook = f"O que trava o resultado quase sempre não é esforço. É {primary} sem {secondary}."
+    headline = f"Sem {primary}, esforço vira ruído."
     body = (
-        f"Quando existe {primary}, a decisão fica mais limpa. "
+        f"Quando existe {primary}, a decisão ganha nitidez. "
         f"Quando existe {secondary}, o movimento deixa de ser aleatório."
     )
     angle = (
-        f"Tratar {topic} como direção e não como impulso. "
+        f"Troque impulso por {tertiary}. "
         f"Menos volume, mais clareza, repetição e consistência."
     )
+
+    support_points = [
+        f"{primary.capitalize()} reduz desperdício.",
+        f"{secondary.capitalize()} sustenta execução.",
+        f"{tertiary.capitalize()} organiza prioridade.",
+    ]
+
+    hashtags = _hashtags(keywords)
     cta = "Salve este insight e envie para quem precisa disso hoje."
-    tags = _hashtags(words)
 
     caption = (
         f"{hook}\n\n"
+        f"{body}\n\n"
         f"{angle}\n\n"
         f"{cta}\n\n"
-        f"{' '.join(tags[:5])}"
+        f"{' '.join(hashtags[:5])}"
     )
 
-    first_comment = " ".join(tags)
+    first_comment = " ".join(hashtags)
+
+    weak_input = clean_input.lower() in WEAK_INPUTS
+    quality_score = 58 if weak_input else 76
 
     return CreativePlan(
-        trend_input=_clean_text(trend),
+        trend_input=clean_input,
         topic_seed=topic,
-        objective="publicar peça simples, mais legível e com valor editorial mínimo",
+        series_name="Liberta a Verdade",
+        objective="tirar o card de teste do placeholder visual e elevar valor percebido",
         strategic_target_format="reel_premium",
         publish_format_now="image",
         angle=angle,
         hook=hook,
         headline=headline,
         body=body,
+        support_points=support_points,
         caption=caption,
         first_comment=first_comment,
-        hashtags=tags,
+        hashtags=hashtags,
         cta=cta,
-        visual_style="clean_high_contrast_editorial_card",
-        publish_style="official_next_editorial_v1",
-        quality_score=62,
+        visual_style="visual_foundation_pack_v1",
+        color_profile=_choose_color_profile(keywords),
+        publish_style="official_next_visual_foundation_v1",
+        quality_score=quality_score,
         notes=[
+            "bloco visual foundation pack v1 ativo",
             "formato estratégico alvo = reel premium",
             "formato operacional atual = imagem única",
-            "planner heurístico para reduzir post cru de teste",
         ],
     )
