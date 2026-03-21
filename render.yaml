@@ -4,6 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn ace_bot:app"
+    startCommand: "gunicorn ace_next.official_app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2"
+    healthCheckPath: "/health"
     autoDeploy: true
     branch: main
