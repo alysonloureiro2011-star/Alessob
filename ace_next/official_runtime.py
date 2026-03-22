@@ -24,8 +24,6 @@ from .visual_templates import resolve_visual_template
 
 AUTH_STACK_IMPORT_ERROR: str | None = None
 LEARNING_STACK_IMPORT_ERROR: str | None = None
-RUNTIME_BUILD_MARKER = "ace_runtime_forensic_v1"
-RUNTIME_BUILD_COMMIT_HINT = "post-wave3-audit"
 
 try:
     from .rubric_engine import evaluate_rubric_engine
@@ -41,11 +39,15 @@ try:
     from .performance_store import PerformanceStore
     from .learning_loop import build_learning_loop_summary
     from .post_performance_contract import build_post_performance_contract
+    from .performance_ingest import collect_real_performance_metrics
+    from .reflection_memory import build_reflection_memory
 except Exception as exc:
     LEARNING_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
     PerformanceStore = None
     build_learning_loop_summary = None
     build_post_performance_contract = None
+    collect_real_performance_metrics = None
+    build_reflection_memory = None
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -196,8 +198,6 @@ class OfficialRuntime:
         token_state = self._auth_state()
         return {
             "timestamp": datetime.now().isoformat(),
-            "runtime_build_marker": RUNTIME_BUILD_MARKER,
-            "runtime_build_commit_hint": RUNTIME_BUILD_COMMIT_HINT,
             "token_present": bool(self.config.ig_token),
             "ig_id_present": bool(self.config.ig_id),
             "render_url": self.config.render_url,
@@ -318,10 +318,34 @@ class OfficialRuntime:
                 reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
             )
 
-    def _learning_fallback(self, *, reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _learning_fallback(self, *, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         post_performance_contract = {
             "ok": False,
             "error": reason,
+        }
+        performance_ingest = {
+            "ok": False,
+            "attempted": False,
+            "source_status": "collection_error",
+            "real_metrics": {
+                "source_status": "collection_error",
+                "source_reason": reason,
+                "errors": [reason],
+            },
+            "errors": [reason],
+            "raw": {},
+        }
+        reflection_memory = {
+            "ok": False,
+            "status": "collection_error",
+            "notes": [reason],
+            "guardrails": {
+                "can_change_brand_policy": False,
+                "can_change_editorial_policy": False,
+                "can_change_visual_policy": False,
+                "can_authorize_brand_live": False,
+                "can_autopublish": False,
+            },
         }
         learning_loop = {
             "ok": False,
@@ -336,7 +360,11 @@ class OfficialRuntime:
                 "can_autopublish_brand_live": False,
             },
         }
-        return post_performance_contract, learning_loop
+        performance_store = {
+            "ok": False,
+            "error": reason,
+        }
+        return post_performance_contract, performance_ingest, reflection_memory, learning_loop, performance_store
 
     def _run_learning_loop(
         self,
@@ -349,17 +377,21 @@ class OfficialRuntime:
         visual_qa: dict[str, Any],
         publish_result: dict[str, Any] | None,
         publication_authorization_gate: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        if LEARNING_STACK_IMPORT_ERROR or not PerformanceStore or not build_learning_loop_summary or not build_post_performance_contract:
-            return (*self._learning_fallback(
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        if (
+            LEARNING_STACK_IMPORT_ERROR
+            or not PerformanceStore
+            or not build_learning_loop_summary
+            or not build_post_performance_contract
+            or not collect_real_performance_metrics
+            or not build_reflection_memory
+        ):
+            return self._learning_fallback(
                 reason=f"learning_stack_import_error: {LEARNING_STACK_IMPORT_ERROR or 'unknown'}"
-            ), {
-                "ok": False,
-                "error": LEARNING_STACK_IMPORT_ERROR or "learning_stack_unavailable",
-            })
+            )
 
         try:
-            contract = build_post_performance_contract(
+            record = build_post_performance_contract(
                 trend=trend,
                 operational_state=operational_state,
                 brand_live_allowed=brand_live_allowed,
@@ -369,22 +401,50 @@ class OfficialRuntime:
                 publish_result=publish_result,
                 publication_authorization_gate=publication_authorization_gate,
             )
+
+            performance_ingest = collect_real_performance_metrics(
+                config=self.config,
+                publish_result=publish_result,
+            )
+            real_metrics = dict(performance_ingest.get("real_metrics") or {})
+
+            record["real_metrics"] = real_metrics
+            record["performance_ingest"] = performance_ingest
+            record["post_performance"] = {
+                "status": real_metrics.get("source_status"),
+                "source": real_metrics.get("source_endpoint"),
+                "metrics": {
+                    "impressions": real_metrics.get("impressions"),
+                    "reach": real_metrics.get("reach"),
+                    "likes": real_metrics.get("likes"),
+                    "comments": real_metrics.get("comments"),
+                    "saves": real_metrics.get("saves"),
+                    "shares": real_metrics.get("shares"),
+                    "engagement_proxy": real_metrics.get("engagement_proxy"),
+                },
+                "notes": [
+                    "dados de performance baseados apenas em coleta real ou ausência real de dados",
+                    str(real_metrics.get("source_reason") or ""),
+                ],
+            }
+
+            reflection_memory = build_reflection_memory(record=record)
+            record["reflection_memory"] = reflection_memory
+
             store = PerformanceStore(self.config)
-            store_state = store.append_record(contract)
-            records = store.list_records(limit=20)
+            performance_store = store.upsert_record(record)
+            records = store.list_records(limit=30)
+
             learning_loop = build_learning_loop_summary(
                 records=records,
-                latest_record=contract,
+                latest_record=record,
             )
-            return contract, learning_loop, store_state
+
+            return record, performance_ingest, reflection_memory, learning_loop, performance_store
         except Exception as exc:
-            fallback_contract, fallback_learning = self._learning_fallback(
+            return self._learning_fallback(
                 reason=f"learning_loop_runtime_error: {type(exc).__name__}: {exc}"
             )
-            return fallback_contract, fallback_learning, {
-                "ok": False,
-                "error": f"learning_loop_runtime_error: {type(exc).__name__}: {exc}",
-            }
 
     def run(
         self,
@@ -404,8 +464,6 @@ class OfficialRuntime:
                 "brand_live_allowed": False,
                 "block_reasons": [f"creative_planner_error: {type(exc).__name__}: {exc}"],
                 "error": f"creative_planner_error: {type(exc).__name__}: {exc}",
-                "runtime_build_marker": RUNTIME_BUILD_MARKER,
-                "runtime_build_commit_hint": RUNTIME_BUILD_COMMIT_HINT,
                 "runtime": self.snapshot(),
                 "publish_result": None,
                 "last_publish": self.publish.last_publish(),
@@ -519,14 +577,6 @@ class OfficialRuntime:
         brand_live_allowed = bool(publication_authorization_gate.get("brand_live_allowed", False))
         block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
 
-        linkage_context = {
-            "operational_state": operational_state,
-            "brand_live_allowed": brand_live_allowed,
-            "plan_headline": str(plan_dict.get("headline") or ""),
-            "plan_style": str(plan_dict.get("publish_style") or ""),
-            "authorization_summary": publication_authorization_gate.get("summary"),
-        }
-
         try:
             if publication_authorization_gate.get("can_publish_placeholder"):
                 publish_result = self.publish.publish_placeholder(
@@ -535,7 +585,6 @@ class OfficialRuntime:
                     content_type=str(plan.publish_format_now),
                     caption=str(plan.caption),
                     media_path=None,
-                    linkage_context=linkage_context,
                 )
             elif publication_authorization_gate.get("can_publish_real"):
                 publish_result = self.publish.publish_real(
@@ -544,7 +593,6 @@ class OfficialRuntime:
                     content_type=str(plan.publish_format_now),
                     caption=str(plan.caption),
                     media_path=None,
-                    linkage_context=linkage_context,
                 )
         except Exception as exc:
             publish_result = {
@@ -553,7 +601,7 @@ class OfficialRuntime:
             }
             block_reasons.append(f"publish_error: {type(exc).__name__}: {exc}")
 
-        post_performance_contract, learning_loop, performance_store = self._run_learning_loop(
+        post_performance_contract, performance_ingest, reflection_memory, learning_loop, performance_store = self._run_learning_loop(
             trend=trend,
             operational_state=operational_state,
             brand_live_allowed=brand_live_allowed,
@@ -570,8 +618,6 @@ class OfficialRuntime:
             "operational_state": operational_state,
             "brand_live_allowed": brand_live_allowed,
             "block_reasons": block_reasons,
-            "runtime_build_marker": RUNTIME_BUILD_MARKER,
-            "runtime_build_commit_hint": RUNTIME_BUILD_COMMIT_HINT,
             "trend": trend,
             "creative_plan": plan_dict,
             "editorial_qa": editorial_qa,
@@ -588,6 +634,9 @@ class OfficialRuntime:
             "stories_preview": stories_preview,
             "token_refresh": refresh_result,
             "post_performance_contract": post_performance_contract,
+            "performance_ingest": performance_ingest,
+            "real_metrics_contract": performance_ingest.get("real_metrics"),
+            "reflection_memory": reflection_memory,
             "learning_loop": learning_loop,
             "performance_store": performance_store,
             "runtime": self.snapshot(),
