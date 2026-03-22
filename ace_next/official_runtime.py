@@ -5,12 +5,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .auth_store import load_instagram_auth, sync_instagram_token_sources
+from .brand_veto_gate import evaluate_brand_veto_gate
 from .config import AceNextConfig
 from .creative_planner import build_creative_plan
 from .editorial_rubric import evaluate_editorial_quality
 from .perceptual_qa import evaluate_perceptual_quality
+from .publication_authorization_gate import authorize_publication
 from .publish import PublishService
 from .render_env_sync import persist_instagram_token_to_render
+from .rubric_engine import evaluate_rubric_engine
 from .token_upgrade import refresh_instagram_long_lived_token
 from .visual_contract import build_visual_contract
 from .visual_foundation_pack import (
@@ -181,11 +184,11 @@ class OfficialRuntime:
         plan_dict = plan.to_dict()
 
         editorial_qa = evaluate_editorial_quality(plan_dict)
-
         visual_identity = build_visual_identity(plan_dict)
         typography = build_typography_spec(plan_dict)
         visual_contract = build_visual_contract(plan_dict)
         visual_template = resolve_visual_template(plan_dict)
+
         perceptual_qa = evaluate_perceptual_quality(
             plan=plan_dict,
             contract=visual_contract,
@@ -199,42 +202,37 @@ class OfficialRuntime:
             typography=typography,
         )
 
+        rubric_engine = evaluate_rubric_engine(
+            plan=plan_dict,
+            editorial_qa=editorial_qa.to_dict(),
+            visual_qa=visual_qa.to_dict(),
+            perceptual_qa=perceptual_qa.to_dict(),
+        )
+        brand_veto = evaluate_brand_veto_gate(
+            plan=plan_dict,
+            editorial_qa=editorial_qa.to_dict(),
+            visual_qa=visual_qa.to_dict(),
+            perceptual_qa=perceptual_qa.to_dict(),
+            rubric=rubric_engine,
+        )
+        authorization_gate = authorize_publication(
+            force_placeholder=force_placeholder,
+            editorial_qa=editorial_qa.to_dict(),
+            visual_qa=visual_qa.to_dict(),
+            perceptual_qa=perceptual_qa.to_dict(),
+            rubric=rubric_engine,
+            brand_veto=brand_veto,
+        )
+
         carousel_preview = build_carousel_sequence(plan_dict)
         stories_preview = build_stories_sequence(plan_dict)
-
         refresh_result = self.ensure_fresh_instagram_token(force=False)
 
-        if (not editorial_qa.approved or not visual_qa.approved or not perceptual_qa.approved) and not force_placeholder:
-            return {
-                "ok": True,
-                "mode": "blocked",
-                "trend": trend,
-                "creative_plan": plan_dict,
-                "editorial_qa": editorial_qa.to_dict(),
-                "visual_contract": visual_contract.to_dict(),
-                "visual_template": visual_template.to_dict(),
-                "perceptual_qa": perceptual_qa.to_dict(),
-                "visual_identity": visual_identity.to_dict(),
-                "typography": typography.to_dict(),
-                "visual_qa": visual_qa.to_dict(),
-                "carousel_preview": carousel_preview,
-                "stories_preview": stories_preview,
-                "token_refresh": refresh_result,
-                "runtime": self.snapshot(),
-                "publish_result": None,
-                "last_publish": self.publish.last_publish(),
-            }
-
+        publish_result = None
         media_path = None
-        if not force_placeholder:
-            media_path = render_visual_foundation_card(
-                config=self.config,
-                plan=plan_dict,
-                identity=visual_identity,
-                typography=typography,
-            )
+        selected_state = authorization_gate.selected_state
 
-        if force_placeholder:
+        if authorization_gate.can_publish_placeholder:
             publish_result = self.publish.publish_placeholder(
                 trend=trend,
                 style=str(plan.publish_style),
@@ -242,8 +240,13 @@ class OfficialRuntime:
                 caption=str(plan.caption),
                 media_path=media_path,
             )
-            mode = "placeholder"
-        else:
+        elif authorization_gate.can_publish_real:
+            media_path = render_visual_foundation_card(
+                config=self.config,
+                plan=plan_dict,
+                identity=visual_identity,
+                typography=typography,
+            )
             publish_result = self.publish.publish_real(
                 trend=trend,
                 style=str(plan.publish_style),
@@ -251,11 +254,11 @@ class OfficialRuntime:
                 caption=str(plan.caption),
                 media_path=media_path,
             )
-            mode = "real" if publish_result.get("ok") else "error"
 
         return {
             "ok": True,
-            "mode": mode,
+            "mode": selected_state,
+            "operational_state": selected_state,
             "trend": trend,
             "creative_plan": plan_dict,
             "editorial_qa": editorial_qa.to_dict(),
@@ -265,6 +268,9 @@ class OfficialRuntime:
             "visual_identity": visual_identity.to_dict(),
             "typography": typography.to_dict(),
             "visual_qa": visual_qa.to_dict(),
+            "rubric_engine": rubric_engine.to_dict(),
+            "brand_veto_gate": brand_veto.to_dict(),
+            "publication_authorization_gate": authorization_gate.to_dict(),
             "carousel_preview": carousel_preview,
             "stories_preview": stories_preview,
             "token_refresh": refresh_result,
