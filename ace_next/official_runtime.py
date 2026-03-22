@@ -7,6 +7,7 @@ from typing import Any
 from .auth_store import load_instagram_auth, sync_instagram_token_sources
 from .config import AceNextConfig
 from .creative_planner import build_creative_plan
+from .editorial_rubric import evaluate_editorial_quality
 from .publish import PublishService
 from .render_env_sync import persist_instagram_token_to_render
 from .token_upgrade import refresh_instagram_long_lived_token
@@ -175,6 +176,7 @@ class OfficialRuntime:
         trend = (trend or "teste real").strip()
         plan = build_creative_plan(trend)
         plan_dict = plan.to_dict()
+        editorial_qa = evaluate_editorial_quality(plan_dict)
 
         visual_identity = build_visual_identity(plan_dict)
         typography = build_typography_spec(plan_dict)
@@ -188,12 +190,13 @@ class OfficialRuntime:
 
         refresh_result = self.ensure_fresh_instagram_token(force=False)
 
-        if not visual_qa.approved and not force_placeholder:
+        if (not editorial_qa.approved or not visual_qa.approved) and not force_placeholder:
             return {
                 "ok": True,
                 "mode": "blocked",
                 "trend": trend,
                 "creative_plan": plan_dict,
+                "editorial_qa": editorial_qa.to_dict(),
                 "visual_identity": visual_identity.to_dict(),
                 "typography": typography.to_dict(),
                 "visual_qa": visual_qa.to_dict(),
@@ -238,6 +241,7 @@ class OfficialRuntime:
             "mode": mode,
             "trend": trend,
             "creative_plan": plan_dict,
+            "editorial_qa": editorial_qa.to_dict(),
             "visual_identity": visual_identity.to_dict(),
             "typography": typography.to_dict(),
             "visual_qa": visual_qa.to_dict(),
