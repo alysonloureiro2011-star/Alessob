@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from typing import Any
+
+import requests
+
+from .real_metrics_contract import build_empty_real_metrics, build_real_metrics_contract
+
+
+def _graph_get(config: Any, path: str, *, params: dict[str, Any] | None = None, timeout: int = 45) -> dict[str, Any]:
+    token = getattr(config, "ig_token", None)
+    if not token:
+        return {"ok": False, "error": "IG_TOKEN ausente"}
+
+    graph_base = str(getattr(config, "graph_base_url", "https://graph.facebook.com/v23.0")).rstrip("/")
+    url = f"{graph_base}/{path.lstrip('/')}"
+    query = dict(params or {})
+    query["access_token"] = token
+
+    try:
+        response = requests.get(url, params=query, timeout=timeout)
+        try:
+            body = response.json()
+        except Exception:
+            body = {"raw": response.text[:4000]}
+
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "status_code": response.status_code,
+                "error": body,
+                "url": url,
+            }
+
+        return {
+            "ok": True,
+            "status_code": response.status_code,
+            "data": body,
+            "url": url,
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "url": url}
+
+
+def _extract_insight_value(payload: dict[str, Any]) -> int | None:
+    data = payload.get("data") or {}
+    entries = data.get("data") if isinstance(data, dict) else None
+    if not entries or not isinstance(entries, list):
+        return None
+    entry = entries[0] if entries else {}
+    values = entry.get("values") if isinstance(entry, dict) else None
+    if not values or not isinstance(values, list):
+        return None
+    first_value = values[0] if values else {}
+    if isinstance(first_value, dict):
+        return first_value.get("value")
+    return None
+
+
+def collect_real_performance_metrics(
+    *,
+    config: Any,
+    publish_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    receipt = dict(publish_result or {})
+    media_id = str(receipt.get("media_id") or "").strip() or None
+    permalink = str(receipt.get("permalink") or "").strip() or None
+
+    if not receipt:
+        real_metrics = build_empty_real_metrics(
+            source_status="not_available_yet",
+            source_reason="não existe publish_result para ingerir",
+        )
+        return {
+            "ok": True,
+            "attempted": False,
+            "source_status": real_metrics["source_status"],
+            "real_metrics": real_metrics,
+            "errors": [],
+            "raw": {},
+        }
+
+    if not media_id:
+        real_metrics = build_empty_real_metrics(
+            source_status="not_available_yet",
+            source_reason="receipt sem media_id; ainda não há alvo real para coleta",
+            permalink=permalink,
+        )
+        return {
+            "ok": True,
+            "attempted": False,
+            "source_status": real_metrics["source_status"],
+            "real_metrics": real_metrics,
+            "errors": [],
+            "raw": {"receipt": receipt},
+        }
+
+    if not getattr(config, "ig_token", None):
+        real_metrics = build_empty_real_metrics(
+            source_status="missing_token",
+            source_reason="token ausente para coleta real",
+            media_id=media_id,
+            permalink=permalink,
+            errors=["IG_TOKEN ausente"],
+        )
+        return {
+            "ok": False,
+            "attempted": False,
+            "source_status": real_metrics["source_status"],
+            "real_metrics": real_metrics,
+            "errors": list(real_metrics["errors"]),
+            "raw": {"receipt": receipt},
+        }
+
+    errors: list[str] = []
+
+    media_info = _graph_get(
+        config,
+        str(media_id),
+        params={"fields": "id,permalink,like_count,comments_count"},
+    )
+    likes = None
+    comments = None
+    if media_info.get("ok"):
+        data = media_info.get("data") or {}
+        permalink = str(data.get("permalink") or permalink or "")
+        likes = data.get("like_count")
+        comments = data.get("comments_count")
+    else:
+        errors.append(f"media_info_error: {media_info.get('error')}")
+
+    insight_values: dict[str, Any] = {
+        "impressions": None,
+        "reach": None,
+        "saves": None,
+        "shares": None,
+    }
+
+    insight_metrics = {
+        "impressions": "impressions",
+        "reach": "reach",
+        "saves": "saved",
+        "shares": "shares",
+    }
+
+    raw_insights: dict[str, Any] = {}
+    for local_key, remote_metric in insight_metrics.items():
+        response = _graph_get(
+            config,
+            f"{media_id}/insights",
+            params={"metric": remote_metric},
+        )
+        raw_insights[local_key] = response
+        if response.get("ok"):
+            insight_values[local_key] = _extract_insight_value(response)
+        else:
+            errors.append(f"{local_key}_error: {response.get('error')}")
+
+    real_metrics = build_real_metrics_contract(
+        media_id=media_id,
+        permalink=permalink,
+        likes=likes,
+        comments=comments,
+        impressions=insight_values["impressions"],
+        reach=insight_values["reach"],
+        saves=insight_values["saves"],
+        shares=insight_values["shares"],
+        errors=errors,
+    )
+
+    return {
+        "ok": real_metrics["source_status"] in {"collected", "partial_collected", "not_available_yet"},
+        "attempted": True,
+        "source_status": real_metrics["source_status"],
+        "real_metrics": real_metrics,
+        "errors": list(real_metrics.get("errors") or []),
+        "raw": {
+            "receipt": receipt,
+            "media_info": media_info,
+            "insights": raw_insights,
+        },
+    }
