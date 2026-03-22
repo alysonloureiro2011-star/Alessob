@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .editorial_policy import normalize_text
-from .visual_contract import VisualContract
+from .visual_contract import VisualContract, prepare_display_copy
 from .visual_templates import VisualTemplate
 
 
@@ -42,7 +42,7 @@ def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
 def _wrap_capacity(width: int, font_size: int) -> int:
     if font_size <= 0:
         return 24
-    return max(10, int(width / max(font_size * 0.58, 1)))
+    return max(10, int(width / max(font_size * 0.55, 1)))
 
 
 def _line_estimate(text: str, width: int, font_size: int) -> int:
@@ -61,11 +61,13 @@ def evaluate_perceptual_quality(
     identity: Any,
     typography: Any,
 ) -> PerceptualQAResult:
-    headline = str(plan.get("headline") or "")
-    hook = str(plan.get("hook") or "")
-    body = str(plan.get("body") or "")
-    support_points = [str(item) for item in (plan.get("support_points") or [])][: contract.max_support_points]
-    cta = str(plan.get("cta") or "")
+    display = prepare_display_copy(plan, contract)
+
+    headline = display["headline"]
+    hook = display["hook"]
+    body = display["body"]
+    support_points = display["support_points"]
+    cta = display["cta"]
 
     headline_lines = _line_estimate(headline, template.blocks["headline"].width, typography.headline_size)
     hook_lines = _line_estimate(hook, template.blocks["hook"].width, typography.hook_size)
@@ -73,6 +75,7 @@ def evaluate_perceptual_quality(
     cta_lines = _line_estimate(cta, template.blocks["cta"].width, typography.cta_size)
 
     support_overflow = sum(1 for point in support_points if len(point) > contract.max_support_chars)
+
     overlap_risk = 0
     if headline_lines > contract.max_headline_lines:
         overlap_risk += 1
@@ -92,55 +95,63 @@ def evaluate_perceptual_quality(
     normalized = normalize_text(" ".join([headline, hook, body, cta] + support_points))
     lexical_richness = len(set(normalized.split()))
 
-    legibility = 7.0
-    if typography.headline_size >= 74:
-        legibility += 0.4
-    if typography.body_size >= 34:
-        legibility += 0.3
-    if contract.safe_zones.outer_margin >= 64:
-        legibility += 0.3
+    legibility = 7.1
+    if typography.headline_size >= 64:
+        legibility += 0.2
+    if typography.body_size >= 28:
+        legibility += 0.2
+    if contract.safe_zones.outer_margin >= 72:
+        legibility += 0.2
+    if template.density == "mobile_clean":
+        legibility += 0.2
     legibility -= min(overlap_risk * 0.5, 1.5)
 
-    composition = 7.0
-    if template.density == "controlled":
-        composition += 0.5
-    if len(support_points) >= 3:
+    composition = 7.1
+    if template.density == "mobile_clean":
+        composition += 0.4
+    if len(support_points) <= 2:
         composition += 0.3
     if body_lines <= contract.max_body_lines:
         composition += 0.3
+    if headline_lines <= contract.max_headline_lines:
+        composition += 0.2
     composition -= min(overlap_risk * 0.6, 1.8)
 
     contrast = 7.0
     if panel_contrast >= 10:
-        contrast += 0.8
+        contrast += 0.7
     elif panel_contrast >= 8:
-        contrast += 0.5
+        contrast += 0.4
     if dark_contrast >= 7:
         contrast += 0.3
     if accent_contrast < 2.2:
-        contrast -= 0.6
+        contrast -= 0.5
 
-    brand_fit_visual = 7.6
-    if template.template_id.startswith("signal"):
+    brand_fit_visual = 7.8
+    if template.template_id.endswith("clean_v2") or template.template_id.endswith("clean_v3"):
         brand_fit_visual += 0.3
+    if contract.density_target == "mobile_clean":
+        brand_fit_visual += 0.2
+    if overlap_risk == 0:
+        brand_fit_visual += 0.2
     if "viral" not in normalized and "imperdivel" not in normalized:
-        brand_fit_visual += 0.2
-    if contract.density_target == "controlled":
-        brand_fit_visual += 0.2
+        brand_fit_visual += 0.1
     brand_fit_visual -= min(overlap_risk * 0.3, 0.9)
 
     perceived_value_visual = 7.2
-    if lexical_richness >= 24:
-        perceived_value_visual += 0.4
-    if len(body) >= 140:
-        perceived_value_visual += 0.3
-    if len(support_points) >= 3:
+    if lexical_richness >= 16:
         perceived_value_visual += 0.2
+    if len(body) >= 90:
+        perceived_value_visual += 0.2
+    if len(support_points) >= 2:
+        perceived_value_visual += 0.2
+    if template.density == "mobile_clean":
+        perceived_value_visual += 0.1
     perceived_value_visual -= min(overlap_risk * 0.3, 0.9)
 
-    noise_control = 8.0
-    if len(support_points) > 3:
-        noise_control -= 1.0
+    noise_control = 8.2
+    if len(support_points) > 2:
+        noise_control -= 0.8
     if body_lines > contract.max_body_lines:
         noise_control -= 0.8
     if headline_lines > contract.max_headline_lines:
@@ -154,6 +165,7 @@ def evaluate_perceptual_quality(
         "perceived_value_visual": round(max(0.0, min(perceived_value_visual, 10.0)), 2),
         "noise_control": round(max(0.0, min(noise_control, 10.0)), 2),
     }
+
     final_score = int(
         round(
             (
@@ -172,22 +184,22 @@ def evaluate_perceptual_quality(
 
     if overlap_risk > 0:
         reasons.append("há risco estrutural de sobreposição ou excesso de densidade")
-        recommendations.append("encurtar headline/body ou reduzir pressão de layout")
+        recommendations.append("encurtar payload visual e aumentar respiro do template")
     if breakdown["legibility"] < contract.thresholds.minimum_legibility:
         reasons.append("legibilidade abaixo do piso")
-        recommendations.append("aumentar respiro, reduzir densidade e manter tamanhos móveis fortes")
+        recommendations.append("aumentar respiro e manter texto curto no card")
     if breakdown["contrast"] < contract.thresholds.minimum_contrast:
         reasons.append("contraste abaixo do piso")
         recommendations.append("fortalecer contraste entre painel, texto e destaque")
     if breakdown["composition"] < contract.thresholds.minimum_composition:
         reasons.append("composição abaixo do piso")
-        recommendations.append("redistribuir pesos visuais e reduzir ruído")
+        recommendations.append("reduzir pressão do layout e simplificar hierarquia")
     if breakdown["brand_fit_visual"] < contract.thresholds.minimum_brand_fit:
         reasons.append("aderência visual à marca ainda insuficiente")
-        recommendations.append("subir sofisticação e coerência do template")
+        recommendations.append("subir coerência e limpeza do template")
     if breakdown["perceived_value_visual"] < contract.thresholds.minimum_perceived_value:
         reasons.append("valor percebido visual ainda insuficiente")
-        recommendations.append("aumentar clareza sem aumentar ruído")
+        recommendations.append("manter clareza alta e ruído baixo")
 
     approved = (
         overlap_risk == 0
@@ -213,6 +225,7 @@ def evaluate_perceptual_quality(
         "dark_contrast": round(dark_contrast, 2),
         "lexical_richness": lexical_richness,
         "template_id": template.template_id,
+        "display_payload": display,
     }
 
     if approved and not reasons:
