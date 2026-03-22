@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import os
 import textwrap
 import uuid
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from .config import AceNextConfig
+from .perceptual_qa import evaluate_perceptual_quality
+from .visual_contract import VisualContract, build_visual_contract
+from .visual_templates import VisualTemplate, resolve_visual_template
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -18,37 +20,40 @@ except Exception:
 
 PALETTES = {
     "electric_blue": {
-        "background": (11, 18, 34),
-        "header_band": (18, 28, 52),
+        "background": (9, 15, 28),
+        "header_band": (13, 23, 42),
         "panel": (248, 250, 255),
-        "accent": (36, 102, 255),
-        "accent_soft": (223, 233, 255),
-        "text_primary": (18, 20, 26),
-        "text_secondary": (87, 95, 116),
+        "panel_border": (220, 229, 245),
+        "accent": (39, 103, 255),
+        "accent_soft": (226, 235, 255),
+        "text_primary": (18, 20, 28),
+        "text_secondary": (78, 87, 106),
         "text_on_dark": (255, 255, 255),
-        "watermark": (183, 196, 224),
+        "watermark": (177, 192, 226),
     },
     "amber_gold": {
-        "background": (32, 23, 13),
-        "header_band": (48, 35, 16),
+        "background": (26, 20, 12),
+        "header_band": (38, 28, 14),
         "panel": (255, 249, 242),
-        "accent": (214, 144, 33),
-        "accent_soft": (248, 232, 197),
-        "text_primary": (28, 21, 14),
-        "text_secondary": (102, 87, 67),
+        "panel_border": (241, 225, 197),
+        "accent": (212, 142, 34),
+        "accent_soft": (248, 234, 202),
+        "text_primary": (29, 22, 16),
+        "text_secondary": (99, 85, 67),
         "text_on_dark": (255, 255, 255),
-        "watermark": (232, 213, 178),
+        "watermark": (230, 210, 176),
     },
     "editorial_violet": {
-        "background": (24, 19, 35),
-        "header_band": (34, 26, 48),
+        "background": (21, 18, 31),
+        "header_band": (31, 25, 45),
         "panel": (248, 246, 255),
+        "panel_border": (228, 220, 245),
         "accent": (136, 81, 255),
-        "accent_soft": (230, 220, 255),
-        "text_primary": (22, 18, 28),
-        "text_secondary": (98, 93, 114),
+        "accent_soft": (232, 223, 255),
+        "text_primary": (23, 18, 31),
+        "text_secondary": (94, 90, 112),
         "text_on_dark": (255, 255, 255),
-        "watermark": (208, 196, 242),
+        "watermark": (203, 193, 236),
     },
 }
 
@@ -61,6 +66,7 @@ class VisualIdentity:
     background_color: tuple[int, int, int]
     header_band_color: tuple[int, int, int]
     panel_color: tuple[int, int, int]
+    panel_border_color: tuple[int, int, int]
     accent_color: tuple[int, int, int]
     accent_soft_color: tuple[int, int, int]
     text_primary: tuple[int, int, int]
@@ -86,6 +92,7 @@ class TypographySpec:
     headline_wrap: int
     hook_wrap: int
     body_wrap: int
+    support_wrap: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -99,6 +106,10 @@ class VisualQAResult:
     reasons: list[str]
     recommendations: list[str]
     metrics: dict[str, Any]
+    breakdown: dict[str, float]
+    perceptual_qa: dict[str, Any]
+    contract: dict[str, Any]
+    template: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,175 +139,69 @@ class StoryFrame:
 
 
 def build_visual_identity(plan: dict[str, Any]) -> VisualIdentity:
-    palette_name = plan.get("color_profile") or "editorial_violet"
-    palette = PALETTES.get(str(palette_name), PALETTES["editorial_violet"])
-
+    palette_name = str(plan.get("color_profile") or "editorial_violet")
+    palette = PALETTES.get(palette_name, PALETTES["editorial_violet"])
     return VisualIdentity(
-        palette_name=str(palette_name),
+        palette_name=palette_name,
         series_name=str(plan.get("series_name") or "Liberta a Verdade"),
         watermark_text="Liberta a Verdade",
         background_color=palette["background"],
         header_band_color=palette["header_band"],
         panel_color=palette["panel"],
+        panel_border_color=palette["panel_border"],
         accent_color=palette["accent"],
         accent_soft_color=palette["accent_soft"],
         text_primary=palette["text_primary"],
         text_secondary=palette["text_secondary"],
         text_on_dark=palette["text_on_dark"],
         watermark_color=palette["watermark"],
-        safe_margin=58,
-        panel_radius=42,
+        safe_margin=68,
+        panel_radius=36,
     )
 
 
 def build_typography_spec(plan: dict[str, Any]) -> TypographySpec:
+    headline = str(plan.get("headline") or "")
+    hook = str(plan.get("hook") or "")
+    body = str(plan.get("body") or "")
+
+    headline_size = 82 if len(headline) <= 72 else 74
+    hook_size = 34 if len(hook) <= 140 else 32
+    body_size = 36 if len(body) <= 220 else 34
+
     return TypographySpec(
-        headline_size=80,
-        hook_size=34,
-        body_size=38,
+        headline_size=headline_size,
+        hook_size=hook_size,
+        body_size=body_size,
         support_size=28,
         brand_size=28,
         cta_size=30,
-        eyebrow_size=26,
+        eyebrow_size=24,
         headline_wrap=18,
-        hook_wrap=24,
-        body_wrap=31,
+        hook_wrap=26,
+        body_wrap=32,
+        support_wrap=28,
     )
 
 
-def _channel(value: int) -> float:
-    c = value / 255.0
-    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+def _wrap(text: str, width: int) -> list[str]:
+    lines = textwrap.wrap((text or "").strip(), width=width, break_long_words=False, break_on_hyphens=False)
+    return lines or [""]
 
 
-def _luminance(color: tuple[int, int, int]) -> float:
-    r, g, b = color
-    return 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
+def _fit_lines(text: str, width: int, max_lines: int) -> list[str]:
+    lines = _wrap(text, width)
+    if len(lines) <= max_lines:
+        return lines
+    clipped = lines[:max_lines]
+    last = clipped[-1].rstrip()
+    if len(last) > 3:
+        last = last[:-3].rstrip()
+    clipped[-1] = f"{last}..."
+    return clipped
 
 
-def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
-    l1 = _luminance(a)
-    l2 = _luminance(b)
-    lighter = max(l1, l2)
-    darker = min(l1, l2)
-    return (lighter + 0.05) / (darker + 0.05)
-
-
-def evaluate_visual_quality(
-    *,
-    plan: dict[str, Any],
-    identity: VisualIdentity,
-    typography: TypographySpec,
-) -> VisualQAResult:
-    score = int(plan.get("quality_score") or 0)
-    minimum_score = int(os.environ.get("ACE_MIN_VISUAL_SCORE", "70"))
-
-    reasons: list[str] = []
-    recommendations: list[str] = []
-
-    headline = (plan.get("headline") or "").strip()
-    body = (plan.get("body") or "").strip()
-    support_points = plan.get("support_points") or []
-    trend_input = (plan.get("trend_input") or "").strip().lower()
-
-    panel_contrast = contrast_ratio(identity.panel_color, identity.text_primary)
-    accent_contrast = contrast_ratio(identity.accent_soft_color, identity.accent_color)
-
-    if trend_input in {"teste", "teste real", "test", "oi", "hello", "aaa", "123"}:
-        score -= 42
-        reasons.append("entrada fraca ou de teste")
-        recommendations.append("trocar o tema por uma dor real ou insight real")
-
-    if len(headline) < 20:
-        score -= 10
-        reasons.append("headline curta demais")
-        recommendations.append("aumentar especificidade e força da headline")
-
-    if len(body) < 70:
-        score -= 10
-        reasons.append("corpo editorial curto demais")
-        recommendations.append("explicar melhor a ideia central")
-
-    if len(support_points) < 3:
-        score -= 8
-        reasons.append("poucos pontos de apoio")
-        recommendations.append("gerar ao menos 3 pontos visuais de sustentação")
-
-    if panel_contrast < 7:
-        score -= 18
-        reasons.append("contraste principal abaixo do ideal")
-        recommendations.append("aumentar contraste entre painel e texto")
-
-    if accent_contrast < 2.2:
-        score -= 8
-        reasons.append("contraste do destaque abaixo do ideal")
-        recommendations.append("melhorar relação entre cor de destaque e fundo suave")
-
-    if identity.safe_margin < 48:
-        score -= 6
-        reasons.append("safe zone insuficiente")
-        recommendations.append("aumentar margem segura para tela pequena")
-
-    metrics = {
-        "panel_text_contrast": round(panel_contrast, 2),
-        "accent_contrast": round(accent_contrast, 2),
-        "headline_length": len(headline),
-        "body_length": len(body),
-        "support_points": len(support_points),
-        "safe_margin": identity.safe_margin,
-        "headline_wrap": typography.headline_wrap,
-        "body_wrap": typography.body_wrap,
-    }
-
-    approved = score >= minimum_score
-
-    if approved and not reasons:
-        reasons.append("visual dentro do mínimo aceitável para a fase atual")
-
-    if not approved and not recommendations:
-        recommendations.append("subir força do tema, headline e contraste")
-
-    return VisualQAResult(
-        approved=approved,
-        final_score=max(score, 0),
-        minimum_score=minimum_score,
-        reasons=reasons,
-        recommendations=recommendations,
-        metrics=metrics,
-    )
-
-
-def build_carousel_sequence(plan: dict[str, Any]) -> dict[str, Any]:
-    support_points = plan.get("support_points") or []
-    slides = [
-        CarouselSlide(1, "cover", str(plan.get("headline") or ""), str(plan.get("hook") or ""), ""),
-        CarouselSlide(2, "insight", "O ponto central", str(plan.get("body") or ""), ""),
-        CarouselSlide(3, "support_1", support_points[0] if len(support_points) > 0 else "", str(plan.get("angle") or ""), ""),
-        CarouselSlide(4, "support_2", support_points[1] if len(support_points) > 1 else "", support_points[2] if len(support_points) > 2 else "", ""),
-        CarouselSlide(5, "cta", "Leve isso para a prática", str(plan.get("cta") or ""), str(plan.get("first_comment") or "")),
-    ]
-    return {
-        "ok": True,
-        "strategic_format": "carousel",
-        "slides": [slide.to_dict() for slide in slides],
-    }
-
-
-def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
-    frames = [
-        StoryFrame(1, "hook", str(plan.get("hook") or ""), "abertura"),
-        StoryFrame(2, "body", str(plan.get("body") or ""), "explicação"),
-        StoryFrame(3, "angle", str(plan.get("angle") or ""), "virada"),
-        StoryFrame(4, "cta", str(plan.get("cta") or ""), "fechamento"),
-    ]
-    return {
-        "ok": True,
-        "strategic_format": "stories",
-        "frames": [frame.to_dict() for frame in frames],
-    }
-
-
-def _load_font(size: int, bold: bool = False):
+def _load_font(size: int, *, bold: bool = False):
     if ImageFont is None:
         return None
     candidates = [
@@ -314,8 +219,7 @@ def _load_font(size: int, bold: bool = False):
         return None
 
 
-def _draw_wrapped(draw, text: str, *, x: int, y: int, width: int, font, fill, line_gap: int = 14) -> int:
-    lines = textwrap.wrap((text or "").strip(), width=width) or [""]
+def _draw_lines(draw, lines: list[str], *, x: int, y: int, font, fill, line_gap: int = 12) -> int:
     line_height = getattr(font, "size", 24) + line_gap if font else 30
     current_y = y
     for line in lines:
@@ -324,15 +228,94 @@ def _draw_wrapped(draw, text: str, *, x: int, y: int, width: int, font, fill, li
     return current_y
 
 
-def _draw_chip(draw, text: str, *, x: int, y: int, font, identity: VisualIdentity) -> int:
+def _draw_support_chip(draw, *, x: int, y: int, text: str, font, identity: VisualIdentity, width: int) -> int:
     if not text:
         return 0
-    bbox = draw.textbbox((0, 0), text, font=font) if font else (0, 0, 180, 34)
-    width = (bbox[2] - bbox[0]) + 34
-    height = (bbox[3] - bbox[1]) + 18
-    draw.rounded_rectangle((x, y, x + width, y + height), radius=18, fill=identity.accent_soft_color)
-    draw.text((x + 16, y + 8), text, fill=identity.accent_color, font=font)
-    return height
+    lines = _fit_lines(text, width, 2)
+    line_height = getattr(font, "size", 24) + 8 if font else 28
+    chip_height = 22 + (len(lines) * line_height)
+    draw.rounded_rectangle(
+        (x, y, x + width, y + chip_height),
+        radius=22,
+        fill=identity.accent_soft_color,
+        outline=identity.panel_border_color,
+        width=2,
+    )
+    bullet_r = 8
+    bullet_x = x + 20
+    bullet_y = y + 24
+    draw.ellipse((bullet_x, bullet_y, bullet_x + bullet_r * 2, bullet_y + bullet_r * 2), fill=identity.accent_color)
+    text_x = x + 44
+    current_y = y + 16
+    for line in lines:
+        draw.text((text_x, current_y), line, fill=identity.accent_color, font=font)
+        current_y += line_height
+    return chip_height
+
+
+def evaluate_visual_quality(*, plan: dict[str, Any], identity: VisualIdentity, typography: TypographySpec) -> VisualQAResult:
+    contract = build_visual_contract(plan)
+    template = resolve_visual_template(plan)
+    perceptual = evaluate_perceptual_quality(
+        plan=plan,
+        contract=contract,
+        template=template,
+        identity=identity,
+        typography=typography,
+    )
+    metrics = dict(perceptual.metrics)
+    metrics.update(
+        {
+            "safe_margin": identity.safe_margin,
+            "panel_radius": identity.panel_radius,
+            "headline_wrap": typography.headline_wrap,
+            "body_wrap": typography.body_wrap,
+        }
+    )
+    return VisualQAResult(
+        approved=perceptual.approved,
+        final_score=perceptual.final_score,
+        minimum_score=contract.thresholds.minimum_visual_score,
+        reasons=list(perceptual.reasons),
+        recommendations=list(perceptual.recommendations),
+        metrics=metrics,
+        breakdown=dict(perceptual.breakdown),
+        perceptual_qa=perceptual.to_dict(),
+        contract=contract.to_dict(),
+        template=template.to_dict(),
+    )
+
+
+def build_carousel_sequence(plan: dict[str, Any]) -> dict[str, Any]:
+    support_points = [str(item) for item in (plan.get("support_points") or [])][:3]
+    slides = [
+        CarouselSlide(1, "cover", str(plan.get("headline") or ""), str(plan.get("hook") or ""), ""),
+        CarouselSlide(2, "thesis", "A ideia central", str(plan.get("body") or ""), ""),
+        CarouselSlide(3, "support", support_points[0] if len(support_points) > 0 else "", support_points[1] if len(support_points) > 1 else str(plan.get("angle") or ""), ""),
+        CarouselSlide(4, "support", support_points[2] if len(support_points) > 2 else str(plan.get("angle") or ""), str(plan.get("first_comment") or ""), ""),
+        CarouselSlide(5, "cta", "Leve isso para a prática", str(plan.get("cta") or ""), str(plan.get("first_comment") or "")),
+    ]
+    return {
+        "ok": True,
+        "strategic_format": "carousel",
+        "template_id": resolve_visual_template(plan).template_id,
+        "slides": [slide.to_dict() for slide in slides],
+    }
+
+
+def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
+    frames = [
+        StoryFrame(1, "hook", str(plan.get("hook") or ""), "abertura"),
+        StoryFrame(2, "thesis", str(plan.get("headline") or ""), "tese"),
+        StoryFrame(3, "body", str(plan.get("body") or ""), "explicação"),
+        StoryFrame(4, "cta", str(plan.get("cta") or ""), "fechamento"),
+    ]
+    return {
+        "ok": True,
+        "strategic_format": "stories",
+        "template_id": resolve_visual_template(plan).template_id,
+        "frames": [frame.to_dict() for frame in frames],
+    }
 
 
 def render_visual_foundation_card(
@@ -342,8 +325,10 @@ def render_visual_foundation_card(
     identity: VisualIdentity,
     typography: TypographySpec,
 ) -> str:
+    contract = build_visual_contract(plan)
+    template = resolve_visual_template(plan)
     config.media_dir.mkdir(parents=True, exist_ok=True)
-    out = config.media_dir / f"ace_next_{uuid.uuid4().hex}.png"
+    out = config.media_dir / f"ace_next_visual_{uuid.uuid4().hex}.png"
 
     if Image is None or ImageDraw is None:
         out.write_bytes(
@@ -353,7 +338,7 @@ def render_visual_foundation_card(
         )
         return str(out)
 
-    img = Image.new("RGB", (1080, 1350), identity.background_color)
+    img = Image.new("RGB", (contract.canvas_width, contract.canvas_height), identity.background_color)
     draw = ImageDraw.Draw(img)
 
     brand_font = _load_font(typography.brand_size, bold=True)
@@ -363,81 +348,128 @@ def render_visual_foundation_card(
     body_font = _load_font(typography.body_size, bold=False)
     support_font = _load_font(typography.support_size, bold=True)
     cta_font = _load_font(typography.cta_size, bold=False)
-    watermark_font = _load_font(24, bold=True)
+    watermark_font = _load_font(22, bold=True)
 
-    draw.rectangle((0, 0, 1080, 220), fill=identity.header_band_color)
-    draw.text((identity.safe_margin, 72), "ACE Ω NEXT", fill=identity.text_on_dark, font=brand_font)
-    draw.text((735, 72), identity.series_name[:24], fill=identity.watermark_color, font=brand_font)
+    safe = contract.safe_zones
+    panel_left = safe.outer_margin
+    panel_top = safe.content_top
+    panel_right = contract.canvas_width - safe.outer_margin
+    panel_bottom = safe.content_bottom
 
-    left = identity.safe_margin
-    right = 1080 - identity.safe_margin
-    top = 255
-    bottom = 1175
+    draw.rectangle((0, 0, contract.canvas_width, safe.header_height), fill=identity.header_band_color)
+    draw.text((safe.outer_margin, 58), "ACE Ω NEXT", fill=identity.text_on_dark, font=brand_font)
 
-    draw.rounded_rectangle((left, top, right, bottom), radius=identity.panel_radius, fill=identity.panel_color)
-    draw.rectangle((left, top, left + 24, bottom), fill=identity.accent_color)
+    series_text = identity.series_name[:28]
+    series_bbox = draw.textbbox((0, 0), series_text, font=brand_font) if brand_font else (0, 0, 160, 28)
+    series_width = series_bbox[2] - series_bbox[0]
+    draw.text((contract.canvas_width - safe.outer_margin - series_width, 58), series_text, fill=identity.watermark_color, font=brand_font)
 
-    draw.rounded_rectangle((left + 58, top + 54, left + 390, top + 108), radius=20, fill=identity.accent_soft_color)
-    draw.text((left + 82, top + 70), "EDITORIAL SIGNAL", fill=identity.accent_color, font=eyebrow_font)
-
-    y = _draw_wrapped(
-        draw,
-        str(plan.get("headline") or ""),
-        x=left + 58,
-        y=top + 150,
-        width=typography.headline_wrap,
-        font=headline_font,
-        fill=identity.text_primary,
-        line_gap=18,
-    )
-
-    y = _draw_wrapped(
-        draw,
-        str(plan.get("hook") or ""),
-        x=left + 58,
-        y=y + 24,
-        width=typography.hook_wrap,
-        font=hook_font,
-        fill=identity.accent_color,
-        line_gap=14,
-    )
-
-    y = _draw_wrapped(
-        draw,
-        str(plan.get("body") or ""),
-        x=left + 58,
-        y=y + 28,
-        width=typography.body_wrap,
-        font=body_font,
-        fill=identity.text_secondary,
-        line_gap=14,
-    )
-
-    support_points = plan.get("support_points") or []
-    chip_y = y + 34
-    for point in support_points[:3]:
-        chip_height = _draw_chip(
-            draw,
-            point,
-            x=left + 58,
-            y=chip_y,
-            font=support_font,
-            identity=identity,
-        )
-        chip_y += chip_height + 18
-
-    footer_top = bottom - 165
     draw.rounded_rectangle(
-        (left + 58, footer_top, right - 58, bottom - 62),
-        radius=26,
+        (panel_left, panel_top, panel_right, panel_bottom),
+        radius=identity.panel_radius,
+        fill=identity.panel_color,
+        outline=identity.panel_border_color,
+        width=3,
+    )
+    draw.rounded_rectangle(
+        (panel_left + 22, panel_top + 22, panel_left + 42, panel_bottom - 22),
+        radius=12,
+        fill=identity.accent_color,
+    )
+
+    blocks = template.blocks
+    eyebrow_block = blocks["eyebrow"]
+    headline_block = blocks["headline"]
+    hook_block = blocks["hook"]
+    body_block = blocks["body"]
+    support_block = blocks["support"]
+    cta_block = blocks["cta"]
+
+    eyebrow_text = "EDITORIAL SIGNAL"
+    eyebrow_width = 292
+    eyebrow_height = 42
+    draw.rounded_rectangle(
+        (eyebrow_block.x, eyebrow_block.y, eyebrow_block.x + eyebrow_width, eyebrow_block.y + eyebrow_height),
+        radius=18,
         fill=identity.accent_soft_color,
     )
-    draw.text((left + 90, footer_top + 28), str(plan.get("cta") or ""), fill=identity.accent_color, font=cta_font)
+    draw.text((eyebrow_block.x + 18, eyebrow_block.y + 10), eyebrow_text, fill=identity.accent_color, font=eyebrow_font)
+
+    headline_lines = _fit_lines(str(plan.get("headline") or ""), typography.headline_wrap, contract.max_headline_lines)
+    hook_lines = _fit_lines(str(plan.get("hook") or ""), typography.hook_wrap, contract.max_hook_lines)
+    body_lines = _fit_lines(str(plan.get("body") or ""), typography.body_wrap, contract.max_body_lines)
+    cta_lines = _fit_lines(str(plan.get("cta") or ""), 34, contract.max_cta_lines)
+
+    current_y = _draw_lines(
+        draw,
+        headline_lines,
+        x=headline_block.x,
+        y=headline_block.y,
+        font=headline_font,
+        fill=identity.text_primary,
+        line_gap=16,
+    )
+    current_y = _draw_lines(
+        draw,
+        hook_lines,
+        x=hook_block.x,
+        y=max(current_y + 10, hook_block.y),
+        font=hook_font,
+        fill=identity.accent_color,
+        line_gap=12,
+    )
+    current_y = _draw_lines(
+        draw,
+        body_lines,
+        x=body_block.x,
+        y=max(current_y + 16, body_block.y),
+        font=body_font,
+        fill=identity.text_secondary,
+        line_gap=12,
+    )
+
+    support_points = [str(item) for item in (plan.get("support_points") or [])][: contract.max_support_points]
+    chip_y = max(current_y + 22, support_block.y)
+    chip_width = support_block.width
+    for point in support_points:
+        chip_height = _draw_support_chip(
+            draw,
+            x=support_block.x,
+            y=chip_y,
+            text=point[: contract.max_support_chars + 12],
+            font=support_font,
+            identity=identity,
+            width=chip_width,
+        )
+        chip_y += chip_height + safe.support_gap
+
+    cta_top = max(cta_block.y, min(chip_y + 18, panel_bottom - safe.footer_height))
+    draw.rounded_rectangle(
+        (cta_block.x, cta_top, cta_block.x + cta_block.width, cta_top + 88),
+        radius=24,
+        fill=identity.accent_soft_color,
+        outline=identity.panel_border_color,
+        width=2,
+    )
+    _draw_lines(
+        draw,
+        cta_lines,
+        x=cta_block.x + 24,
+        y=cta_top + 18,
+        font=cta_font,
+        fill=identity.accent_color,
+        line_gap=8,
+    )
 
     watermark = identity.watermark_text
-    bbox = draw.textbbox((0, 0), watermark, font=watermark_font) if watermark_font else (0, 0, 180, 24)
-    watermark_w = bbox[2] - bbox[0]
-    draw.text((right - watermark_w - 58, bottom + 18), watermark, fill=identity.watermark_color, font=watermark_font)
+    watermark_bbox = draw.textbbox((0, 0), watermark, font=watermark_font) if watermark_font else (0, 0, 180, 24)
+    watermark_w = watermark_bbox[2] - watermark_bbox[0]
+    draw.text(
+        (panel_right - watermark_w - 12, panel_bottom + 18),
+        watermark,
+        fill=identity.watermark_color,
+        font=watermark_font,
+    )
 
     img.save(out)
     return str(out)
