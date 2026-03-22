@@ -5,54 +5,17 @@ import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .editorial_examples import examples_context
+from .editorial_policy import BRAND_PERSONA, POLICY_VERSION, TONE_OF_VOICE, get_editorial_policy, lexicon_hits
+from .editorial_rubric import evaluate_editorial_quality
+
 STOPWORDS = {
-    "a",
-    "ao",
-    "aos",
-    "as",
-    "às",
-    "com",
-    "como",
-    "da",
-    "das",
-    "de",
-    "do",
-    "dos",
-    "e",
-    "é",
-    "em",
-    "mais",
-    "menos",
-    "na",
-    "nas",
-    "no",
-    "nos",
-    "o",
-    "os",
-    "ou",
-    "para",
-    "por",
-    "que",
-    "se",
-    "sem",
-    "sobre",
-    "um",
-    "uma",
-    "uns",
-    "umas",
+    "a", "ao", "aos", "as", "às", "com", "como", "da", "das", "de", "do", "dos", "e", "é",
+    "em", "mais", "menos", "na", "nas", "no", "nos", "o", "os", "ou", "para", "por", "que",
+    "se", "sem", "sobre", "um", "uma", "uns", "umas",
 }
 
-WEAK_INPUTS = {
-    "",
-    "123",
-    "aaa",
-    "hello",
-    "oi",
-    "test",
-    "teste",
-    "teste real",
-}
-
+WEAK_INPUTS = {"", "123", "aaa", "hello", "oi", "test", "teste", "teste real"}
 SERIES_NAME = "Liberta a Verdade"
 VISUAL_STYLE = "visual_foundation_pack_v1"
 PUBLISH_STYLE = "official_next_visual_foundation_v1"
@@ -82,21 +45,27 @@ class CreativePlan:
     publish_style: str
     quality_score: int
     notes: list[str]
+    policy_version: str
+    brand_persona: str
+    tone_of_voice: list[str]
+    brand_lexicon_hits: list[str]
+    approved_example_ids: list[str]
+    rejected_example_ids: list[str]
+    editorial_score_breakdown: dict[str, int]
+    editorial_reasons: list[str]
+    editorial_flags: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 def _clean_text(value: str) -> str:
-    value = (value or "").strip()
-    return re.sub(r"\s+", " ", value)
+    return re.sub(r"\s+", " ", (value or "").strip())
 
 
 def _strip_accents(value: str) -> str:
     return "".join(
-        char
-        for char in unicodedata.normalize("NFKD", value or "")
-        if not unicodedata.combining(char)
+        char for char in unicodedata.normalize("NFKD", value or "") if not unicodedata.combining(char)
     )
 
 
@@ -128,18 +97,8 @@ def _keywords(topic: str) -> list[str]:
     return unique[:8]
 
 
-def _dedupe_keep_order(values: list[str]) -> list[str]:
-    unique: list[str] = []
-    for value in values:
-        cleaned = _clean_text(value)
-        if cleaned and cleaned not in unique:
-            unique.append(cleaned)
-    return unique
-
-
-def _infer_family(keywords: list[str]) -> str:
+def _family(keywords: list[str]) -> str:
     base = {_normalize(word) for word in keywords if _normalize(word)}
-
     families = {
         "faith": {"fe", "proposito", "deus", "jesus", "biblia", "espiritual", "oracao"},
         "discipline": {"disciplina", "foco", "clareza", "execucao", "consistencia", "direcao", "resultado"},
@@ -147,20 +106,18 @@ def _infer_family(keywords: list[str]) -> str:
         "prosperity": {"prosperidade", "riqueza", "financeiro", "financeira", "abundancia", "escassez", "dinheiro"},
         "branding": {"marca", "conteudo", "instagram", "autoridade", "posicionamento", "comunicacao"},
     }
-
     best_family = "editorial"
     best_hits = 0
-    for family, family_words in families.items():
-        hits = len(base & family_words)
+    for name, terms in families.items():
+        hits = len(base & terms)
         if hits > best_hits:
             best_hits = hits
-            best_family = family
-
+            best_family = name
     return best_family
 
 
 def _choose_color_profile(keywords: list[str]) -> str:
-    family = _infer_family(keywords)
+    family = _family(keywords)
     if family in {"discipline", "emotion", "branding"}:
         return "electric_blue"
     if family == "prosperity":
@@ -175,87 +132,75 @@ def _core_words(keywords: list[str]) -> tuple[str, str, str]:
     return primary, secondary, tertiary
 
 
-def _family_blocks(topic: str, keywords: list[str]) -> dict[str, str | list[str]]:
-    family = _infer_family(keywords)
+def _editorial_blocks(topic: str, keywords: list[str]) -> dict[str, str | list[str]]:
+    family = _family(keywords)
     primary, secondary, tertiary = _core_words(keywords)
 
     if family == "faith":
-        objective = "transformar um tema espiritual em mensagem clara, forte e aplicável"
-        angle = (
-            f"{topic} ganha força quando deixa de ser emoção solta e vira convicção com prática diária."
-        )
+        objective = "transformar tema espiritual em mensagem clara, firme e aplicável"
+        angle = f"{topic} fica mais forte quando sai do impulso emocional e entra em convicção com prática diária."
         hook = (
-            f"O erro silencioso é querer viver {primary} sem construir {secondary}. "
-            f"A intenção até existe, mas a vida continua puxando para o automático."
+            f"Muita gente deseja viver {primary}, mas continua no automático porque tenta sustentar isso sem {secondary}. "
+            f"A intenção existe, só que ainda falta estrutura para virar postura real."
         )
         headline = f"Sem {secondary}, até {primary} perde força no cotidiano."
         body = (
-            f"Quando {primary} não encontra rotina, ela vira só impulso passageiro. "
-            f"Quando {secondary} entra em cena, a decisão ganha constância. "
-            f"E quando {tertiary} assume o centro, o tema deixa de ser discurso bonito e começa a orientar vida real."
+            f"Quando {primary} fica solta, ela vira emoção passageira. Quando {secondary} entra, a decisão ganha continuidade. "
+            f"E quando {tertiary} passa a conduzir a rotina, o tema deixa de ser discurso bonito e começa a organizar vida real."
         )
         support_points = [
-            f"{primary.capitalize()} sem prática vira só emoção.",
+            f"{primary.capitalize()} sem prática vira só impulso.",
             f"{secondary.capitalize()} sustenta convicção nos dias comuns.",
-            f"{tertiary.capitalize()} protege a decisão quando o ânimo oscila.",
+            f"{tertiary.capitalize()} protege a decisão quando a emoção oscila.",
         ]
-        cta = "Salve para revisar depois e envie para alguém que precisa alinhar convicção com prática."
+        cta = "Salve para reler depois e envie para alguém que precisa alinhar convicção com prática diária."
     elif family == "emotion":
-        objective = "dar clareza emocional sem cair em linguagem vaga ou terapêutica genérica"
-        angle = (
-            f"{topic} melhora quando a pessoa para de reagir no impulso e volta a organizar leitura, ritmo e resposta."
-        )
+        objective = "dar clareza emocional sem cair em linguagem terapêutica genérica"
+        angle = f"{topic} melhora quando a pessoa para de reagir no impulso e volta a organizar leitura, ritmo e resposta."
         hook = (
-            f"Muita gente acha que o problema é o peso de {primary}. "
-            f"Na prática, o que costuma agravar tudo é atravessar isso sem {secondary}."
+            f"Nem sempre o peso de {primary} é o problema principal. Muitas vezes o que piora tudo é atravessar isso sem {secondary}, "
+            f"como se toda pressão tivesse a mesma urgência."
         )
         headline = f"Sem {secondary}, {primary} toma conta do dia inteiro."
         body = (
-            f"Sem {secondary}, qualquer ruído parece urgência. "
-            f"Com {tertiary}, a mente volta a enxergar prioridade antes de reagir. "
-            f"O resultado é menos desgaste, mais domínio interno e uma resposta muito mais inteligente."
+            f"Sem {secondary}, qualquer ruído parece ameaça. Com {tertiary}, a mente volta a enxergar prioridade antes da resposta. "
+            f"O efeito não é perfeição instantânea. É menos desgaste, mais domínio interno e uma leitura muito mais lúcida do que realmente importa."
         )
         support_points = [
             f"{secondary.capitalize()} reduz reação automática.",
             f"{tertiary.capitalize()} devolve leitura antes da resposta.",
             f"{primary.capitalize()} perde força quando o eixo interno volta ao lugar.",
         ]
-        cta = "Salve para reler quando a mente acelerar e mande para quem precisa recuperar eixo hoje."
+        cta = "Salve para usar como lembrete de eixo e mande para quem precisa recuperar clareza hoje."
     elif family == "prosperity":
         objective = "elevar valor percebido com linguagem de construção, processo e maturidade"
-        angle = (
-            f"{topic} cresce melhor com leitura, consistência e decisão firme do que com ansiedade e pressa."
-        )
+        angle = f"{topic} não cresce bem com ansiedade desorganizada. Cresce melhor com leitura, consistência e execução repetível."
         hook = (
-            f"O travamento raramente está na falta de vontade. "
-            f"Na maioria das vezes, ele nasce de perseguir {primary} sem construir {secondary}."
+            f"O travamento quase nunca está na falta de vontade. Na maioria das vezes ele nasce de buscar {primary} sem construir {secondary}, "
+            f"como se desejo já fosse base suficiente para sustentar resultado."
         )
         headline = f"Sem {secondary}, {primary} vira só expectativa."
         body = (
-            f"Resultado não responde bem a urgência desorganizada. "
-            f"Ele responde melhor quando {secondary} sustenta processo e {tertiary} organiza foco. "
-            f"É isso que tira o tema do desejo abstrato e aproxima da execução real."
+            f"Resultado responde melhor a processo do que a pressa. Quando {secondary} sustenta a base e {tertiary} organiza prioridade, "
+            f"o tema deixa de soar abstrato e começa a entrar no território da execução concreta."
         )
         support_points = [
             f"{secondary.capitalize()} reduz desperdício de energia e recurso.",
-            f"{tertiary.capitalize()} protege o foco contra distração e ansiedade.",
+            f"{tertiary.capitalize()} protege foco contra distração e ansiedade.",
             f"{primary.capitalize()} fica mais concreto quando a base é previsível.",
         ]
-        cta = "Salve isso como referência de execução e compartilhe com quem precisa trocar pressa por construção."
+        cta = "Salve isso como régua de execução e compartilhe com quem precisa trocar pressa por construção."
     elif family == "branding":
         objective = "transformar o tema em posicionamento forte, legível e menos commodity"
-        angle = (
-            f"{topic} fica mais forte quando abandona volume vazio e assume direção, identidade e utilidade real."
-        )
+        angle = f"{topic} fica mais forte quando abandona volume vazio e assume identidade, recorte e utilidade real."
         hook = (
-            f"O problema quase nunca é falta de conteúdo. "
-            f"O problema é produzir {primary} sem critério, sem {secondary} e sem uma leitura clara de {tertiary}."
+            f"O problema raramente é falta de conteúdo. O problema é produzir {primary} sem critério, sem {secondary} "
+            f"e sem uma leitura clara de {tertiary}."
         )
         headline = f"Sem {secondary}, {primary} parece só mais do mesmo."
         body = (
-            f"Marca não cresce com excesso de postagem sem eixo. "
-            f"Ela cresce quando a mensagem tem direção, quando a forma reforça a ideia e quando o público percebe valor rápido. "
-            f"É assim que o conteúdo deixa de parecer commodity e começa a carregar identidade."
+            f"Marca não cresce com excesso de postagem sem eixo. Ela cresce quando a mensagem tem direção, quando a forma reforça a ideia "
+            f"e quando o público percebe valor rápido. É assim que o conteúdo deixa de parecer commodity e começa a carregar identidade."
         )
         support_points = [
             f"{secondary.capitalize()} separa posicionamento de volume vazio.",
@@ -265,18 +210,15 @@ def _family_blocks(topic: str, keywords: list[str]) -> dict[str, str | list[str]
         cta = "Salve para usar como régua editorial e envie para quem precisa subir o padrão da comunicação."
     else:
         objective = "entregar uma peça editorial mais clara, forte e útil, sem cara de template"
-        angle = (
-            f"{topic} melhora quando sai da frase bonita e entra em critério, prática e decisão repetível."
-        )
+        angle = f"{topic} melhora quando sai da frase bonita e entra em critério, prática e decisão repetível."
         hook = (
-            f"O que mais trava resultado normalmente não é falta de esforço. "
-            f"É tentar sustentar {primary} sem {secondary}."
+            f"O que mais trava resultado normalmente não é falta de esforço. É tentar sustentar {primary} sem {secondary}, "
+            f"como se intenção sozinha conseguisse segurar consistência ao longo do tempo."
         )
         headline = f"Sem {secondary}, {primary} perde força antes de virar resultado."
         body = (
-            f"Ideia boa sozinha não sustenta mudança. "
-            f"Ela precisa de {secondary} para ganhar forma e de {tertiary} para não se perder no meio do caminho. "
-            f"Quando isso acontece, o tema deixa de soar abstrato e começa a servir para a vida real."
+            f"Ideia boa sozinha não sustenta mudança. Ela precisa de {secondary} para ganhar forma e de {tertiary} para não se perder no meio do caminho. "
+            f"Quando isso acontece, o tema deixa de soar abstrato e começa a servir para decisões reais."
         )
         support_points = [
             f"{primary.capitalize()} sem base vira intenção solta.",
@@ -298,90 +240,38 @@ def _family_blocks(topic: str, keywords: list[str]) -> dict[str, str | list[str]
 
 
 def _hashtags(keywords: list[str], family: str) -> list[str]:
-    base_tags = [f"#{_slug(word)}" for word in keywords if _slug(word)]
-
+    tags = [f"#{_slug(word)}" for word in keywords if _slug(word)]
     family_tags = {
         "faith": ["#proposito", "#conviccao", "#direcao"],
         "emotion": ["#clarezamental", "#controleemocional", "#equilibrio"],
         "prosperity": ["#prosperidade", "#execucao", "#consistencia"],
         "discipline": ["#disciplina", "#foco", "#direcao"],
-        "branding": ["#posicionamento", "#autoridade", "#conteudocomproposito"],
+        "branding": ["#posicionamento", "#autoridade", "#conteudocomcriterio"],
         "editorial": ["#clareza", "#estrategia", "#direcao"],
     }
+    tags.extend(family_tags.get(family, []))
+    tags.extend(["#libertaaverdade", "#valorreal", "#mentalidade"])
+    unique: list[str] = []
+    for tag in tags:
+        if tag and tag not in unique:
+            unique.append(tag)
+    return unique[:8]
 
-    tags = base_tags + family_tags.get(family, []) + ["#libertaaverdade", "#mentalidade", "#valorreal"]
-    return _dedupe_keep_order(tags)[:8]
 
-
-def _build_first_comment(topic: str, support_points: list[str], hashtags: list[str]) -> str:
-    opening = f"Qual parte disso mais pega em você hoje em {topic}?"
+def _first_comment(topic: str, support_points: list[str], hashtags: list[str]) -> str:
+    opening = f"Qual parte disso mais pesa hoje em {topic}?"
     proof = support_points[0] if support_points else "Clareza muda execução."
-    tail = " ".join(hashtags[:4])
-    return f"{opening} {proof} {tail}".strip()
-
-
-def _score_text(
-    *,
-    topic: str,
-    hook: str,
-    headline: str,
-    body: str,
-    support_points: list[str],
-    cta: str,
-    hashtags: list[str],
-) -> int:
-    score = 60
-
-    if len(topic) >= 12:
-        score += 3
-    if len(headline) >= 24:
-        score += 6
-    if len(hook) >= 90:
-        score += 6
-    if len(body) >= 160:
-        score += 7
-    if len(support_points) >= 3:
-        score += 5
-    if len(hashtags) >= 6:
-        score += 3
-
-    normalized_text = _normalize(" ".join([topic, hook, headline, body, cta] + support_points))
-    strong_signals = {
-        "clareza",
-        "consistencia",
-        "criterio",
-        "direcao",
-        "execucao",
-        "foco",
-        "pratica",
-        "resultado",
-    }
-    token_hits = len({token for token in strong_signals if token in normalized_text})
-    score += min(token_hits * 2, 8)
-
-    commodity_flags = [
-        "descubra",
-        "imperdivel",
-        "incrivel",
-        "mude sua vida agora",
-        "clique",
-        "viral",
-    ]
-    if any(flag in normalized_text for flag in commodity_flags):
-        score -= 12
-
-    if _normalize(topic) in WEAK_INPUTS:
-        score = min(score, 60)
-
-    return max(52, min(score, 92))
+    return f"{opening} {proof} {' '.join(hashtags[:4])}".strip()
 
 
 def build_creative_plan(trend: str) -> CreativePlan:
+    policy = get_editorial_policy()
     clean_input = _clean_text(trend)
     topic = _topic_seed(clean_input)
     keywords = _keywords(topic)
+    blocks = _editorial_blocks(topic, keywords)
+    examples = examples_context(topic)
 
-    blocks = _family_blocks(topic, keywords)
     family = str(blocks["family"])
     objective = str(blocks["objective"])
     angle = str(blocks["angle"])
@@ -390,19 +280,20 @@ def build_creative_plan(trend: str) -> CreativePlan:
     body = str(blocks["body"])
     support_points = [str(item) for item in blocks["support_points"]]
     cta = str(blocks["cta"])
-
     hashtags = _hashtags(keywords, family)
-    first_comment = _build_first_comment(topic, support_points, hashtags)
+    first_comment = _first_comment(topic, support_points, hashtags)
 
-    quality_score = _score_text(
-        topic=topic,
-        hook=hook,
-        headline=headline,
-        body=body,
-        support_points=support_points,
-        cta=cta,
-        hashtags=hashtags,
-    )
+    draft_plan = {
+        "trend_input": clean_input,
+        "topic_seed": topic,
+        "headline": headline,
+        "hook": hook,
+        "body": body,
+        "support_points": support_points,
+        "cta": cta,
+        "hashtags": hashtags,
+    }
+    editorial_qa = evaluate_editorial_quality(draft_plan)
 
     caption = (
         f"{hook}\n\n"
@@ -417,11 +308,11 @@ def build_creative_plan(trend: str) -> CreativePlan:
     )
 
     notes = [
+        f"policy={POLICY_VERSION}",
         f"editorial_family={family}",
-        "planner=rebuild_v2",
-        "hook_mode=tension_plus_clarity",
-        "cta_mode=practical_share_save",
-        "distribution=hashtags_plus_first_comment",
+        "foundation_editorial_model_v1_active",
+        "planner_mode=anti_cliche_anti_commodity",
+        "strategic_target=reel_premium",
     ]
 
     return CreativePlan(
@@ -443,6 +334,15 @@ def build_creative_plan(trend: str) -> CreativePlan:
         visual_style=VISUAL_STYLE,
         color_profile=_choose_color_profile(keywords),
         publish_style=PUBLISH_STYLE,
-        quality_score=quality_score,
+        quality_score=editorial_qa.final_score,
         notes=notes,
+        policy_version=policy["version"],
+        brand_persona=BRAND_PERSONA,
+        tone_of_voice=list(TONE_OF_VOICE),
+        brand_lexicon_hits=lexicon_hits(" ".join([headline, hook, body, cta] + support_points)),
+        approved_example_ids=list(examples["approved_ids"]),
+        rejected_example_ids=list(examples["rejected_ids"]),
+        editorial_score_breakdown=dict(editorial_qa.breakdown),
+        editorial_reasons=list(editorial_qa.reasons),
+        editorial_flags=list(editorial_qa.flags),
     )
