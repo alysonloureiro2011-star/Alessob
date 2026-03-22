@@ -27,7 +27,7 @@ def _n(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _round2(value: float) -> float:
+def _r(value: float) -> float:
     return round(float(value), 2)
 
 
@@ -38,8 +38,8 @@ def evaluate_rubric_engine(
     visual_qa: dict[str, Any],
     perceptual_qa: dict[str, Any],
 ) -> RubricEngineResult:
-    editorial = editorial_qa.get("breakdown") or {}
-    perceptual = perceptual_qa.get("breakdown") or {}
+    editorial = dict(editorial_qa.get("breakdown") or {})
+    perceptual = dict(perceptual_qa.get("breakdown") or {})
 
     headline = _n(editorial.get("headline"))
     hook = _n(editorial.get("hook"))
@@ -59,33 +59,33 @@ def evaluate_rubric_engine(
     perceived_value_visual = _n(perceptual.get("perceived_value_visual"))
     noise_control = _n(perceptual.get("noise_control"))
 
-    novelty = _round2((anti_genericity + semantic_density) / 2.0)
-    brand_fit = _round2((brand_fit_visual + anti_genericity + anti_commodity) / 3.0)
-    perceived_value = _round2((perceived_value_editorial + perceived_value_visual) / 2.0)
-    visual_impact = _round2((contrast + composition + brand_fit_visual) / 3.0)
-    shareability = _round2((hook + perceived_value + brand_fit) / 3.0)
-    saveability = _round2((clarity + semantic_density + perceived_value) / 3.0)
+    novelty = _r((anti_genericity + semantic_density) / 2.0)
+    brand_fit = _r((brand_fit_visual + anti_genericity + anti_commodity) / 3.0)
+    perceived_value = _r((perceived_value_editorial + perceived_value_visual) / 2.0)
+    visual_impact = _r((contrast + composition + brand_fit_visual) / 3.0)
+    shareability = _r((hook + perceived_value + brand_fit) / 3.0)
+    saveability = _r((clarity + semantic_density + perceived_value) / 3.0)
 
     breakdown = {
-        "headline": _round2(headline),
-        "hook": _round2(hook),
-        "clarity": _round2(clarity),
-        "semantic_density": _round2(semantic_density),
-        "authority": _round2(authority),
-        "perceived_value": _round2(perceived_value),
-        "narrative_tension": _round2(narrative_tension),
-        "novelty": _round2(novelty),
-        "naturalism": _round2(naturalism),
-        "anti_genericity": _round2(anti_genericity),
-        "anti_commodity": _round2(anti_commodity),
-        "legibility": _round2(legibility),
-        "contrast": _round2(contrast),
-        "composition": _round2(composition),
-        "visual_impact": _round2(visual_impact),
-        "shareability": _round2(shareability),
-        "saveability": _round2(saveability),
-        "brand_fit": _round2(brand_fit),
-        "noise_control": _round2(noise_control),
+        "headline": _r(headline),
+        "hook": _r(hook),
+        "clarity": _r(clarity),
+        "semantic_density": _r(semantic_density),
+        "authority": _r(authority),
+        "perceived_value": _r(perceived_value),
+        "narrative_tension": _r(narrative_tension),
+        "novelty": _r(novelty),
+        "naturalism": _r(naturalism),
+        "anti_genericity": _r(anti_genericity),
+        "anti_commodity": _r(anti_commodity),
+        "legibility": _r(legibility),
+        "contrast": _r(contrast),
+        "composition": _r(composition),
+        "visual_impact": _r(visual_impact),
+        "shareability": _r(shareability),
+        "saveability": _r(saveability),
+        "brand_fit": _r(brand_fit),
+        "noise_control": _r(noise_control),
     }
 
     editorial_cluster = (
@@ -127,7 +127,7 @@ def evaluate_rubric_engine(
         "distribution_potential": 0.10,
     }
 
-    global_score = _round2(
+    global_score = _r(
         editorial_cluster * weights["editorial_text"]
         + visual_cluster * weights["visual_composition"]
         + brand_cluster * weights["brand_perception"]
@@ -145,8 +145,8 @@ def evaluate_rubric_engine(
         "legibility": 7.0,
         "composition": 7.0,
         "contrast": 7.0,
-        "brand_live_global_score": 8.8,
         "minimum_quality_score": 7.5,
+        "brand_live_global_score": 8.8,
     }
 
     failed_floors: list[str] = []
