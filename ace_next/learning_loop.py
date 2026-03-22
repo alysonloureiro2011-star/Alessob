@@ -9,6 +9,19 @@ def _count_by(records: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(Counter(values))
 
 
+def _source_status(record: dict[str, Any]) -> str:
+    real_metrics = dict(record.get("real_metrics") or {})
+    return str(real_metrics.get("source_status") or "unknown")
+
+
+def _ingestion_state(source_status: str) -> str:
+    if source_status in {"collected", "partial_collected"}:
+        return "real_data_collected"
+    if source_status in {"collection_error", "missing_token"}:
+        return "collection_error"
+    return "no_real_data_yet"
+
+
 def build_learning_loop_summary(
     *,
     records: list[dict[str, Any]],
@@ -21,20 +34,25 @@ def build_learning_loop_summary(
     publish_status = _count_by(records, "publish_status")
     evidence_status = _count_by(records, "evidence_status")
 
+    source_status_values = [_source_status(record) for record in records]
+    real_metrics_source_status_counts = dict(Counter(source_status_values))
+    ingestion_state_counts = dict(Counter(_ingestion_state(status) for status in source_status_values))
+
     linked_with_receipt = sum(1 for record in records if record.get("receipt"))
-    pending_real_metrics = sum(
-        1
-        for record in records
-        if ((record.get("post_performance") or {}).get("status") or "") != "collected"
-    )
+    latest_real_metrics = dict(latest.get("real_metrics") or {})
+    latest_reflection = dict(latest.get("reflection_memory") or {})
 
     suggestions: list[str] = []
     if not records:
         suggestions.append("Ainda não há registros suficientes para aprendizado útil.")
     else:
-        suggestions.append("O learning loop está em modo de registro e consolidação, não de governança automática.")
-        if pending_real_metrics > 0:
-            suggestions.append("Ainda faltam métricas reais externas para fechar o ciclo de performance.")
+        suggestions.append("O learning loop está em modo de registro, consolidação e sugestão controlada.")
+        if ingestion_state_counts.get("no_real_data_yet", 0) > 0:
+            suggestions.append("Existem registros ainda sem métricas reais confirmadas.")
+        if ingestion_state_counts.get("collection_error", 0) > 0:
+            suggestions.append("Houve erro de coleta em parte dos registros; isso não deve ser tratado como sucesso.")
+        if ingestion_state_counts.get("real_data_collected", 0) > 0:
+            suggestions.append("Já existem registros com métricas reais coletadas.")
         if states.get("technical_test", 0) > 0:
             suggestions.append("Há registros de teste técnico; isso não conta como validação de marca.")
         if states.get("editorial_staging", 0) > 0:
@@ -44,16 +62,21 @@ def build_learning_loop_summary(
 
     return {
         "ok": True,
-        "mode": "learning_loop_real_base_v1",
+        "mode": "performance_ingestion_real_base_v1",
         "records_considered": len(records),
         "linked_with_receipt": linked_with_receipt,
-        "pending_real_metrics": pending_real_metrics,
         "operational_state_counts": states,
         "publish_status_counts": publish_status,
         "evidence_status_counts": evidence_status,
+        "real_metrics_source_status_counts": real_metrics_source_status_counts,
+        "ingestion_state_counts": ingestion_state_counts,
         "latest_record_id": latest.get("record_id"),
         "latest_operational_state": latest.get("operational_state"),
         "latest_publish_status": latest.get("publish_status"),
+        "latest_real_metrics_status": latest_real_metrics.get("source_status"),
+        "latest_real_metrics_collected_at": latest_real_metrics.get("collected_at"),
+        "latest_reflection_status": latest_reflection.get("status"),
+        "latest_reflection_notes": latest_reflection.get("notes"),
         "insight_control": {
             "can_record": True,
             "can_consolidate": True,
