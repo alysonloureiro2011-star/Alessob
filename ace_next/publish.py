@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,12 +29,14 @@ class PublishReceipt:
     ok: bool
     publish_status: str
     created_at: str
+    receipt_id: str | None = None
     content_type: str | None = None
     trend: str | None = None
     style: str | None = None
     caption: str | None = None
     media_path: str | None = None
     media_url: str | None = None
+    linkage_context: dict[str, Any] | None = None
     raw_publish_result: dict[str, Any] | None = None
     error: str | None = None
     creation_id: str | None = None
@@ -50,12 +53,14 @@ def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
         ok=bool(kwargs.get("ok", False)),
         publish_status=kwargs.get("publish_status") or "placeholder",
         created_at=created_at,
+        receipt_id=kwargs.get("receipt_id") or f"receipt_{uuid.uuid4().hex}",
         content_type=kwargs.get("content_type"),
         trend=kwargs.get("trend"),
         style=kwargs.get("style"),
         caption=kwargs.get("caption"),
         media_path=kwargs.get("media_path"),
         media_url=kwargs.get("media_url"),
+        linkage_context=kwargs.get("linkage_context"),
         raw_publish_result=kwargs.get("raw_publish_result"),
         error=kwargs.get("error") or "publish_placeholder_fallback",
         creation_id=kwargs.get("creation_id"),
@@ -78,18 +83,12 @@ class PublishService:
             return None
         return f"{self.config.public_media_base_url.rstrip('/')}/media/{name}"
 
-    def _normalize_payload(
-        self,
-        payload: PublishReceipt | dict[str, Any],
-    ) -> dict[str, Any]:
+    def _normalize_payload(self, payload: PublishReceipt | dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload, PublishReceipt):
             return payload.to_dict()
         return dict(payload or {})
 
-    def save_receipt(
-        self,
-        receipt: PublishReceipt | dict[str, Any],
-    ) -> dict[str, Any]:
+    def save_receipt(self, receipt: PublishReceipt | dict[str, Any]) -> dict[str, Any]:
         payload = self._normalize_payload(receipt)
         self.receipt_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -102,10 +101,7 @@ class PublishService:
                 pass
         return payload
 
-    def save_error(
-        self,
-        error: PublishReceipt | dict[str, Any],
-    ) -> dict[str, Any]:
+    def save_error(self, error: PublishReceipt | dict[str, Any]) -> dict[str, Any]:
         payload = self._normalize_payload(error)
         self.error_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -142,7 +138,6 @@ class PublishService:
                     return summary
             except Exception:
                 pass
-
         return {
             "ok": True,
             "last_publish_receipt": self.get_last_receipt(),
@@ -211,7 +206,11 @@ class PublishService:
             return True
 
         combined = f"{message} {user_message}"
-        return "media id is not available" in combined or "mídia não está pronta" in combined or "media is not ready" in combined
+        return (
+            "media id is not available" in combined
+            or "mídia não está pronta" in combined
+            or "media is not ready" in combined
+        )
 
     def _publish_with_retry(
         self,
@@ -222,7 +221,6 @@ class PublishService:
         waits: tuple[int, ...] = (3, 5, 8, 12, 15, 20),
     ) -> dict[str, Any]:
         last_result: dict[str, Any] | None = None
-
         for idx in range(attempts):
             published = self._graph_request(
                 "POST",
@@ -264,6 +262,7 @@ class PublishService:
         media_path: str | None,
         media_url: str | None,
         error: str,
+        linkage_context: dict[str, Any] | None = None,
         raw_publish_result: dict[str, Any] | None = None,
         creation_id: str | None = None,
         media_id: str | None = None,
@@ -273,12 +272,14 @@ class PublishService:
             ok=False,
             publish_status="error",
             created_at=datetime.now().isoformat(),
+            receipt_id=f"receipt_{uuid.uuid4().hex}",
             content_type=content_type,
             trend=trend,
             style=style,
             caption=caption,
             media_path=media_path,
             media_url=media_url,
+            linkage_context=linkage_context,
             raw_publish_result=raw_publish_result,
             error=error,
             creation_id=creation_id,
@@ -295,15 +296,18 @@ class PublishService:
         content_type: str,
         caption: str,
         media_path: str | None,
+        linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         receipt = build_placeholder_receipt(
             created_at=datetime.now().isoformat(),
+            receipt_id=f"receipt_{uuid.uuid4().hex}",
             content_type=content_type,
             trend=trend,
             style=style,
             caption=caption,
             media_path=media_path,
             media_url=self.build_media_url(media_path),
+            linkage_context=linkage_context,
             raw_publish_result={
                 "mode": "placeholder",
                 "real_publish_enabled": self.config.enable_real_publish,
@@ -322,8 +326,10 @@ class PublishService:
         content_type: str,
         caption: str,
         media_path: str | None,
+        linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ig_id = self.config.ig_id
+
         if not self.config.enable_real_publish:
             return self.publish_placeholder(
                 trend=trend,
@@ -331,6 +337,7 @@ class PublishService:
                 content_type=content_type,
                 caption=caption,
                 media_path=media_path,
+                linkage_context=linkage_context,
             )
 
         if not ig_id:
@@ -341,6 +348,7 @@ class PublishService:
                 caption=caption,
                 media_path=media_path,
                 media_url=self.build_media_url(media_path),
+                linkage_context=linkage_context,
                 error="IG_ID ausente",
             )
 
@@ -353,6 +361,7 @@ class PublishService:
                 caption=caption,
                 media_path=media_path,
                 media_url=None,
+                linkage_context=linkage_context,
                 error="media_url_indisponivel",
             )
 
@@ -372,6 +381,7 @@ class PublishService:
                 caption=caption,
                 media_path=media_path,
                 media_url=media_url,
+                linkage_context=linkage_context,
                 error="container_fail",
                 raw_publish_result={"container": container},
             )
@@ -385,6 +395,7 @@ class PublishService:
                 caption=caption,
                 media_path=media_path,
                 media_url=media_url,
+                linkage_context=linkage_context,
                 error="creation_id_ausente",
                 raw_publish_result={"container": container},
             )
@@ -401,6 +412,7 @@ class PublishService:
                 caption=caption,
                 media_path=media_path,
                 media_url=media_url,
+                linkage_context=linkage_context,
                 error="publish_fail",
                 raw_publish_result={"container": container, "published": published},
                 creation_id=creation_id,
@@ -423,12 +435,14 @@ class PublishService:
             ok=True,
             publish_status="published",
             created_at=datetime.now().isoformat(),
+            receipt_id=f"receipt_{uuid.uuid4().hex}",
             content_type=content_type,
             trend=trend,
             style=style,
             caption=caption,
             media_path=media_path,
             media_url=media_url,
+            linkage_context=linkage_context,
             raw_publish_result={
                 "container": container,
                 "published": published,
