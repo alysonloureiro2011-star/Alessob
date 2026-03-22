@@ -38,38 +38,39 @@ class VisualTemplate:
         }
 
 
-def _base_blocks() -> dict[str, TemplateBlock]:
-    return {
-        "eyebrow": TemplateBlock("eyebrow", 118, 282, 260, 44, 1, "left"),
-        "headline": TemplateBlock("headline", 118, 352, 844, 236, 2, "left"),
-        "hook": TemplateBlock("hook", 118, 606, 844, 128, 3, "left"),
-        "body": TemplateBlock("body", 118, 752, 844, 190, 4, "left"),
-        "support": TemplateBlock("support", 118, 964, 844, 132, 5, "left"),
-        "cta": TemplateBlock("cta", 118, 1120, 844, 76, 6, "left"),
+def build_signal_card_clean_template() -> VisualTemplate:
+    blocks = {
+        "eyebrow": TemplateBlock("eyebrow", 132, 244, 280, 40, 1, "left"),
+        "headline": TemplateBlock("headline", 132, 314, 816, 196, 2, "left"),
+        "hook": TemplateBlock("hook", 132, 538, 816, 96, 3, "left"),
+        "body": TemplateBlock("body", 132, 666, 816, 132, 4, "left"),
+        "support": TemplateBlock("support", 132, 832, 816, 118, 5, "left"),
+        "cta": TemplateBlock("cta", 132, 1000, 816, 62, 6, "left"),
     }
-
-
-def build_signal_card_template() -> VisualTemplate:
-    blocks = _base_blocks()
     return VisualTemplate(
-        template_id="signal_card_v2",
-        display_name="Signal Card V2",
-        use_case="insight editorial principal",
-        density="controlled",
+        template_id="signal_card_clean_v3",
+        display_name="Signal Card Clean V3",
+        use_case="card principal mobile-first com menor densidade",
+        density="mobile_clean",
         block_order=["eyebrow", "headline", "hook", "body", "support", "cta"],
         blocks=blocks,
     )
 
 
-def build_contrast_card_template() -> VisualTemplate:
-    blocks = _base_blocks()
-    blocks["headline"] = TemplateBlock("headline", 118, 346, 844, 220, 2, "left")
-    blocks["body"] = TemplateBlock("body", 118, 744, 844, 170, 4, "left")
+def build_contrast_card_clean_template() -> VisualTemplate:
+    blocks = {
+        "eyebrow": TemplateBlock("eyebrow", 132, 244, 280, 40, 1, "left"),
+        "headline": TemplateBlock("headline", 132, 308, 816, 180, 2, "left"),
+        "hook": TemplateBlock("hook", 132, 506, 816, 92, 3, "left"),
+        "body": TemplateBlock("body", 132, 630, 816, 120, 4, "left"),
+        "support": TemplateBlock("support", 132, 786, 816, 112, 5, "left"),
+        "cta": TemplateBlock("cta", 132, 958, 816, 58, 6, "left"),
+    }
     return VisualTemplate(
-        template_id="contrast_card_v1",
-        display_name="Contrast Card V1",
-        use_case="headline mais agressiva com corpo mais enxuto",
-        density="controlled",
+        template_id="contrast_card_clean_v2",
+        display_name="Contrast Card Clean V2",
+        use_case="headline forte com corpo compacto e mais respiro",
+        density="mobile_clean",
         block_order=["eyebrow", "headline", "hook", "body", "support", "cta"],
         blocks=blocks,
     )
@@ -77,6 +78,8 @@ def build_contrast_card_template() -> VisualTemplate:
 
 def resolve_visual_template(plan: dict[str, Any]) -> VisualTemplate:
     headline = str(plan.get("headline") or "")
-    if len(headline) > 84:
-        return build_signal_card_template()
-    return build_contrast_card_template()
+    hook = str(plan.get("hook") or "")
+
+    if len(headline) > 78 or len(hook) > 118:
+        return build_signal_card_clean_template()
+    return build_contrast_card_clean_template()
