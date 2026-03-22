@@ -14,6 +14,9 @@ class SafeZones:
     content_left: int
     content_right: int
     support_gap: int
+    headline_gap: int
+    hook_gap: int
+    body_gap: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +51,10 @@ class VisualContract:
     density_target: str
     hierarchy_model: list[str]
     thresholds: VisualThresholds
+    headline_chars_budget: int
+    hook_chars_budget: int
+    body_chars_budget: int
+    cta_chars_budget: int
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,27 +72,90 @@ class VisualContract:
             "density_target": self.density_target,
             "hierarchy_model": list(self.hierarchy_model),
             "thresholds": self.thresholds.to_dict(),
+            "headline_chars_budget": self.headline_chars_budget,
+            "hook_chars_budget": self.hook_chars_budget,
+            "body_chars_budget": self.body_chars_budget,
+            "cta_chars_budget": self.cta_chars_budget,
         }
 
 
+def _clean(value: str) -> str:
+    return " ".join((value or "").strip().split())
+
+
+def _trim_words(text: str, limit: int) -> str:
+    text = _clean(text)
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit].rsplit(" ", 1)[0].strip()
+    if clipped:
+        return f"{clipped}..."
+    return f"{text[:limit].strip()}..."
+
+
+def _split_fragments(text: str) -> list[str]:
+    if not text:
+        return []
+    normalized = (
+        text.replace("?", ".")
+        .replace("!", ".")
+        .replace(";", ".")
+        .replace(":", ".")
+        .replace("—", ".")
+    )
+    return [part.strip(" -") for part in normalized.split(".") if part.strip(" -")]
+
+
+def _compact_sentence(text: str, limit: int) -> str:
+    text = _clean(text)
+    if not text:
+        return ""
+    parts = _split_fragments(text)
+    if parts:
+        for part in parts:
+            if len(part) >= 24:
+                return _trim_words(part, limit)
+        return _trim_words(parts[0], limit)
+    return _trim_words(text, limit)
+
+
+def prepare_display_copy(plan: dict[str, Any], contract: VisualContract) -> dict[str, Any]:
+    headline = _compact_sentence(str(plan.get("headline") or ""), contract.headline_chars_budget)
+    hook = _compact_sentence(str(plan.get("hook") or ""), contract.hook_chars_budget)
+    body = _compact_sentence(str(plan.get("body") or ""), contract.body_chars_budget)
+
+    support_points: list[str] = []
+    for point in (plan.get("support_points") or [])[: contract.max_support_points]:
+        compact = _compact_sentence(str(point), contract.max_support_chars)
+        if compact:
+            support_points.append(compact)
+
+    cta = _compact_sentence(str(plan.get("cta") or ""), contract.cta_chars_budget)
+    if not cta:
+        cta = "Salve e releia depois."
+
+    return {
+        "headline": headline,
+        "hook": hook,
+        "body": body,
+        "support_points": support_points,
+        "cta": cta,
+    }
+
+
 def build_visual_contract(plan: dict[str, Any]) -> VisualContract:
-    headline = str(plan.get("headline") or "")
-    body = str(plan.get("body") or "")
-    support_points = plan.get("support_points") or []
-
-    headline_lines = 3 if len(headline) <= 92 else 4
-    body_lines = 4 if len(body) <= 260 else 5
-    support_limit = 3 if len(support_points) >= 3 else max(1, len(support_points) or 1)
-
     safe = SafeZones(
-        outer_margin=68,
-        header_height=154,
-        footer_height=136,
-        content_top=224,
-        content_bottom=1188,
-        content_left=94,
-        content_right=986,
-        support_gap=18,
+        outer_margin=78,
+        header_height=136,
+        footer_height=120,
+        content_top=198,
+        content_bottom=1168,
+        content_left=98,
+        content_right=982,
+        support_gap=16,
+        headline_gap=16,
+        hook_gap=18,
+        body_gap=22,
     )
     thresholds = VisualThresholds(
         minimum_visual_score=75,
@@ -101,13 +171,13 @@ def build_visual_contract(plan: dict[str, Any]) -> VisualContract:
         aspect_ratio="4:5",
         mobile_first=True,
         safe_zones=safe,
-        max_headline_lines=headline_lines,
-        max_hook_lines=3,
-        max_body_lines=body_lines,
-        max_support_points=support_limit,
-        max_support_chars=76,
-        max_cta_lines=2,
-        density_target="controlled",
+        max_headline_lines=3,
+        max_hook_lines=2,
+        max_body_lines=3,
+        max_support_points=2,
+        max_support_chars=58,
+        max_cta_lines=1,
+        density_target="mobile_clean",
         hierarchy_model=[
             "eyebrow",
             "headline",
@@ -118,4 +188,8 @@ def build_visual_contract(plan: dict[str, Any]) -> VisualContract:
             "watermark",
         ],
         thresholds=thresholds,
+        headline_chars_budget=66,
+        hook_chars_budget=108,
+        body_chars_budget=158,
+        cta_chars_budget=52,
     )
