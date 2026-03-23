@@ -62,6 +62,10 @@ def build_performance_summary(
     reward_prediction: dict[str, Any],
     thompson_sampler: dict[str, Any],
     decision_core_summary: dict[str, Any],
+    evidence_interpreter: dict[str, Any],
+    experiment_resolution: dict[str, Any],
+    recommendation_engine: dict[str, Any],
+    wave10_summary: dict[str, Any],
 ) -> dict[str, Any]:
     real_metrics = dict(real_metrics_contract or {})
     attention_breakdown = dict(attention_metrics.get("breakdown") or {})
@@ -91,13 +95,18 @@ def build_performance_summary(
         probe_receipt_created=probe_receipt_created,
     )
 
+    store_latest_source_status = performance_store.get("latest_source_status")
+    store_latest_probe_publish_executed = performance_store.get("latest_probe_publish_executed")
+    latest_source_status = store_latest_source_status if store_latest_source_status is not None else source_status
+    latest_probe_publish_executed = (
+        store_latest_probe_publish_executed
+        if store_latest_probe_publish_executed is not None
+        else probe_publish_executed
+    )
     latest_real_metrics_status = (
         performance_store.get("latest_real_metrics_status")
-        or performance_store.get("latest_source_status")
-        or source_status
+        or latest_source_status
     )
-    latest_source_status = performance_store.get("latest_source_status") or source_status
-    latest_probe_publish_executed = bool(performance_store.get("latest_probe_publish_executed"))
 
     evidence_bridge_state = {
         "has_real_receipt": has_real_receipt,
@@ -111,7 +120,7 @@ def build_performance_summary(
             has_media_id=has_media_id,
             has_permalink=has_permalink,
             latest_source_status=latest_source_status,
-            latest_probe_publish_executed=latest_probe_publish_executed,
+            latest_probe_publish_executed=bool(latest_probe_publish_executed),
             probe_requested=probe_requested,
         ),
     }
@@ -159,6 +168,22 @@ def build_performance_summary(
             "winner_candidate": thompson_sampler.get("winner_candidate"),
             "summary": decision_core_summary,
         },
+        "evidence_interpretation_state": {
+            "evidence_state": evidence_interpreter.get("evidence_state"),
+            "evidence_strength": evidence_interpreter.get("evidence_strength"),
+            "evidence_ready_for_resolution": evidence_interpreter.get("evidence_ready_for_resolution"),
+        },
+        "experiment_resolution_state": {
+            "resolution_state": experiment_resolution.get("resolution_state"),
+            "can_resolve": experiment_resolution.get("can_resolve"),
+            "promotion_readiness": experiment_resolution.get("promotion_readiness"),
+            "keep_collecting": experiment_resolution.get("keep_collecting"),
+        },
+        "recommendation_state": {
+            "recommended_action": recommendation_engine.get("recommended_action"),
+            "next_best_step": recommendation_engine.get("next_best_step"),
+            "requires_human_review": recommendation_engine.get("requires_human_review"),
+        },
         "store_state": {
             "total_records": performance_store.get("total_records"),
             "latest_source_status": performance_store.get("latest_source_status"),
@@ -170,6 +195,9 @@ def build_performance_summary(
         "learning_state": {
             "records_considered": learning_loop.get("records_considered"),
             "latest_real_metrics_status": learning_loop.get("latest_real_metrics_status"),
+            "latest_evidence_state": learning_loop.get("latest_evidence_state"),
+            "latest_resolution_state": learning_loop.get("latest_resolution_state"),
+            "latest_recommended_action": learning_loop.get("latest_recommended_action"),
         },
         "experiment_state": {
             "total_experiments": experiment_registry.get("total_experiments"),
@@ -182,6 +210,9 @@ def build_performance_summary(
             "episodes_with_receipt": episodic_performance_memory.get("episodes_with_receipt"),
             "episodes_with_media_id": episodic_performance_memory.get("episodes_with_media_id"),
             "episodes_with_permalink": episodic_performance_memory.get("episodes_with_permalink"),
+            "latest_evidence_state": episodic_performance_memory.get("latest_evidence_state"),
+            "latest_resolution_state": episodic_performance_memory.get("latest_resolution_state"),
+            "latest_recommendation_state": episodic_performance_memory.get("latest_recommendation_state"),
         },
         "attention_state": {
             "source_status": attention_metrics.get("source_status"),
@@ -193,6 +224,7 @@ def build_performance_summary(
             "status": reflection_memory.get("status"),
             "notes": reflection_memory.get("notes"),
         },
+        "wave10_summary": wave10_summary,
         "guardrails": {
             "zero_fake_data": True,
             "zero_random": True,
