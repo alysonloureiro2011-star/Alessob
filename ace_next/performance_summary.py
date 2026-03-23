@@ -41,6 +41,8 @@ def build_performance_summary(
             "has_permalink": bool(publish.get("permalink")),
             "media_id": publish.get("media_id"),
             "permalink": publish.get("permalink"),
+            "receipt_id": publish.get("receipt_id"),
+            "operational_state": publish.get("operational_state"),
         },
         "ingestion_state": {
             "attempted": collection_attempted,
