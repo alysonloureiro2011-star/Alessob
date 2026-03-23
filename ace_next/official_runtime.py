@@ -756,7 +756,6 @@ class OfficialRuntime:
 
         authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
         operational_state = authorization_state
-        brand_live_allowed = False
         block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
 
         probe_context = {
@@ -793,7 +792,6 @@ class OfficialRuntime:
         }
 
         publish_result = None
-        media_path = None
 
         try:
             if force_placeholder or (publication_authorization_gate.get("can_publish_placeholder") and not probe_context["eligible"]):
@@ -806,6 +804,7 @@ class OfficialRuntime:
                     linkage_context=linkage_context,
                 )
             elif probe_context["eligible"]:
+                media_path = None
                 try:
                     media_path = render_visual_foundation_card(
                         config=self.config,
