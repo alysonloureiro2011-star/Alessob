@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from typing import Any
@@ -15,6 +16,10 @@ def build_performance_summary(
     publish_result: dict[str, Any] | None,
     reflection_memory: dict[str, Any],
     probe_context: dict[str, Any] | None,
+    resonance_engine: dict[str, Any],
+    reward_prediction: dict[str, Any],
+    thompson_sampler: dict[str, Any],
+    decision_core_summary: dict[str, Any],
 ) -> dict[str, Any]:
     real_metrics = dict(real_metrics_contract or {})
     attention_breakdown = dict(attention_metrics.get("breakdown") or {})
@@ -49,6 +54,16 @@ def build_performance_summary(
             "success": collection_success,
             "source_status": source_status,
             "source_reason": real_metrics.get("source_reason"),
+        },
+        "decision_core_state": {
+            "resonance_score": resonance_engine.get("resonance_score"),
+            "reward_prediction_score": reward_prediction.get("reward_prediction_score"),
+            "selected_variant": thompson_sampler.get("selected_variant"),
+            "confidence_level": thompson_sampler.get("confidence_level"),
+            "experiment_decision_state": thompson_sampler.get("decision_state"),
+            "posterior_mean": thompson_sampler.get("posterior_mean"),
+            "winner_candidate": thompson_sampler.get("winner_candidate"),
+            "summary": decision_core_summary,
         },
         "store_state": {
             "total_records": performance_store.get("total_records"),
