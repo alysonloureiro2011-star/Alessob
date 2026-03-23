@@ -667,7 +667,7 @@ class OfficialRuntime:
         except Exception as exc:
             refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
 
-        authorization_state = publication_authorization_gate.get("selected_state", "internal_lab")
+        authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
         operational_state = authorization_state
         brand_live_allowed = False
         block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
@@ -709,7 +709,7 @@ class OfficialRuntime:
         media_path = None
 
         try:
-            if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
+            if force_placeholder or (publication_authorization_gate.get("can_publish_placeholder") and not probe_context["eligible"]):
                 publish_result = self.publish.publish_placeholder(
                     trend=trend,
                     style=str(plan.publish_style),
