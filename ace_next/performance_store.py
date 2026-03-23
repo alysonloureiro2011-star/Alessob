@@ -16,9 +16,13 @@ class PerformanceStoreSummary:
     last_operational_state: str | None
     latest_source_status: str | None
     latest_collected_at: str | None
+    latest_attention_score: float | None
     records_with_real_metrics: int
     records_without_real_metrics: int
     records_with_ingest_error: int
+    records_with_attention_metrics: int
+    records_with_experiment_resolution: int
+    records_with_episodic_memory: int
     source_status_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,7 +43,7 @@ class PerformanceStore:
     def _empty_payload(self) -> dict[str, Any]:
         return {
             "ok": True,
-            "version": "performance_ingestion_real_base_v1",
+            "version": "measurement_core_v1",
             "records": [],
         }
 
@@ -53,7 +57,7 @@ class PerformanceStore:
             if not isinstance(payload.get("records"), list):
                 payload["records"] = []
             payload.setdefault("ok", True)
-            payload.setdefault("version", "performance_ingestion_real_base_v1")
+            payload.setdefault("version", "measurement_core_v1")
             return payload
         except Exception:
             return self._empty_payload()
@@ -79,7 +83,7 @@ class PerformanceStore:
         if not replaced:
             records.append(dict(record))
 
-        payload["records"] = records[-200:]
+        payload["records"] = records[-300:]
         self._save(payload)
         return self.summary().to_dict()
 
@@ -100,14 +104,27 @@ class PerformanceStore:
         status_counts = dict(Counter(_source_status(record) for record in records))
 
         with_real = sum(
-            1 for record in records if _source_status(record) in {"collected", "partial_collected"}
+            1 for record in records
+            if _source_status(record) in {"collected", "partial_collected"}
         )
         with_error = sum(
-            1 for record in records if _source_status(record) in {"collection_error", "missing_token"}
+            1 for record in records
+            if _source_status(record) in {"collection_error", "missing_token"}
         )
         without_real = len(records) - with_real - with_error
+        with_attention_metrics = sum(
+            1
+            for record in records
+            if ((record.get("attention_metrics") or {}).get("breakdown") or {}).get("attention_score") is not None
+        )
+        with_experiment_resolution = sum(
+            1 for record in records
+            if str((record.get("experiment_registry") or {}).get("status") or "") == "resolved"
+        )
+        with_episodic_memory = sum(1 for record in records if bool(record.get("episodic_performance_memory")))
 
         real_metrics = dict(last.get("real_metrics") or {})
+        attention_metrics = dict(last.get("attention_metrics") or {})
         return PerformanceStoreSummary(
             ok=True,
             path=str(self.path),
@@ -116,8 +133,16 @@ class PerformanceStore:
             last_operational_state=last.get("operational_state"),
             latest_source_status=real_metrics.get("source_status"),
             latest_collected_at=real_metrics.get("collected_at"),
+            latest_attention_score=(
+                (attention_metrics.get("breakdown") or {}).get("attention_score")
+                if isinstance(attention_metrics, dict)
+                else None
+            ),
             records_with_real_metrics=with_real,
             records_without_real_metrics=without_real,
             records_with_ingest_error=with_error,
+            records_with_attention_metrics=with_attention_metrics,
+            records_with_experiment_resolution=with_experiment_resolution,
+            records_with_episodic_memory=with_episodic_memory,
             source_status_counts=status_counts,
         )
