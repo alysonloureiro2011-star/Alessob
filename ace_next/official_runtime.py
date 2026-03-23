@@ -23,7 +23,7 @@ from .visual_foundation_pack import (
 from .visual_templates import resolve_visual_template
 
 AUTH_STACK_IMPORT_ERROR: str | None = None
-LEARNING_STACK_IMPORT_ERROR: str | None = None
+MEASUREMENT_STACK_IMPORT_ERROR: str | None = None
 
 try:
     from .rubric_engine import evaluate_rubric_engine
@@ -41,13 +41,23 @@ try:
     from .post_performance_contract import build_post_performance_contract
     from .performance_ingest import collect_real_performance_metrics
     from .reflection_memory import build_reflection_memory
+    from .attention_metrics import build_attention_metrics
+    from .experiment_registry import ExperimentRegistry, build_experiment_record
+    from .episodic_performance_memory import EpisodicPerformanceMemory, build_episode_record
+    from .performance_summary import build_performance_summary
 except Exception as exc:
-    LEARNING_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    MEASUREMENT_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
     PerformanceStore = None
     build_learning_loop_summary = None
     build_post_performance_contract = None
     collect_real_performance_metrics = None
     build_reflection_memory = None
+    build_attention_metrics = None
+    ExperimentRegistry = None
+    build_experiment_record = None
+    EpisodicPerformanceMemory = None
+    build_episode_record = None
+    build_performance_summary = None
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -178,20 +188,29 @@ class OfficialRuntime:
     def sync_instagram_auth(self) -> dict:
         return sync_instagram_token_sources(self.config, persist=False)
 
-    def _learning_store_summary(self) -> dict[str, Any]:
-        if LEARNING_STACK_IMPORT_ERROR or PerformanceStore is None:
-            return {
-                "ok": False,
-                "error": LEARNING_STACK_IMPORT_ERROR or "learning_stack_unavailable",
-            }
+    def _performance_store_summary(self) -> dict[str, Any]:
+        if MEASUREMENT_STACK_IMPORT_ERROR or PerformanceStore is None:
+            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
         try:
-            store = PerformanceStore(self.config)
-            return store.summary().to_dict()
+            return PerformanceStore(self.config).summary().to_dict()
         except Exception as exc:
-            return {
-                "ok": False,
-                "error": f"learning_store_summary_error: {type(exc).__name__}: {exc}",
-            }
+            return {"ok": False, "error": f"performance_store_summary_error: {type(exc).__name__}: {exc}"}
+
+    def _experiment_registry_summary(self) -> dict[str, Any]:
+        if MEASUREMENT_STACK_IMPORT_ERROR or ExperimentRegistry is None:
+            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
+        try:
+            return ExperimentRegistry(self.config).summary().to_dict()
+        except Exception as exc:
+            return {"ok": False, "error": f"experiment_registry_summary_error: {type(exc).__name__}: {exc}"}
+
+    def _episodic_memory_summary(self) -> dict[str, Any]:
+        if MEASUREMENT_STACK_IMPORT_ERROR or EpisodicPerformanceMemory is None:
+            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
+        try:
+            return EpisodicPerformanceMemory(self.config).summary().to_dict()
+        except Exception as exc:
+            return {"ok": False, "error": f"episodic_memory_summary_error: {type(exc).__name__}: {exc}"}
 
     def snapshot(self) -> dict:
         sync = self.sync_instagram_auth()
@@ -210,8 +229,10 @@ class OfficialRuntime:
             "token_meta_source": token_state.get("source"),
             "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
             "authorization_stack_import_error": AUTH_STACK_IMPORT_ERROR,
-            "learning_stack_import_error": LEARNING_STACK_IMPORT_ERROR,
-            "performance_store": self._learning_store_summary(),
+            "measurement_stack_import_error": MEASUREMENT_STACK_IMPORT_ERROR,
+            "performance_store": self._performance_store_summary(),
+            "experiment_registry": self._experiment_registry_summary(),
+            "episodic_performance_memory": self._episodic_memory_summary(),
         }
 
     def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -304,13 +325,10 @@ class OfficialRuntime:
 
             rubric_dict = rubric.to_dict()
             rubric_dict["stack_ok"] = True
-
             brand_veto_dict = brand_veto.to_dict()
             brand_veto_dict["stack_ok"] = True
-
             authorization_dict = authorization.to_dict()
             authorization_dict["stack_ok"] = True
-
             return rubric_dict, brand_veto_dict, authorization_dict
         except Exception as exc:
             return self._authorization_fallback(
@@ -318,23 +336,26 @@ class OfficialRuntime:
                 reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
             )
 
-    def _learning_fallback(self, *, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-        post_performance_contract = {
-            "ok": False,
-            "error": reason,
-        }
+    def _measurement_fallback(self, *, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        post_performance_contract = {"ok": False, "error": reason}
         performance_ingest = {
             "ok": False,
             "attempted": False,
             "source_status": "collection_error",
-            "real_metrics": {
-                "source_status": "collection_error",
-                "source_reason": reason,
-                "errors": [reason],
-            },
+            "real_metrics": {"source_status": "collection_error", "source_reason": reason, "errors": [reason]},
+            "attention_inputs": {},
             "errors": [reason],
             "raw": {},
         }
+        attention_metrics = {
+            "ok": False,
+            "source_status": "collection_error",
+            "breakdown": {},
+            "available_inputs": [],
+            "notes": [reason],
+        }
+        experiment_registry = {"ok": False, "error": reason}
+        episodic_performance_memory = {"ok": False, "error": reason}
         reflection_memory = {
             "ok": False,
             "status": "collection_error",
@@ -360,13 +381,19 @@ class OfficialRuntime:
                 "can_autopublish_brand_live": False,
             },
         }
-        performance_store = {
-            "ok": False,
-            "error": reason,
-        }
-        return post_performance_contract, performance_ingest, reflection_memory, learning_loop, performance_store
+        performance_summary = {"ok": False, "error": reason}
+        return (
+            post_performance_contract,
+            performance_ingest,
+            attention_metrics,
+            experiment_registry,
+            episodic_performance_memory,
+            reflection_memory,
+            learning_loop,
+            performance_summary,
+        )
 
-    def _run_learning_loop(
+    def _run_measurement_core(
         self,
         *,
         trend: str,
@@ -375,20 +402,27 @@ class OfficialRuntime:
         creative_plan: dict[str, Any],
         editorial_qa: dict[str, Any],
         visual_qa: dict[str, Any],
-        publish_result: dict[str, Any] | None,
+        visual_template: dict[str, Any],
+        rubric_engine: dict[str, Any],
         publication_authorization_gate: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        publish_result: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         if (
-            LEARNING_STACK_IMPORT_ERROR
+            MEASUREMENT_STACK_IMPORT_ERROR
             or not PerformanceStore
             or not build_learning_loop_summary
             or not build_post_performance_contract
             or not collect_real_performance_metrics
             or not build_reflection_memory
+            or not build_attention_metrics
+            or not ExperimentRegistry
+            or not build_experiment_record
+            or not EpisodicPerformanceMemory
+            or not build_episode_record
+            or not build_performance_summary
         ):
-            return self._learning_fallback(
-                reason=f"learning_stack_import_error: {LEARNING_STACK_IMPORT_ERROR or 'unknown'}"
-            )
+            fallback = self._measurement_fallback(reason=f"measurement_stack_import_error: {MEASUREMENT_STACK_IMPORT_ERROR or 'unknown'}")
+            return (*fallback, {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"})
 
         try:
             record = build_post_performance_contract(
@@ -407,9 +441,17 @@ class OfficialRuntime:
                 publish_result=publish_result,
             )
             real_metrics = dict(performance_ingest.get("real_metrics") or {})
+            attention_inputs = dict(performance_ingest.get("attention_inputs") or {})
+            attention_metrics = build_attention_metrics(
+                real_metrics=real_metrics,
+                attention_inputs=attention_inputs,
+            )
 
             record["real_metrics"] = real_metrics
             record["performance_ingest"] = performance_ingest
+            record["attention_metrics"] = attention_metrics
+            record["visual_template"] = visual_template
+            record["rubric_engine"] = rubric_engine
             record["post_performance"] = {
                 "status": real_metrics.get("source_status"),
                 "source": real_metrics.get("source_endpoint"),
@@ -421,6 +463,11 @@ class OfficialRuntime:
                     "saves": real_metrics.get("saves"),
                     "shares": real_metrics.get("shares"),
                     "engagement_proxy": real_metrics.get("engagement_proxy"),
+                    "attention_score": (
+                        (attention_metrics.get("breakdown") or {}).get("attention_score")
+                        if isinstance(attention_metrics, dict)
+                        else None
+                    ),
                 },
                 "notes": [
                     "dados de performance baseados apenas em coleta real ou ausência real de dados",
@@ -428,23 +475,48 @@ class OfficialRuntime:
                 ],
             }
 
+            experiment_record = build_experiment_record(record=record)
+            experiment_store = ExperimentRegistry(self.config)
+            experiment_registry = experiment_store.upsert_experiment(experiment_record)
+            record["experiment_registry"] = experiment_record
+
+            episode_record = build_episode_record(record=record)
+            episode_store = EpisodicPerformanceMemory(self.config)
+            episodic_performance_memory = episode_store.upsert_episode(episode_record)
+            record["episodic_performance_memory"] = episode_record
+
             reflection_memory = build_reflection_memory(record=record)
             record["reflection_memory"] = reflection_memory
 
             store = PerformanceStore(self.config)
             performance_store = store.upsert_record(record)
             records = store.list_records(limit=30)
-
             learning_loop = build_learning_loop_summary(
                 records=records,
                 latest_record=record,
             )
-
-            return record, performance_ingest, reflection_memory, learning_loop, performance_store
-        except Exception as exc:
-            return self._learning_fallback(
-                reason=f"learning_loop_runtime_error: {type(exc).__name__}: {exc}"
+            performance_summary = build_performance_summary(
+                performance_store=performance_store,
+                learning_loop=learning_loop,
+                experiment_registry=experiment_registry,
+                episodic_performance_memory=episodic_performance_memory,
+                attention_metrics=attention_metrics,
+                real_metrics_contract=real_metrics,
             )
+            return (
+                record,
+                performance_ingest,
+                attention_metrics,
+                experiment_registry,
+                episodic_performance_memory,
+                reflection_memory,
+                learning_loop,
+                performance_summary,
+                performance_store,
+            )
+        except Exception as exc:
+            fallback = self._measurement_fallback(reason=f"measurement_core_runtime_error: {type(exc).__name__}: {exc}")
+            return (*fallback, {"ok": False, "error": f"measurement_core_runtime_error: {type(exc).__name__}: {exc}"})
 
     def run(
         self,
@@ -502,19 +574,19 @@ class OfficialRuntime:
             visual_contract_dict = {"error": f"visual_contract_error: {type(exc).__name__}: {exc}"}
 
         try:
-            visual_template = resolve_visual_template(plan_dict)
-            visual_template_dict = visual_template.to_dict()
+            visual_template_obj = resolve_visual_template(plan_dict)
+            visual_template_dict = visual_template_obj.to_dict()
         except Exception as exc:
-            visual_template = None
+            visual_template_obj = None
             visual_template_dict = {"error": f"visual_template_error: {type(exc).__name__}: {exc}"}
 
         try:
-            if visual_identity is None or typography is None or visual_contract is None or visual_template is None:
+            if visual_identity is None or typography is None or visual_contract is None or visual_template_obj is None:
                 raise RuntimeError("visual dependencies unavailable")
             perceptual_qa_obj = evaluate_perceptual_quality(
                 plan=plan_dict,
                 contract=visual_contract,
-                template=visual_template,
+                template=visual_template_obj,
                 identity=visual_identity,
                 typography=typography,
             )
@@ -601,15 +673,27 @@ class OfficialRuntime:
             }
             block_reasons.append(f"publish_error: {type(exc).__name__}: {exc}")
 
-        post_performance_contract, performance_ingest, reflection_memory, learning_loop, performance_store = self._run_learning_loop(
+        (
+            post_performance_contract,
+            performance_ingest,
+            attention_metrics,
+            experiment_registry,
+            episodic_performance_memory,
+            reflection_memory,
+            learning_loop,
+            performance_summary,
+            performance_store,
+        ) = self._run_measurement_core(
             trend=trend,
             operational_state=operational_state,
             brand_live_allowed=brand_live_allowed,
             creative_plan=plan_dict,
             editorial_qa=editorial_qa,
             visual_qa=visual_qa,
-            publish_result=publish_result,
+            visual_template=visual_template_dict,
+            rubric_engine=rubric_engine,
             publication_authorization_gate=publication_authorization_gate,
+            publish_result=publish_result,
         )
 
         return {
@@ -635,9 +719,13 @@ class OfficialRuntime:
             "token_refresh": refresh_result,
             "post_performance_contract": post_performance_contract,
             "performance_ingest": performance_ingest,
-            "real_metrics_contract": performance_ingest.get("real_metrics"),
+            "real_metrics_contract": performance_ingest.get("real_metrics") if isinstance(performance_ingest, dict) else None,
+            "attention_metrics": attention_metrics,
+            "experiment_registry": experiment_registry,
+            "episodic_performance_memory": episodic_performance_memory,
             "reflection_memory": reflection_memory,
             "learning_loop": learning_loop,
+            "performance_summary": performance_summary,
             "performance_store": performance_store,
             "runtime": self.snapshot(),
             "publish_result": publish_result,
