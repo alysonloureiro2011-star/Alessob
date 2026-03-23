@@ -7,6 +7,14 @@ import requests
 from .real_metrics_contract import build_empty_real_metrics, build_real_metrics_contract
 
 
+OPTIONAL_INSIGHT_METRICS = {
+    "plays": "plays",
+    "video_views": "video_views",
+    "avg_watch_time": "ig_reels_avg_watch_time",
+    "completion_proxy": "reel_video_completion_rate",
+}
+
+
 def _graph_get(config: Any, path: str, *, params: dict[str, Any] | None = None, timeout: int = 45) -> dict[str, Any]:
     token = getattr(config, "ig_token", None)
     if not token:
@@ -42,7 +50,7 @@ def _graph_get(config: Any, path: str, *, params: dict[str, Any] | None = None, 
         return {"ok": False, "error": str(exc), "url": url}
 
 
-def _extract_insight_value(payload: dict[str, Any]) -> int | None:
+def _extract_insight_value(payload: dict[str, Any]) -> int | float | None:
     data = payload.get("data") or {}
     entries = data.get("data") if isinstance(data, dict) else None
     if not entries or not isinstance(entries, list):
@@ -76,6 +84,7 @@ def collect_real_performance_metrics(
             "attempted": False,
             "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
+            "attention_inputs": {},
             "errors": [],
             "raw": {},
         }
@@ -91,6 +100,7 @@ def collect_real_performance_metrics(
             "attempted": False,
             "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
+            "attention_inputs": {},
             "errors": [],
             "raw": {"receipt": receipt},
         }
@@ -108,6 +118,7 @@ def collect_real_performance_metrics(
             "attempted": False,
             "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
+            "attention_inputs": {},
             "errors": list(real_metrics["errors"]),
             "raw": {"receipt": receipt},
         }
@@ -156,6 +167,21 @@ def collect_real_performance_metrics(
         else:
             errors.append(f"{local_key}_error: {response.get('error')}")
 
+    optional_inputs: dict[str, Any] = {}
+    optional_raw: dict[str, Any] = {}
+    optional_metric_errors: list[str] = []
+    for local_key, remote_metric in OPTIONAL_INSIGHT_METRICS.items():
+        response = _graph_get(
+            config,
+            f"{media_id}/insights",
+            params={"metric": remote_metric},
+        )
+        optional_raw[local_key] = response
+        if response.get("ok"):
+            optional_inputs[local_key] = _extract_insight_value(response)
+        else:
+            optional_metric_errors.append(f"{local_key}_error: {response.get('error')}")
+
     real_metrics = build_real_metrics_contract(
         media_id=media_id,
         permalink=permalink,
@@ -173,10 +199,13 @@ def collect_real_performance_metrics(
         "attempted": True,
         "source_status": real_metrics["source_status"],
         "real_metrics": real_metrics,
+        "attention_inputs": optional_inputs,
+        "optional_metric_errors": optional_metric_errors,
         "errors": list(real_metrics.get("errors") or []),
         "raw": {
             "receipt": receipt,
             "media_info": media_info,
             "insights": raw_insights,
+            "optional_insights": optional_raw,
         },
     }
