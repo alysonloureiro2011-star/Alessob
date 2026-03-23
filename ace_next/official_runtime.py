@@ -25,6 +25,7 @@ from .visual_templates import resolve_visual_template
 
 AUTH_STACK_IMPORT_ERROR: str | None = None
 MEASUREMENT_STACK_IMPORT_ERROR: str | None = None
+REAL_PROBE_ALLOWED_STATES = ["internal_lab", "editorial_staging"]
 
 try:
     from .rubric_engine import evaluate_rubric_engine
@@ -242,7 +243,7 @@ class OfficialRuntime:
             "experiment_registry": self._experiment_registry_summary(),
             "episodic_performance_memory": self._episodic_memory_summary(),
             "real_probe_route_supported": True,
-            "real_probe_allowed_states": ["internal_lab", "editorial_staging"],
+            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
             "brand_live_allowed": False,
         }
 
@@ -666,10 +667,9 @@ class OfficialRuntime:
         except Exception as exc:
             refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
 
-        publish_result = None
-        media_path = None
-        operational_state = publication_authorization_gate.get("selected_state", "internal_lab")
-        brand_live_allowed = bool(publication_authorization_gate.get("brand_live_allowed", False))
+        authorization_state = publication_authorization_gate.get("selected_state", "internal_lab")
+        operational_state = authorization_state
+        brand_live_allowed = False
         block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
 
         probe_context = {
@@ -680,16 +680,36 @@ class OfficialRuntime:
             "publish_executed": False,
             "render_executed": False,
             "render_path": None,
+            "allow_real_publish": False,
         }
+
+        if probe_context["requested"]:
+            if probe_state_requested in REAL_PROBE_ALLOWED_STATES:
+                probe_context["effective_state"] = probe_state_requested
+                probe_context["eligible"] = True
+                probe_context["allow_real_publish"] = True
+                operational_state = probe_state_requested
+            elif probe_state_requested == "auto" and authorization_state in REAL_PROBE_ALLOWED_STATES:
+                probe_context["effective_state"] = authorization_state
+                probe_context["eligible"] = True
+                probe_context["allow_real_publish"] = True
+                operational_state = authorization_state
+            else:
+                block_reasons.append(
+                    f"real_probe_not_allowed_for_state:{probe_state_requested or authorization_state}"
+                )
 
         linkage_context = {
             "operational_state": operational_state,
-            "brand_live_allowed": brand_live_allowed,
+            "brand_live_allowed": False,
             "probe": dict(probe_context),
         }
 
+        publish_result = None
+        media_path = None
+
         try:
-            if publication_authorization_gate.get("can_publish_placeholder"):
+            if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
                 publish_result = self.publish.publish_placeholder(
                     trend=trend,
                     style=str(plan.publish_style),
@@ -698,58 +718,44 @@ class OfficialRuntime:
                     media_path=None,
                     linkage_context=linkage_context,
                 )
-            else:
-                probe_state_match = (
-                    probe_state_requested == "auto" or probe_state_requested == operational_state
-                )
-                real_probe_allowed = (
-                    probe_context["requested"]
-                    and operational_state in {"internal_lab", "editorial_staging"}
-                    and not brand_live_allowed
-                    and probe_state_match
-                )
-                probe_context["eligible"] = bool(real_probe_allowed)
+            elif probe_context["eligible"]:
+                try:
+                    media_path = render_visual_foundation_card(
+                        config=self.config,
+                        plan=plan_dict,
+                        identity=visual_identity,
+                        typography=typography,
+                    )
+                    probe_context["render_executed"] = True
+                    probe_context["render_path"] = media_path
+                except Exception as exc:
+                    block_reasons.append(f"probe_render_error: {type(exc).__name__}: {exc}")
 
-                if real_probe_allowed:
-                    probe_context["effective_state"] = operational_state
-                    try:
-                        media_path = render_visual_foundation_card(
-                            config=self.config,
-                            plan=plan_dict,
-                            identity=visual_identity,
-                            typography=typography,
-                        )
-                        probe_context["render_executed"] = True
-                        probe_context["render_path"] = media_path
-                    except Exception as exc:
-                        publish_result = {
-                            "ok": False,
-                            "publish_status": "probe_render_error",
-                            "error": f"probe_render_error: {type(exc).__name__}: {exc}",
-                        }
-                        block_reasons.append(f"probe_render_error: {type(exc).__name__}: {exc}")
-
-                    if media_path:
-                        linkage_context["probe"] = dict(probe_context)
-                        publish_result = self.publish.publish_real(
-                            trend=trend,
-                            style=str(plan.publish_style),
-                            content_type=str(plan.publish_format_now),
-                            caption=str(plan.caption),
-                            media_path=media_path,
-                            linkage_context=linkage_context,
-                        )
-                        publish_status = str((publish_result or {}).get("publish_status") or "")
-                        probe_context["publish_executed"] = publish_status in {"published", "published_real_probe"}
-                elif probe_context["requested"]:
-                    if operational_state not in {"internal_lab", "editorial_staging"}:
-                        block_reasons.append(
-                            f"real_probe_not_allowed_for_operational_state:{operational_state}"
-                        )
-                    elif not probe_state_match:
-                        block_reasons.append(
-                            f"real_probe_state_mismatch:requested={probe_state_requested},effective={operational_state}"
-                        )
+                linkage_context["probe"] = dict(probe_context)
+                if media_path:
+                    publish_result = self.publish.publish_real(
+                        trend=trend,
+                        style=str(plan.publish_style),
+                        content_type=str(plan.publish_format_now),
+                        caption=str(plan.caption),
+                        media_path=media_path,
+                        linkage_context=linkage_context,
+                    )
+                    publish_status = str((publish_result or {}).get("publish_status") or "")
+                    probe_context["publish_executed"] = publish_status == "published_real_probe"
+                    linkage_context["probe"] = dict(probe_context)
+                else:
+                    publish_result = {
+                        "ok": False,
+                        "publish_status": "probe_render_error",
+                        "error": "probe_render_error",
+                    }
+            elif probe_context["requested"]:
+                publish_result = {
+                    "ok": False,
+                    "publish_status": "probe_not_allowed",
+                    "error": "probe_not_allowed",
+                }
         except Exception as exc:
             publish_result = {
                 "ok": False,
@@ -770,7 +776,7 @@ class OfficialRuntime:
         ) = self._run_measurement_core(
             trend=trend,
             operational_state=operational_state,
-            brand_live_allowed=brand_live_allowed,
+            brand_live_allowed=False,
             creative_plan=plan_dict,
             editorial_qa=editorial_qa,
             visual_qa=visual_qa,
@@ -784,8 +790,11 @@ class OfficialRuntime:
         return {
             "ok": True,
             "mode": operational_state,
+            "authorization_state": authorization_state,
             "operational_state": operational_state,
-            "brand_live_allowed": brand_live_allowed,
+            "brand_live_allowed": False,
+            "real_probe_route_supported": True,
+            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
             "block_reasons": block_reasons,
             "real_probe_requested": probe_context["requested"],
             "probe_state_requested": probe_context["requested_state"],
