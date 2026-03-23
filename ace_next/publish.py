@@ -24,6 +24,9 @@ except Exception:
     episodic_set_last_publish_receipt = None
 
 
+ALLOWED_REAL_PROBE_STATES = {"internal_lab", "editorial_staging"}
+
+
 @dataclass
 class PublishReceipt:
     ok: bool
@@ -47,14 +50,12 @@ class PublishReceipt:
         return asdict(self)
 
 
-def _probe_enabled(linkage_context: dict[str, Any] | None) -> bool:
-    probe = dict((linkage_context or {}).get("probe") or {})
-    return bool(probe.get("requested"))
+def _probe_payload(linkage_context: dict[str, Any] | None) -> dict[str, Any]:
+    return dict((linkage_context or {}).get("probe") or {})
 
 
 def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
     created_at = kwargs.get("created_at") or datetime.utcnow().isoformat()
-    linkage_context = kwargs.get("linkage_context")
     return PublishReceipt(
         ok=bool(kwargs.get("ok", False)),
         publish_status=kwargs.get("publish_status") or "placeholder",
@@ -66,7 +67,7 @@ def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
         caption=kwargs.get("caption"),
         media_path=kwargs.get("media_path"),
         media_url=kwargs.get("media_url"),
-        linkage_context=linkage_context,
+        linkage_context=kwargs.get("linkage_context"),
         raw_publish_result=kwargs.get("raw_publish_result"),
         error=kwargs.get("error") or "publish_placeholder_fallback",
         creation_id=kwargs.get("creation_id"),
@@ -304,7 +305,6 @@ class PublishService:
         media_path: str | None,
         linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        probe = dict((linkage_context or {}).get("probe") or {})
         receipt = build_placeholder_receipt(
             created_at=datetime.now().isoformat(),
             receipt_id=f"receipt_{uuid.uuid4().hex}",
@@ -318,7 +318,7 @@ class PublishService:
             raw_publish_result={
                 "mode": "placeholder",
                 "real_publish_enabled": self.config.enable_real_publish,
-                "probe": probe,
+                "probe": _probe_payload(linkage_context),
             },
             error="placeholder_mode",
         )
@@ -337,7 +337,37 @@ class PublishService:
         linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ig_id = self.config.ig_id
-        probe = dict((linkage_context or {}).get("probe") or {})
+        probe = _probe_payload(linkage_context)
+
+        probe_requested = bool(probe.get("requested"))
+        effective_state = str(probe.get("effective_state") or "").strip().lower()
+        allow_real_publish = bool(probe.get("allow_real_publish"))
+
+        if not probe_requested:
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=self.build_media_url(media_path),
+                linkage_context=linkage_context,
+                error="real_publish_without_probe_not_allowed",
+                raw_publish_result={"probe": probe},
+            )
+
+        if not allow_real_publish or effective_state not in ALLOWED_REAL_PROBE_STATES:
+            return self._build_error_receipt(
+                content_type=content_type,
+                trend=trend,
+                style=style,
+                caption=caption,
+                media_path=media_path,
+                media_url=self.build_media_url(media_path),
+                linkage_context=linkage_context,
+                error="real_probe_blocked_by_guardrail",
+                raw_publish_result={"probe": probe},
+            )
 
         if not self.config.enable_real_publish:
             return self.publish_placeholder(
@@ -359,6 +389,7 @@ class PublishService:
                 media_url=self.build_media_url(media_path),
                 linkage_context=linkage_context,
                 error="IG_ID ausente",
+                raw_publish_result={"probe": probe},
             )
 
         media_url = self.build_media_url(media_path)
@@ -372,6 +403,7 @@ class PublishService:
                 media_url=None,
                 linkage_context=linkage_context,
                 error="media_url_indisponivel",
+                raw_publish_result={"probe": probe},
             )
 
         container = self._graph_request(
@@ -440,11 +472,9 @@ class PublishService:
             if info.get("ok"):
                 permalink = ((info.get("data") or {}).get("permalink"))
 
-        publish_status = "published_real_probe" if _probe_enabled(linkage_context) else "published"
-
         receipt = PublishReceipt(
             ok=True,
-            publish_status=publish_status,
+            publish_status="published_real_probe",
             created_at=datetime.now().isoformat(),
             receipt_id=f"receipt_{uuid.uuid4().hex}",
             content_type=content_type,
