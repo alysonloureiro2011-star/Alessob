@@ -81,7 +81,7 @@ class EpisodicPerformanceMemory:
 
         with_real = sum(
             1 for item in episodes
-            if str(item.get("real_metrics_status") or "") in {"collected", "partial_collected"}
+            if str(item.get("real_metrics_status") or "") == "collected"
         )
         with_receipt = sum(1 for item in episodes if bool(item.get("receipt_linked")))
 
@@ -93,6 +93,7 @@ class EpisodicPerformanceMemory:
                 reused += 1
             else:
                 seen_pairs.add(pair)
+
         memory_reuse_rate = round((reused / len(episodes)) * 100.0, 2) if episodes else 0.0
 
         receipt_ratio = (with_receipt / len(episodes)) if episodes else 0.0
@@ -116,8 +117,8 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
     creative_plan = dict(record.get("creative_plan") or {})
     receipt = dict(record.get("receipt") or record.get("publish_result") or {})
     real_metrics = dict(record.get("real_metrics") or {})
-    attention_metrics = dict(record.get("attention_metrics") or {})
     experiment_context = dict(record.get("experiment_registry") or {})
+    visual_template = dict(record.get("visual_template") or {})
 
     return {
         "episode_id": record.get("record_id"),
@@ -125,19 +126,10 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
         "created_at": record.get("created_at"),
         "topic_seed": creative_plan.get("topic_seed"),
         "headline": creative_plan.get("headline"),
-        "template_id": (
-            (record.get("visual_template") or {}).get("template_id")
-            if isinstance(record.get("visual_template"), dict)
-            else None
-        ),
+        "template_id": visual_template.get("template_id"),
         "operational_state": record.get("operational_state"),
         "receipt_linked": bool(receipt),
         "receipt_id": receipt.get("receipt_id"),
         "real_metrics_status": real_metrics.get("source_status"),
-        "attention_score": (
-            (attention_metrics.get("breakdown") or {}).get("attention_score")
-            if isinstance(attention_metrics, dict)
-            else None
-        ),
         "experiment_id": experiment_context.get("experiment_id"),
     }
