@@ -107,14 +107,8 @@ class PerformanceStore:
         last = records[-1] if records else {}
         status_counts = dict(Counter(_source_status(record) for record in records))
 
-        with_real = sum(
-            1 for record in records
-            if _source_status(record) == "collected"
-        )
-        with_error = sum(
-            1 for record in records
-            if _source_status(record) == "ingest_error"
-        )
+        with_real = sum(1 for record in records if _source_status(record) == "collected")
+        with_error = sum(1 for record in records if _source_status(record) == "ingest_error")
         without_real = len(records) - with_real - with_error
         with_attention_metrics = sum(
             1
