@@ -19,6 +19,7 @@ from .visual_foundation_pack import (
     build_typography_spec,
     build_visual_identity,
     evaluate_visual_quality,
+    render_visual_foundation_card,
 )
 from .visual_templates import resolve_visual_template
 
@@ -67,6 +68,13 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _normalize_probe_state(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized in {"auto", "internal_lab", "editorial_staging"}:
+        return normalized
+    return "auto"
 
 
 class OfficialRuntime:
@@ -233,6 +241,9 @@ class OfficialRuntime:
             "performance_store": self._performance_store_summary(),
             "experiment_registry": self._experiment_registry_summary(),
             "episodic_performance_memory": self._episodic_memory_summary(),
+            "real_probe_route_supported": True,
+            "real_probe_allowed_states": ["internal_lab", "editorial_staging"],
+            "brand_live_allowed": False,
         }
 
     def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -336,20 +347,21 @@ class OfficialRuntime:
                 reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
             )
 
-    def _measurement_fallback(self, *, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    def _measurement_fallback(self, *, reason: str):
         post_performance_contract = {"ok": False, "error": reason}
         performance_ingest = {
             "ok": False,
             "attempted": False,
-            "source_status": "collection_error",
-            "real_metrics": {"source_status": "collection_error", "source_reason": reason, "errors": [reason]},
+            "collection_success": False,
+            "source_status": "ingest_error",
+            "real_metrics": {"source_status": "ingest_error", "source_reason": reason, "errors": [reason]},
             "attention_inputs": {},
             "errors": [reason],
             "raw": {},
         }
         attention_metrics = {
             "ok": False,
-            "source_status": "collection_error",
+            "source_status": "ingest_error",
             "breakdown": {},
             "available_inputs": [],
             "notes": [reason],
@@ -358,7 +370,7 @@ class OfficialRuntime:
         episodic_performance_memory = {"ok": False, "error": reason}
         reflection_memory = {
             "ok": False,
-            "status": "collection_error",
+            "status": "ingest_error",
             "notes": [reason],
             "guardrails": {
                 "can_change_brand_policy": False,
@@ -406,7 +418,8 @@ class OfficialRuntime:
         rubric_engine: dict[str, Any],
         publication_authorization_gate: dict[str, Any],
         publish_result: dict[str, Any] | None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        probe_context: dict[str, Any],
+    ):
         if (
             MEASUREMENT_STACK_IMPORT_ERROR
             or not PerformanceStore
@@ -435,6 +448,9 @@ class OfficialRuntime:
                 publish_result=publish_result,
                 publication_authorization_gate=publication_authorization_gate,
             )
+            record["probe_context"] = dict(probe_context)
+            record["visual_template"] = visual_template
+            record["rubric_engine"] = rubric_engine
 
             performance_ingest = collect_real_performance_metrics(
                 config=self.config,
@@ -450,8 +466,6 @@ class OfficialRuntime:
             record["real_metrics"] = real_metrics
             record["performance_ingest"] = performance_ingest
             record["attention_metrics"] = attention_metrics
-            record["visual_template"] = visual_template
-            record["rubric_engine"] = rubric_engine
             record["post_performance"] = {
                 "status": real_metrics.get("source_status"),
                 "source": real_metrics.get("source_endpoint"),
@@ -491,6 +505,7 @@ class OfficialRuntime:
             store = PerformanceStore(self.config)
             performance_store = store.upsert_record(record)
             records = store.list_records(limit=30)
+
             learning_loop = build_learning_loop_summary(
                 records=records,
                 latest_record=record,
@@ -502,6 +517,10 @@ class OfficialRuntime:
                 episodic_performance_memory=episodic_performance_memory,
                 attention_metrics=attention_metrics,
                 real_metrics_contract=real_metrics,
+                performance_ingest=performance_ingest,
+                publish_result=publish_result,
+                reflection_memory=reflection_memory,
+                probe_context=probe_context,
             )
             return (
                 record,
@@ -523,8 +542,11 @@ class OfficialRuntime:
         *,
         trend: str,
         force_placeholder: bool = False,
+        force_real_probe: bool = False,
+        probe_state: str | None = None,
     ) -> dict:
         trend = (trend or "teste real").strip()
+        probe_state_requested = _normalize_probe_state(probe_state)
 
         try:
             plan = build_creative_plan(trend)
@@ -645,9 +667,26 @@ class OfficialRuntime:
             refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
 
         publish_result = None
+        media_path = None
         operational_state = publication_authorization_gate.get("selected_state", "internal_lab")
         brand_live_allowed = bool(publication_authorization_gate.get("brand_live_allowed", False))
         block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
+
+        probe_context = {
+            "requested": bool(force_real_probe) and not force_placeholder,
+            "requested_state": probe_state_requested,
+            "effective_state": None,
+            "eligible": False,
+            "publish_executed": False,
+            "render_executed": False,
+            "render_path": None,
+        }
+
+        linkage_context = {
+            "operational_state": operational_state,
+            "brand_live_allowed": brand_live_allowed,
+            "probe": dict(probe_context),
+        }
 
         try:
             if publication_authorization_gate.get("can_publish_placeholder"):
@@ -657,15 +696,60 @@ class OfficialRuntime:
                     content_type=str(plan.publish_format_now),
                     caption=str(plan.caption),
                     media_path=None,
+                    linkage_context=linkage_context,
                 )
-            elif publication_authorization_gate.get("can_publish_real"):
-                publish_result = self.publish.publish_real(
-                    trend=trend,
-                    style=str(plan.publish_style),
-                    content_type=str(plan.publish_format_now),
-                    caption=str(plan.caption),
-                    media_path=None,
+            else:
+                probe_state_match = (
+                    probe_state_requested == "auto" or probe_state_requested == operational_state
                 )
+                real_probe_allowed = (
+                    probe_context["requested"]
+                    and operational_state in {"internal_lab", "editorial_staging"}
+                    and not brand_live_allowed
+                    and probe_state_match
+                )
+                probe_context["eligible"] = bool(real_probe_allowed)
+
+                if real_probe_allowed:
+                    probe_context["effective_state"] = operational_state
+                    try:
+                        media_path = render_visual_foundation_card(
+                            config=self.config,
+                            plan=plan_dict,
+                            identity=visual_identity,
+                            typography=typography,
+                        )
+                        probe_context["render_executed"] = True
+                        probe_context["render_path"] = media_path
+                    except Exception as exc:
+                        publish_result = {
+                            "ok": False,
+                            "publish_status": "probe_render_error",
+                            "error": f"probe_render_error: {type(exc).__name__}: {exc}",
+                        }
+                        block_reasons.append(f"probe_render_error: {type(exc).__name__}: {exc}")
+
+                    if media_path:
+                        linkage_context["probe"] = dict(probe_context)
+                        publish_result = self.publish.publish_real(
+                            trend=trend,
+                            style=str(plan.publish_style),
+                            content_type=str(plan.publish_format_now),
+                            caption=str(plan.caption),
+                            media_path=media_path,
+                            linkage_context=linkage_context,
+                        )
+                        publish_status = str((publish_result or {}).get("publish_status") or "")
+                        probe_context["publish_executed"] = publish_status in {"published", "published_real_probe"}
+                elif probe_context["requested"]:
+                    if operational_state not in {"internal_lab", "editorial_staging"}:
+                        block_reasons.append(
+                            f"real_probe_not_allowed_for_operational_state:{operational_state}"
+                        )
+                    elif not probe_state_match:
+                        block_reasons.append(
+                            f"real_probe_state_mismatch:requested={probe_state_requested},effective={operational_state}"
+                        )
         except Exception as exc:
             publish_result = {
                 "ok": False,
@@ -694,6 +778,7 @@ class OfficialRuntime:
             rubric_engine=rubric_engine,
             publication_authorization_gate=publication_authorization_gate,
             publish_result=publish_result,
+            probe_context=probe_context,
         )
 
         return {
@@ -702,6 +787,12 @@ class OfficialRuntime:
             "operational_state": operational_state,
             "brand_live_allowed": brand_live_allowed,
             "block_reasons": block_reasons,
+            "real_probe_requested": probe_context["requested"],
+            "probe_state_requested": probe_context["requested_state"],
+            "real_probe_allowed": probe_context["eligible"],
+            "probe_state_effective": probe_context["effective_state"],
+            "real_probe_executed": probe_context["publish_executed"],
+            "probe_context": probe_context,
             "trend": trend,
             "creative_plan": plan_dict,
             "editorial_qa": editorial_qa,
