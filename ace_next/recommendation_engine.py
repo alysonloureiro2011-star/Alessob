@@ -25,35 +25,35 @@ def build_recommendation_engine(
     safe_to_promote_to_editorial_staging = False
     requires_human_review = False
 
-    if evidence_state == "ingest_error":
-        recommended_action = "human_review_required"
-        action_priority = "high"
-        recommendation_reason = "houve erro de ingestão e a evidência precisa ser revisada manualmente"
-        next_best_step = "inspecionar token, receipt, media_id e leitura de insights antes de repetir"
-        safe_to_repeat = False
-        requires_human_review = True
-    elif evidence_state in {"no_receipt", "receipt_only"}:
-        recommended_action = "collect_more" if operational_state == "technical_test" else "repeat_probe"
+    if evidence_state == "no_receipt":
+        recommended_action = "repeat_probe"
         action_priority = "medium"
-        recommendation_reason = "a peça ainda não gerou ponte real suficiente para interpretação"
-        next_best_step = "executar ou repetir probe explícito em internal_lab/editorial_staging se apropriado"
+        recommendation_reason = "ainda não existe receipt real"
+        next_best_step = "rodar probe explícito em internal_lab ou editorial_staging"
         safe_to_repeat = True
-    elif evidence_state in {"linked_real_target", "metrics_pending"}:
-        recommended_action = "hold_position"
+    elif evidence_state in {"receipt_only", "linked_real_target", "metrics_pending"}:
+        recommended_action = "wait_metrics"
         action_priority = "low"
-        recommendation_reason = "o alvo real já existe, mas as métricas ainda não amadureceram"
+        recommendation_reason = "há bridge real mínima, mas ainda não há métricas suficientes"
         next_best_step = "aguardar nova leitura de ingestão antes de comparar variantes"
         safe_to_repeat = True
+    elif evidence_state == "ingest_error":
+        recommended_action = "human_review_required"
+        action_priority = "high"
+        recommendation_reason = "houve erro de ingestão e a evidência precisa ser revisada"
+        next_best_step = "inspecionar token, receipt, media_id e leitura de insights"
+        safe_to_repeat = False
+        requires_human_review = True
     elif resolution_state == "weak_signal":
         recommended_action = "compare_variant"
         action_priority = "medium"
-        recommendation_reason = "a evidência é real, porém fraca; comparar outra variante é mais seguro"
-        next_best_step = "rodar nova variante controlada mantendo a mesma hipótese"
+        recommendation_reason = "há evidência real, mas o sinal ainda é fraco"
+        next_best_step = "comparar outra variante mantendo a hipótese"
         safe_to_repeat = True
     elif winner_candidate and resolution_state in {"winner_candidate", "resolved_conservative"}:
         recommended_action = "promote_to_editorial_staging_candidate"
         action_priority = "high"
-        recommendation_reason = "a variante acumulou sinal suficiente para candidatura conservadora de staging"
+        recommendation_reason = "a variante acumulou sinal suficiente para candidatura conservadora"
         next_best_step = "submeter a variante à revisão humana antes de qualquer promoção"
         safe_to_repeat = False
         safe_to_promote_to_editorial_staging = True
@@ -61,14 +61,14 @@ def build_recommendation_engine(
     elif loser_candidate and resolution_state in {"loser_candidate", "resolved_conservative"}:
         recommended_action = "discard_variant"
         action_priority = "medium"
-        recommendation_reason = "a variante mostrou baixa atratividade relativa sob leitura conservadora"
+        recommendation_reason = "a variante mostrou baixa atratividade relativa"
         next_best_step = "não promover esta variante e priorizar outra hipótese"
         safe_to_repeat = False
     elif resolution_state == "observe":
         recommended_action = "hold_position"
         action_priority = "low"
         recommendation_reason = "há evidência real, mas ainda não conclusiva"
-        next_best_step = "continuar coleta antes de qualquer decisão de promoção"
+        next_best_step = "continuar coleta antes de qualquer decisão"
         safe_to_repeat = True
 
     return {
@@ -91,5 +91,6 @@ def build_recommendation_engine(
             "resonance_score": resonance_engine.get("resonance_score"),
             "reward_prediction_score": reward_prediction.get("reward_prediction_score"),
             "attention_score": (attention_metrics.get("breakdown") or {}).get("attention_score"),
+            "operational_state": operational_state,
         },
     }
