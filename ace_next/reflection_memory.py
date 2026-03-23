@@ -31,7 +31,7 @@ def build_reflection_memory(*, record: dict[str, Any]) -> dict[str, Any]:
     if status == "collected":
         notes.append("já existem dados reais de performance para esta peça")
     elif status == "not_available_yet":
-        notes.append("a coleta foi tentada ou está aguardando disponibilidade de dados reais")
+        notes.append("a coleta ainda não retornou dados reais utilizáveis")
     elif status == "ingest_error":
         notes.append("houve erro de ingestão de métricas reais")
         reason = real_metrics.get("source_reason")
