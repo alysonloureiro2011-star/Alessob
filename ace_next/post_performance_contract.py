@@ -63,6 +63,16 @@ def build_post_performance_contract(
         "receipt": receipt,
         "publish_result": receipt,
         "post_performance": post_performance,
+        "resonance_engine": {},
+        "reward_prediction": {},
+        "sampler_decision": {},
+        "decision_core_summary": {},
+        "variant_context": {
+            "headline": creative_plan.get("headline"),
+            "hook": creative_plan.get("hook"),
+            "operational_state": operational_state,
+            "trend": trend,
+        },
         "linkage": {
             "creation_id": creation_id or None,
             "media_id": media_id or None,
