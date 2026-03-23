@@ -41,28 +41,40 @@ def build_learning_loop_summary(
     linked_with_receipt = sum(1 for record in records if record.get("receipt"))
     latest_real_metrics = dict(latest.get("real_metrics") or {})
     latest_reflection = dict(latest.get("reflection_memory") or {})
+    latest_attention = dict(latest.get("attention_metrics") or {})
+    latest_experiment = dict(latest.get("experiment_registry") or {})
+    latest_episode = dict(latest.get("episodic_performance_memory") or {})
+
+    attention_count = sum(
+        1
+        for record in records
+        if ((record.get("attention_metrics") or {}).get("breakdown") or {}).get("attention_score") is not None
+    )
+    experiment_status_counts = dict(
+        Counter(str((record.get("experiment_registry") or {}).get("status") or "unknown") for record in records)
+    )
+    resolved_experiments = experiment_status_counts.get("resolved", 0)
+    experiments_resolved_percent = round((resolved_experiments / len(records)) * 100.0, 2) if records else 0.0
 
     suggestions: list[str] = []
     if not records:
         suggestions.append("Ainda não há registros suficientes para aprendizado útil.")
     else:
-        suggestions.append("O learning loop está em modo de registro, consolidação e sugestão controlada.")
+        suggestions.append("O learning loop está em modo de medição, registro e sugestão controlada.")
         if ingestion_state_counts.get("no_real_data_yet", 0) > 0:
             suggestions.append("Existem registros ainda sem métricas reais confirmadas.")
         if ingestion_state_counts.get("collection_error", 0) > 0:
             suggestions.append("Houve erro de coleta em parte dos registros; isso não deve ser tratado como sucesso.")
         if ingestion_state_counts.get("real_data_collected", 0) > 0:
-            suggestions.append("Já existem registros com métricas reais coletadas.")
-        if states.get("technical_test", 0) > 0:
-            suggestions.append("Há registros de teste técnico; isso não conta como validação de marca.")
-        if states.get("editorial_staging", 0) > 0:
-            suggestions.append("Existem peças em staging editorial aguardando validação mais forte.")
-        if states.get("blocked_quality", 0) > 0 or states.get("blocked_brand", 0) > 0:
-            suggestions.append("Há reprovações recentes; usar isso como evidência para refino, não como permissão para live.")
+            suggestions.append("Já existem registros com métricas reais coletadas e elegíveis para leitura básica.")
+        if attention_count > 0:
+            suggestions.append("Attention metrics já estão sendo calculadas só quando há base real suficiente.")
+        if resolved_experiments > 0:
+            suggestions.append("Há experimentos resolvidos; ainda assim nenhuma decisão de marca é automática.")
 
     return {
         "ok": True,
-        "mode": "performance_ingestion_real_base_v1",
+        "mode": "measurement_core_v1",
         "records_considered": len(records),
         "linked_with_receipt": linked_with_receipt,
         "operational_state_counts": states,
@@ -70,6 +82,9 @@ def build_learning_loop_summary(
         "evidence_status_counts": evidence_status,
         "real_metrics_source_status_counts": real_metrics_source_status_counts,
         "ingestion_state_counts": ingestion_state_counts,
+        "experiment_status_counts": experiment_status_counts,
+        "experiments_resolved_percent": experiments_resolved_percent,
+        "attention_metrics_available_records": attention_count,
         "latest_record_id": latest.get("record_id"),
         "latest_operational_state": latest.get("operational_state"),
         "latest_publish_status": latest.get("publish_status"),
@@ -77,6 +92,13 @@ def build_learning_loop_summary(
         "latest_real_metrics_collected_at": latest_real_metrics.get("collected_at"),
         "latest_reflection_status": latest_reflection.get("status"),
         "latest_reflection_notes": latest_reflection.get("notes"),
+        "latest_attention_score": (
+            (latest_attention.get("breakdown") or {}).get("attention_score")
+            if isinstance(latest_attention, dict)
+            else None
+        ),
+        "latest_experiment_status": latest_experiment.get("status"),
+        "latest_episode_id": latest_episode.get("episode_id"),
         "insight_control": {
             "can_record": True,
             "can_consolidate": True,
