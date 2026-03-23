@@ -14,6 +14,16 @@ OPTIONAL_INSIGHT_METRICS = {
     "completion_proxy": "reel_video_completion_rate",
 }
 
+SUPPORTED_CONTENT_TYPES = {
+    "image",
+    "video",
+    "reel",
+    "carousel",
+    "carousel_album",
+    "story",
+    "stories",
+}
+
 
 def _graph_get(config: Any, path: str, *, params: dict[str, Any] | None = None, timeout: int = 45) -> dict[str, Any]:
     token = getattr(config, "ig_token", None)
@@ -65,6 +75,42 @@ def _extract_insight_value(payload: dict[str, Any]) -> int | float | None:
     return None
 
 
+def _normalize_error_text(response: dict[str, Any]) -> str:
+    error = response.get("error")
+    if isinstance(error, dict):
+        return str(error).lower()
+    return str(error or "").lower()
+
+
+def _looks_not_supported(response: dict[str, Any]) -> bool:
+    text = _normalize_error_text(response)
+    markers = [
+        "not supported",
+        "unsupported",
+        "invalid metric",
+        "does not support",
+        "cannot query insights for this media",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _set_source_status(
+    metrics: dict[str, Any],
+    *,
+    source_status: str,
+    source_reason: str,
+    errors: list[str] | None = None,
+) -> dict[str, Any]:
+    updated = dict(metrics)
+    updated["source_status"] = source_status
+    updated["source_reason"] = source_reason
+    if errors is not None:
+        updated["errors"] = list(errors)
+    if source_status != "collected":
+        updated["collected_at"] = None
+    return updated
+
+
 def collect_real_performance_metrics(
     *,
     config: Any,
@@ -73,6 +119,7 @@ def collect_real_performance_metrics(
     receipt = dict(publish_result or {})
     media_id = str(receipt.get("media_id") or "").strip() or None
     permalink = str(receipt.get("permalink") or "").strip() or None
+    content_type = str(receipt.get("content_type") or "").strip().lower() or None
 
     if not receipt:
         real_metrics = build_empty_real_metrics(
@@ -83,10 +130,29 @@ def collect_real_performance_metrics(
             "ok": True,
             "attempted": False,
             "source_status": real_metrics["source_status"],
+            "collection_success": False,
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": [],
             "raw": {},
+        }
+
+    if content_type and content_type not in SUPPORTED_CONTENT_TYPES:
+        real_metrics = build_empty_real_metrics(
+            source_status="not_supported_for_content_type",
+            source_reason=f"content_type '{content_type}' não suportado para ingestão real",
+            media_id=media_id,
+            permalink=permalink,
+        )
+        return {
+            "ok": True,
+            "attempted": False,
+            "source_status": real_metrics["source_status"],
+            "collection_success": False,
+            "real_metrics": real_metrics,
+            "attention_inputs": {},
+            "errors": [],
+            "raw": {"receipt": receipt},
         }
 
     if not media_id:
@@ -99,6 +165,7 @@ def collect_real_performance_metrics(
             "ok": True,
             "attempted": False,
             "source_status": real_metrics["source_status"],
+            "collection_success": False,
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": [],
@@ -107,7 +174,7 @@ def collect_real_performance_metrics(
 
     if not getattr(config, "ig_token", None):
         real_metrics = build_empty_real_metrics(
-            source_status="missing_token",
+            source_status="ingest_error",
             source_reason="token ausente para coleta real",
             media_id=media_id,
             permalink=permalink,
@@ -117,13 +184,16 @@ def collect_real_performance_metrics(
             "ok": False,
             "attempted": False,
             "source_status": real_metrics["source_status"],
+            "collection_success": False,
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": list(real_metrics["errors"]),
             "raw": {"receipt": receipt},
         }
 
+    attempted = True
     errors: list[str] = []
+    unsupported_hits = 0
 
     media_info = _graph_get(
         config,
@@ -165,7 +235,10 @@ def collect_real_performance_metrics(
         if response.get("ok"):
             insight_values[local_key] = _extract_insight_value(response)
         else:
-            errors.append(f"{local_key}_error: {response.get('error')}")
+            if _looks_not_supported(response):
+                unsupported_hits += 1
+            else:
+                errors.append(f"{local_key}_error: {response.get('error')}")
 
     optional_inputs: dict[str, Any] = {}
     optional_raw: dict[str, Any] = {}
@@ -194,10 +267,42 @@ def collect_real_performance_metrics(
         errors=errors,
     )
 
+    available_metrics = list(real_metrics.get("available_metrics") or [])
+    if available_metrics:
+        real_metrics = _set_source_status(
+            real_metrics,
+            source_status="collected",
+            source_reason="coleta real bem-sucedida para a peça publicada",
+            errors=errors,
+        )
+    elif unsupported_hits >= len(insight_metrics):
+        real_metrics = _set_source_status(
+            real_metrics,
+            source_status="not_supported_for_content_type",
+            source_reason="o content_type atual não expôs métricas compatíveis para este probe",
+            errors=errors,
+        )
+    elif errors:
+        real_metrics = _set_source_status(
+            real_metrics,
+            source_status="ingest_error",
+            source_reason="a coleta real foi tentada, mas falhou",
+            errors=errors,
+        )
+    else:
+        real_metrics = _set_source_status(
+            real_metrics,
+            source_status="not_available_yet",
+            source_reason="a coleta foi tentada, mas as métricas ainda não estão disponíveis",
+            errors=errors,
+        )
+
+    source_status = str(real_metrics.get("source_status") or "not_available_yet")
     return {
-        "ok": real_metrics["source_status"] in {"collected", "partial_collected", "not_available_yet"},
-        "attempted": True,
-        "source_status": real_metrics["source_status"],
+        "ok": source_status in {"collected", "not_available_yet", "not_supported_for_content_type"},
+        "attempted": attempted,
+        "collection_success": source_status == "collected",
+        "source_status": source_status,
         "real_metrics": real_metrics,
         "attention_inputs": optional_inputs,
         "optional_metric_errors": optional_metric_errors,
