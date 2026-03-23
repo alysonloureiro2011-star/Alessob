@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from typing import Any
@@ -33,18 +32,16 @@ def _derive_evidence_bridge_state(
     probe_requested: bool,
 ) -> str:
     if latest_source_status in {"collected", "partial_collected"} and has_media_id:
-        return "real_metrics_linked"
-    if latest_probe_publish_executed and has_media_id:
-        return "receipt_with_media_id_waiting_metrics"
+        return "real_metrics_ready"
     if has_real_receipt and has_media_id and has_permalink:
-        return "receipt_media_permalink_linked"
+        return "receipt_with_permalink"
     if has_real_receipt and has_media_id:
-        return "receipt_media_linked"
+        return "receipt_with_media_id"
     if has_real_receipt:
-        return "receipt_only"
+        return "receipt_linked"
     if probe_requested:
         return "probe_requested_without_receipt"
-    return "safe_no_probe"
+    return "no_receipt"
 
 
 def build_performance_summary(
@@ -67,6 +64,7 @@ def build_performance_summary(
     experiment_resolution: dict[str, Any],
     recommendation_engine: dict[str, Any],
     wave10_summary: dict[str, Any],
+    wave11_summary: dict[str, Any],
 ) -> dict[str, Any]:
     real_metrics = dict(real_metrics_contract or {})
     attention_breakdown = dict(attention_metrics.get("breakdown") or {})
@@ -152,6 +150,15 @@ def build_performance_summary(
             "operational_state": publish.get("operational_state"),
             "created_at": publish.get("created_at"),
         },
+        "publish_receipt_bridge": {
+            "publish_status": publish.get("publish_status"),
+            "receipt_id": publish.get("receipt_id"),
+            "media_id": publish.get("media_id"),
+            "permalink": publish.get("permalink"),
+            "content_type": publish.get("content_type"),
+            "style": publish.get("style"),
+            "created_at": publish.get("created_at"),
+        },
         "ingestion_state": {
             "attempted": collection_attempted,
             "success": collection_success,
@@ -169,6 +176,9 @@ def build_performance_summary(
             "winner_candidate": thompson_sampler.get("winner_candidate"),
             "summary": decision_core_summary,
         },
+        "evidence_interpreter": evidence_interpreter,
+        "experiment_resolution": experiment_resolution,
+        "recommendation_engine": recommendation_engine,
         "evidence_interpretation_state": {
             "evidence_state": evidence_interpreter.get("evidence_state"),
             "evidence_strength": evidence_interpreter.get("evidence_strength"),
@@ -226,6 +236,7 @@ def build_performance_summary(
             "notes": reflection_memory.get("notes"),
         },
         "wave10_summary": wave10_summary,
+        "wave11_summary": wave11_summary,
         "guardrails": {
             "zero_fake_data": True,
             "zero_random": True,
