@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -102,10 +102,7 @@ class ExperimentRegistry:
                 top = float(ordered[0].get("attention_score") or 0)
                 second = float(ordered[1].get("attention_score") or 0)
                 if top > 0:
-                    winner_confidence = round(
-                        max(0.0, min((top - second) / top * 100.0, 100.0)),
-                        2,
-                    )
+                    winner_confidence = round(max(0.0, min((top - second) / top * 100.0, 100.0)), 2)
                     break
 
         percent = round((resolved / total) * 100.0, 2) if total > 0 else 0.0
@@ -131,13 +128,10 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
     attention_metrics = dict(record.get("attention_metrics") or {})
     attention_breakdown = dict(attention_metrics.get("breakdown") or {})
     real_metrics = dict(record.get("real_metrics") or {})
+    visual_template = dict(record.get("visual_template") or {})
 
     topic_seed = str(creative_plan.get("topic_seed") or creative_plan.get("trend_input") or "tema")
-    template_id = str(
-        (record.get("visual_template") or {}).get("template_id")
-        or creative_plan.get("visual_style")
-        or "default"
-    )
+    template_id = str(visual_template.get("template_id") or creative_plan.get("visual_style") or "default")
     headline = str(creative_plan.get("headline") or "")
     hypothesis_key = _stable_id(topic_seed.lower(), template_id)
     variant_key = _stable_id(
@@ -148,12 +142,12 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
     experiment_id = f"exp_{hypothesis_key}_{variant_key[:8]}"
 
     source_status = str(real_metrics.get("source_status") or "not_available_yet")
-    operational_state = str(record.get("operational_state") or "internal_lab")
+    operational_state = str(record.get("operational_state") or "technical_test")
 
-    if source_status in {"collected", "partial_collected"} and attention_breakdown.get("attention_score") is not None:
+    if source_status == "collected" and attention_breakdown.get("attention_score") is not None:
         status = "resolved"
-    elif source_status in {"collection_error", "missing_token"}:
-        status = "error"
+    elif source_status == "ingest_error":
+        status = "ingest_error"
     elif operational_state in {"blocked_quality", "blocked_brand"}:
         status = "blocked"
     else:
@@ -162,7 +156,7 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
     decision = "observe"
     if status == "blocked":
         decision = "hold"
-    elif status == "error":
+    elif status == "ingest_error":
         decision = "retry_ingestion"
     elif status == "resolved":
         decision = "review_manually"
