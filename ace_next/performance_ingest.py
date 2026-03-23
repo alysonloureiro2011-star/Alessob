@@ -129,8 +129,8 @@ def collect_real_performance_metrics(
         return {
             "ok": True,
             "attempted": False,
-            "source_status": real_metrics["source_status"],
             "collection_success": False,
+            "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": [],
@@ -147,8 +147,8 @@ def collect_real_performance_metrics(
         return {
             "ok": True,
             "attempted": False,
-            "source_status": real_metrics["source_status"],
             "collection_success": False,
+            "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": [],
@@ -164,8 +164,8 @@ def collect_real_performance_metrics(
         return {
             "ok": True,
             "attempted": False,
-            "source_status": real_metrics["source_status"],
             "collection_success": False,
+            "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": [],
@@ -183,8 +183,8 @@ def collect_real_performance_metrics(
         return {
             "ok": False,
             "attempted": False,
-            "source_status": real_metrics["source_status"],
             "collection_success": False,
+            "source_status": real_metrics["source_status"],
             "real_metrics": real_metrics,
             "attention_inputs": {},
             "errors": list(real_metrics["errors"]),
