@@ -18,11 +18,11 @@ def _derive_evidence_bridge_state(
     has_permalink: bool,
 ) -> str:
     if has_receipt and has_media_id and has_permalink:
-        return "receipt_media_permalink_linked"
+        return "receipt_with_permalink"
     if has_receipt and has_media_id:
-        return "receipt_media_linked"
+        return "receipt_with_media_id"
     if has_receipt:
-        return "receipt_only"
+        return "receipt_linked"
     return "no_receipt"
 
 
@@ -62,16 +62,6 @@ def build_post_performance_contract(
         permalink,
     )
 
-    post_performance = {
-        "status": "not_collected_yet",
-        "source": "awaiting_real_metrics",
-        "metrics": {},
-        "notes": [
-            "registro criado sem métricas falsas",
-            "nenhuma política editorial/visual/marca foi alterada automaticamente",
-        ],
-    }
-
     publish_receipt_bridge = {
         "publish_status": publish_status,
         "receipt_id": receipt_id or None,
@@ -96,6 +86,16 @@ def build_post_performance_contract(
         ),
     }
 
+    post_performance = {
+        "status": "not_collected_yet",
+        "source": "awaiting_real_metrics",
+        "metrics": {},
+        "notes": [
+            "registro criado sem métricas falsas",
+            "nenhuma política editorial/visual/marca foi alterada automaticamente",
+        ],
+    }
+
     return {
         "record_id": record_id,
         "created_at": now,
@@ -103,7 +103,7 @@ def build_post_performance_contract(
         "brand_live_allowed": bool(brand_live_allowed),
         "trend": trend,
         "publish_status": publish_status,
-        "evidence_status": "receipt_linked" if receipt else "no_publish_receipt",
+        "evidence_status": "receipt_linked" if has_receipt else "no_receipt",
         "creative_plan": creative_plan,
         "editorial_qa": editorial_qa,
         "visual_qa": visual_qa,
@@ -111,6 +111,8 @@ def build_post_performance_contract(
         "receipt": receipt,
         "publish_result": receipt,
         "post_performance": post_performance,
+        "publish_receipt_bridge": publish_receipt_bridge,
+        "evidence_bridge": evidence_bridge,
         "resonance_engine": {},
         "reward_prediction": {},
         "sampler_decision": {},
@@ -119,6 +121,7 @@ def build_post_performance_contract(
         "experiment_resolution": {},
         "recommendation_engine": {},
         "wave10_summary": {},
+        "wave11_summary": {},
         "variant_context": {
             "headline": creative_plan.get("headline"),
             "hook": creative_plan.get("hook"),
@@ -127,8 +130,6 @@ def build_post_performance_contract(
             "content_type": content_type,
             "style": style,
         },
-        "publish_receipt_bridge": publish_receipt_bridge,
-        "evidence_bridge": evidence_bridge,
         "resolution_context": {
             "evidence_state": None,
             "evidence_strength": None,
