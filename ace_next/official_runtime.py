@@ -50,6 +50,9 @@ try:
     from .resonance_engine import build_resonance_engine
     from .reward_prediction_layer import build_reward_prediction
     from .thompson_sampler import build_thompson_sampler
+    from .evidence_interpreter import build_evidence_interpreter
+    from .experiment_resolution_engine import build_experiment_resolution
+    from .recommendation_engine import build_recommendation_engine
 except Exception as exc:
     MEASUREMENT_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
     PerformanceStore = None
@@ -66,6 +69,9 @@ except Exception as exc:
     build_resonance_engine = None
     build_reward_prediction = None
     build_thompson_sampler = None
+    build_evidence_interpreter = None
+    build_experiment_resolution = None
+    build_recommendation_engine = None
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -403,6 +409,45 @@ class OfficialRuntime:
             "winner_candidate": False,
             "reasons": [reason],
         }
+        evidence_interpreter = {
+            "ok": False,
+            "evidence_state": "ingest_error",
+            "evidence_strength": "none",
+            "evidence_ready_for_resolution": False,
+            "evidence_reasons": [reason],
+        }
+        experiment_resolution = {
+            "ok": False,
+            "resolution_state": "collecting",
+            "can_resolve": False,
+            "winner_candidate": False,
+            "loser_candidate": False,
+            "keep_collecting": True,
+            "confidence_level": "low",
+            "resolution_reason": reason,
+            "promotion_readiness": "not_ready",
+        }
+        recommendation_engine = {
+            "ok": False,
+            "recommended_action": "collect_more",
+            "action_priority": "low",
+            "recommendation_reason": reason,
+            "next_best_step": "restaurar a base antes de interpretar evidência",
+            "safe_to_repeat": False,
+            "safe_to_promote_to_editorial_staging": False,
+            "requires_human_review": True,
+        }
+        wave10_summary = {
+            "ok": False,
+            "evidence_state": "ingest_error",
+            "evidence_strength": "none",
+            "resolution_state": "collecting",
+            "can_resolve": False,
+            "recommended_action": "collect_more",
+            "next_best_step": "restaurar a base antes de interpretar evidência",
+            "requires_human_review": True,
+            "brand_live_allowed": False,
+        }
         experiment_registry = {"ok": False, "error": reason}
         episodic_performance_memory = {"ok": False, "error": reason}
         reflection_memory = {
@@ -439,6 +484,10 @@ class OfficialRuntime:
             reward_prediction,
             thompson_sampler,
             decision_core_summary,
+            evidence_interpreter,
+            experiment_resolution,
+            recommendation_engine,
+            wave10_summary,
             experiment_registry,
             episodic_performance_memory,
             reflection_memory,
@@ -477,6 +526,9 @@ class OfficialRuntime:
             or not build_resonance_engine
             or not build_reward_prediction
             or not build_thompson_sampler
+            or not build_evidence_interpreter
+            or not build_experiment_resolution
+            or not build_recommendation_engine
         ):
             fallback = self._measurement_fallback(
                 reason=f"measurement_stack_import_error: {MEASUREMENT_STACK_IMPORT_ERROR or 'unknown'}"
@@ -544,6 +596,54 @@ class OfficialRuntime:
             record["sampler_decision"] = thompson_sampler
             record["decision_core_summary"] = decision_core_summary
 
+            evidence_interpreter = build_evidence_interpreter(record=record)
+            experiment_resolution = build_experiment_resolution(
+                experiment_context=dict(record.get("experiment_registry") or {}),
+                thompson_sampler=thompson_sampler,
+                reward_prediction=reward_prediction,
+                attention_metrics=attention_metrics,
+                evidence_interpreter=evidence_interpreter,
+            )
+            recommendation_engine = build_recommendation_engine(
+                evidence_interpreter=evidence_interpreter,
+                experiment_resolution=experiment_resolution,
+                resonance_engine=resonance_engine,
+                reward_prediction=reward_prediction,
+                attention_metrics=attention_metrics,
+                operational_state=operational_state,
+            )
+            wave10_summary = {
+                "ok": True,
+                "evidence_state": evidence_interpreter.get("evidence_state"),
+                "evidence_strength": evidence_interpreter.get("evidence_strength"),
+                "resolution_state": experiment_resolution.get("resolution_state"),
+                "can_resolve": experiment_resolution.get("can_resolve"),
+                "recommended_action": recommendation_engine.get("recommended_action"),
+                "next_best_step": recommendation_engine.get("next_best_step"),
+                "requires_human_review": recommendation_engine.get("requires_human_review"),
+                "brand_live_allowed": False,
+            }
+
+            record["evidence_interpreter"] = evidence_interpreter
+            record["experiment_resolution"] = experiment_resolution
+            record["recommendation_engine"] = recommendation_engine
+            record["wave10_summary"] = wave10_summary
+            record["resolution_context"] = {
+                "evidence_state": evidence_interpreter.get("evidence_state"),
+                "evidence_strength": evidence_interpreter.get("evidence_strength"),
+                "resolution_state": experiment_resolution.get("resolution_state"),
+                "recommended_action": recommendation_engine.get("recommended_action"),
+            }
+            record["evidence_bridge"] = {
+                **dict(record.get("evidence_bridge") or {}),
+                "has_real_receipt": bool((record.get("receipt") or {}).get("receipt_id")),
+                "has_media_id": bool((record.get("receipt") or {}).get("media_id")),
+                "has_permalink": bool((record.get("receipt") or {}).get("permalink")),
+                "latest_real_metrics_status": real_metrics.get("source_status"),
+                "latest_source_status": real_metrics.get("source_status"),
+                "evidence_bridge_state": evidence_interpreter.get("evidence_state"),
+            }
+
             record["post_performance"] = {
                 "status": real_metrics.get("source_status"),
                 "source": real_metrics.get("source_endpoint"),
@@ -603,6 +703,10 @@ class OfficialRuntime:
                 reward_prediction=reward_prediction,
                 thompson_sampler=thompson_sampler,
                 decision_core_summary=decision_core_summary,
+                evidence_interpreter=evidence_interpreter,
+                experiment_resolution=experiment_resolution,
+                recommendation_engine=recommendation_engine,
+                wave10_summary=wave10_summary,
             )
             return (
                 record,
@@ -612,6 +716,10 @@ class OfficialRuntime:
                 reward_prediction,
                 thompson_sampler,
                 decision_core_summary,
+                evidence_interpreter,
+                experiment_resolution,
+                recommendation_engine,
+                wave10_summary,
                 experiment_registry,
                 episodic_performance_memory,
                 reflection_memory,
@@ -857,6 +965,10 @@ class OfficialRuntime:
             reward_prediction,
             thompson_sampler,
             decision_core_summary,
+            evidence_interpreter,
+            experiment_resolution,
+            recommendation_engine,
+            wave10_summary,
             experiment_registry,
             episodic_performance_memory,
             reflection_memory,
@@ -915,6 +1027,10 @@ class OfficialRuntime:
             "reward_prediction": reward_prediction,
             "thompson_sampler": thompson_sampler,
             "decision_core_summary": decision_core_summary,
+            "evidence_interpreter": evidence_interpreter,
+            "experiment_resolution": experiment_resolution,
+            "recommendation_engine": recommendation_engine,
+            "wave10_summary": wave10_summary,
             "experiment_registry": experiment_registry,
             "episodic_performance_memory": episodic_performance_memory,
             "reflection_memory": reflection_memory,
