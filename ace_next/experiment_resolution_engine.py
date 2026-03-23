@@ -45,20 +45,20 @@ def build_experiment_resolution(
         can_resolve = False
         keep_collecting = False
         confidence_level = "low"
-        resolution_reason = "houve erro de ingestão; a prioridade é revisar a evidência antes de decidir"
+        resolution_reason = "houve erro de ingestão; revisar evidência antes de decidir"
     elif not evidence_ready:
         if evidence_state == "weak_evidence":
             resolution_state = "weak_signal"
             can_resolve = False
             keep_collecting = True
             confidence_level = "low"
-            resolution_reason = "há sinal real, mas ele ainda é fraco demais para resolver o experimento"
+            resolution_reason = "há sinal real, mas ainda fraco demais"
         else:
             resolution_state = "collecting"
             can_resolve = False
             keep_collecting = True
             confidence_level = "low"
-            resolution_reason = "o experimento permanece em coleta por falta de base suficiente"
+            resolution_reason = "o experimento permanece em coleta"
     else:
         if (
             posterior_mean is not None
@@ -72,7 +72,7 @@ def build_experiment_resolution(
             confidence_level = "high" if evidence_strength == "strong" else "medium"
             resolution_state = "resolved_conservative" if evidence_strength == "strong" else "winner_candidate"
             promotion_readiness = "editorial_staging_candidate"
-            resolution_reason = "a variante acumulou evidência conservadora suficiente para candidatura controlada"
+            resolution_reason = "variante com sinal conservador suficiente para candidatura"
         elif (
             posterior_mean is not None
             and posterior_mean <= 0.35
@@ -87,13 +87,13 @@ def build_experiment_resolution(
             confidence_level = "medium" if evidence_strength in {"moderate", "strong"} else "low"
             resolution_state = "resolved_conservative" if evidence_strength == "strong" else "loser_candidate"
             promotion_readiness = "discard_candidate"
-            resolution_reason = "a variante mostrou sinal fraco consistente e entra em descarte conservador"
+            resolution_reason = "variante com sinal fraco consistente"
         else:
             resolution_state = "observe"
             can_resolve = False
             keep_collecting = True
             confidence_level = "medium" if evidence_strength in {"moderate", "strong"} else "low"
-            resolution_reason = "há evidência real, mas ela ainda não é suficientemente conclusiva"
+            resolution_reason = "há evidência real, mas ainda não conclusiva"
 
     return {
         "ok": True,
