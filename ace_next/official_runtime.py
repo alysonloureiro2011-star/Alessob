@@ -415,6 +415,7 @@ class OfficialRuntime:
             "evidence_strength": "none",
             "evidence_ready_for_resolution": False,
             "evidence_reasons": [reason],
+            "bridge_state": "no_receipt",
         }
         experiment_resolution = {
             "ok": False,
@@ -429,7 +430,7 @@ class OfficialRuntime:
         }
         recommendation_engine = {
             "ok": False,
-            "recommended_action": "collect_more",
+            "recommended_action": "repeat_probe",
             "action_priority": "low",
             "recommendation_reason": reason,
             "next_best_step": "restaurar a base antes de interpretar evidência",
@@ -440,13 +441,19 @@ class OfficialRuntime:
         wave10_summary = {
             "ok": False,
             "evidence_state": "ingest_error",
-            "evidence_strength": "none",
             "resolution_state": "collecting",
-            "can_resolve": False,
-            "recommended_action": "collect_more",
-            "next_best_step": "restaurar a base antes de interpretar evidência",
-            "requires_human_review": True,
+            "recommended_action": "repeat_probe",
+        }
+        wave11_summary = {
+            "ok": False,
             "brand_live_allowed": False,
+            "evidence_state": "no_receipt",
+            "has_receipt": False,
+            "has_media_id": False,
+            "has_permalink": False,
+            "can_resolve": False,
+            "recommended_action": "repeat_probe",
+            "next_best_step": "restaurar a base antes de interpretar evidência",
         }
         experiment_registry = {"ok": False, "error": reason}
         episodic_performance_memory = {"ok": False, "error": reason}
@@ -488,6 +495,7 @@ class OfficialRuntime:
             experiment_resolution,
             recommendation_engine,
             wave10_summary,
+            wave11_summary,
             experiment_registry,
             episodic_performance_memory,
             reflection_memory,
@@ -597,6 +605,7 @@ class OfficialRuntime:
             record["decision_core_summary"] = decision_core_summary
 
             evidence_interpreter = build_evidence_interpreter(record=record)
+
             experiment_resolution = build_experiment_resolution(
                 experiment_context=dict(record.get("experiment_registry") or {}),
                 thompson_sampler=thompson_sampler,
@@ -604,6 +613,7 @@ class OfficialRuntime:
                 attention_metrics=attention_metrics,
                 evidence_interpreter=evidence_interpreter,
             )
+
             recommendation_engine = build_recommendation_engine(
                 evidence_interpreter=evidence_interpreter,
                 experiment_resolution=experiment_resolution,
@@ -612,36 +622,53 @@ class OfficialRuntime:
                 attention_metrics=attention_metrics,
                 operational_state=operational_state,
             )
+
             wave10_summary = {
                 "ok": True,
                 "evidence_state": evidence_interpreter.get("evidence_state"),
-                "evidence_strength": evidence_interpreter.get("evidence_strength"),
                 "resolution_state": experiment_resolution.get("resolution_state"),
+                "recommended_action": recommendation_engine.get("recommended_action"),
+            }
+
+            wave11_summary = {
+                "ok": True,
+                "brand_live_allowed": False,
+                "evidence_state": evidence_interpreter.get("evidence_state"),
+                "has_receipt": evidence_interpreter.get("has_real_receipt"),
+                "has_media_id": evidence_interpreter.get("has_media_id"),
+                "has_permalink": evidence_interpreter.get("has_permalink"),
                 "can_resolve": experiment_resolution.get("can_resolve"),
                 "recommended_action": recommendation_engine.get("recommended_action"),
                 "next_best_step": recommendation_engine.get("next_best_step"),
-                "requires_human_review": recommendation_engine.get("requires_human_review"),
-                "brand_live_allowed": False,
             }
 
             record["evidence_interpreter"] = evidence_interpreter
             record["experiment_resolution"] = experiment_resolution
             record["recommendation_engine"] = recommendation_engine
             record["wave10_summary"] = wave10_summary
+            record["wave11_summary"] = wave11_summary
             record["resolution_context"] = {
                 "evidence_state": evidence_interpreter.get("evidence_state"),
                 "evidence_strength": evidence_interpreter.get("evidence_strength"),
                 "resolution_state": experiment_resolution.get("resolution_state"),
                 "recommended_action": recommendation_engine.get("recommended_action"),
             }
+            record["publish_receipt_bridge"] = {
+                "publish_status": (record.get("publish_result") or {}).get("publish_status"),
+                "receipt_id": (record.get("publish_result") or {}).get("receipt_id"),
+                "media_id": (record.get("publish_result") or {}).get("media_id"),
+                "permalink": (record.get("publish_result") or {}).get("permalink"),
+                "content_type": (record.get("publish_result") or {}).get("content_type"),
+                "style": (record.get("publish_result") or {}).get("style"),
+                "created_at": (record.get("publish_result") or {}).get("created_at"),
+            }
             record["evidence_bridge"] = {
-                **dict(record.get("evidence_bridge") or {}),
-                "has_real_receipt": bool((record.get("receipt") or {}).get("receipt_id")),
-                "has_media_id": bool((record.get("receipt") or {}).get("media_id")),
-                "has_permalink": bool((record.get("receipt") or {}).get("permalink")),
+                "has_real_receipt": bool((record.get("publish_result") or {}).get("receipt_id")),
+                "has_media_id": bool((record.get("publish_result") or {}).get("media_id")),
+                "has_permalink": bool((record.get("publish_result") or {}).get("permalink")),
                 "latest_real_metrics_status": real_metrics.get("source_status"),
                 "latest_source_status": real_metrics.get("source_status"),
-                "evidence_bridge_state": evidence_interpreter.get("evidence_state"),
+                "evidence_bridge_state": evidence_interpreter.get("bridge_state"),
             }
 
             record["post_performance"] = {
@@ -707,6 +734,7 @@ class OfficialRuntime:
                 experiment_resolution=experiment_resolution,
                 recommendation_engine=recommendation_engine,
                 wave10_summary=wave10_summary,
+                wave11_summary=wave11_summary,
             )
             return (
                 record,
@@ -720,6 +748,7 @@ class OfficialRuntime:
                 experiment_resolution,
                 recommendation_engine,
                 wave10_summary,
+                wave11_summary,
                 experiment_registry,
                 episodic_performance_memory,
                 reflection_memory,
@@ -969,6 +998,7 @@ class OfficialRuntime:
             experiment_resolution,
             recommendation_engine,
             wave10_summary,
+            wave11_summary,
             experiment_registry,
             episodic_performance_memory,
             reflection_memory,
@@ -1027,10 +1057,13 @@ class OfficialRuntime:
             "reward_prediction": reward_prediction,
             "thompson_sampler": thompson_sampler,
             "decision_core_summary": decision_core_summary,
+            "publish_receipt_bridge": post_performance_contract.get("publish_receipt_bridge"),
+            "evidence_bridge": post_performance_contract.get("evidence_bridge"),
             "evidence_interpreter": evidence_interpreter,
             "experiment_resolution": experiment_resolution,
             "recommendation_engine": recommendation_engine,
             "wave10_summary": wave10_summary,
+            "wave11_summary": wave11_summary,
             "experiment_registry": experiment_registry,
             "episodic_performance_memory": episodic_performance_memory,
             "reflection_memory": reflection_memory,
