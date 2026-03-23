@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from flask import Flask, jsonify, request, send_from_directory, g
+from flask import Flask, jsonify, request, send_from_directory
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
@@ -199,15 +199,18 @@ def create_official_app() -> Flask:
     def publish_test() -> object:
         runtime = get_runtime()
         trend = (request.args.get("trend") or "teste real").strip()
+
         force_placeholder = (
             str(request.args.get("placeholder", "0")).strip().lower()
             in ("1", "true", "yes", "on")
         )
-        force_real_probe = (
-            str(request.args.get("real_probe", "0")).strip().lower()
-            in ("1", "true", "yes", "on")
-        )
-        probe_state = (request.args.get("probe_state") or "auto").strip()
+
+        raw_probe = request.args.get("probe")
+        if raw_probe is None:
+            raw_probe = request.args.get("real_probe", "0")
+        force_real_probe = str(raw_probe).strip().lower() in ("1", "true", "yes", "on")
+
+        probe_state = (request.args.get("state") or request.args.get("probe_state") or "auto").strip()
 
         result = runtime.run(
             trend=trend,
