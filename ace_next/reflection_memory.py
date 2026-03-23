@@ -5,38 +5,42 @@ from typing import Any
 
 def build_reflection_memory(*, record: dict[str, Any]) -> dict[str, Any]:
     real_metrics = dict(record.get("real_metrics") or {})
-    attention_metrics = dict(record.get("attention_metrics") or {})
-    experiment_registry = dict(record.get("experiment_registry") or {})
-    episodic = dict(record.get("episodic_performance_memory") or {})
+    publish_result = dict(record.get("publish_result") or {})
+    probe_context = dict(record.get("probe_context") or {})
 
     status = str(real_metrics.get("source_status") or "not_available_yet")
-    attention_breakdown = dict(attention_metrics.get("breakdown") or {})
-    attention_score = attention_breakdown.get("attention_score")
-
     notes: list[str] = []
-    if status in {"collected", "partial_collected"}:
-        notes.append("Dados reais de performance foram registrados.")
-        if real_metrics.get("reach") is not None:
-            notes.append(f"reach real observado: {real_metrics.get('reach')}")
-        if real_metrics.get("impressions") is not None:
-            notes.append(f"impressions reais observadas: {real_metrics.get('impressions')}")
-        if real_metrics.get("engagement_proxy") is not None:
-            notes.append(f"engagement_proxy derivado de dados reais: {real_metrics.get('engagement_proxy')}")
-        if attention_score is not None:
-            notes.append(f"attention_score derivado de dados reais: {attention_score}")
-    elif status in {"collection_error", "missing_token"}:
-        notes.append("A coleta real falhou ou ficou indisponível.")
+
+    if publish_result.get("media_id"):
+        notes.append(f"media_id real presente: {publish_result.get('media_id')}")
+    else:
+        notes.append("a peça ainda não possui media_id real confirmado")
+
+    if publish_result.get("permalink"):
+        notes.append("permalink real disponível")
+    else:
+        notes.append("permalink real ainda não disponível")
+
+    if probe_context.get("requested"):
+        notes.append(f"probe real solicitado para estado: {probe_context.get('requested_state')}")
+        if probe_context.get("publish_executed"):
+            notes.append("o probe real foi executado")
+        else:
+            notes.append("o probe real não foi executado")
+
+    if status == "collected":
+        notes.append("já existem dados reais de performance para esta peça")
+    elif status == "not_available_yet":
+        notes.append("a coleta foi tentada ou está aguardando disponibilidade de dados reais")
+    elif status == "ingest_error":
+        notes.append("houve erro de ingestão de métricas reais")
         reason = real_metrics.get("source_reason")
         if reason:
             notes.append(str(reason))
+    elif status == "not_supported_for_content_type":
+        notes.append("o tipo de conteúdo atual não suportou a coleta de métricas desejadas")
     else:
-        notes.append("Ainda não existem métricas reais suficientes para leitura de performance.")
-
-    experiment_status = experiment_registry.get("status")
-    if experiment_status:
-        notes.append(f"estado do experimento: {experiment_status}")
-    if episodic.get("learning_validity_score") is not None:
-        notes.append(f"learning_validity_score atual: {episodic.get('learning_validity_score')}")
+        notes.append("estado de métricas ainda indefinido")
 
     return {
         "ok": True,
