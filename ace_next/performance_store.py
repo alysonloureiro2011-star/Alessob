@@ -17,12 +17,16 @@ class PerformanceStoreSummary:
     latest_source_status: str | None
     latest_collected_at: str | None
     latest_attention_score: float | None
+    latest_media_id: str | None
+    latest_permalink: str | None
+    latest_probe_requested: bool
+    latest_probe_publish_executed: bool
+    latest_ingest_attempted: bool
     records_with_real_metrics: int
     records_without_real_metrics: int
     records_with_ingest_error: int
     records_with_attention_metrics: int
-    records_with_experiment_resolution: int
-    records_with_episodic_memory: int
+    records_with_probe_publish: int
     source_status_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,11 +109,11 @@ class PerformanceStore:
 
         with_real = sum(
             1 for record in records
-            if _source_status(record) in {"collected", "partial_collected"}
+            if _source_status(record) == "collected"
         )
         with_error = sum(
             1 for record in records
-            if _source_status(record) in {"collection_error", "missing_token"}
+            if _source_status(record) == "ingest_error"
         )
         without_real = len(records) - with_real - with_error
         with_attention_metrics = sum(
@@ -117,14 +121,18 @@ class PerformanceStore:
             for record in records
             if ((record.get("attention_metrics") or {}).get("breakdown") or {}).get("attention_score") is not None
         )
-        with_experiment_resolution = sum(
-            1 for record in records
-            if str((record.get("experiment_registry") or {}).get("status") or "") == "resolved"
+        with_probe_publish = sum(
+            1
+            for record in records
+            if bool((record.get("probe_context") or {}).get("publish_executed"))
         )
-        with_episodic_memory = sum(1 for record in records if bool(record.get("episodic_performance_memory")))
 
         real_metrics = dict(last.get("real_metrics") or {})
         attention_metrics = dict(last.get("attention_metrics") or {})
+        receipt = dict(last.get("receipt") or last.get("publish_result") or {})
+        probe_context = dict(last.get("probe_context") or {})
+        performance_ingest = dict(last.get("performance_ingest") or {})
+
         return PerformanceStoreSummary(
             ok=True,
             path=str(self.path),
@@ -138,11 +146,15 @@ class PerformanceStore:
                 if isinstance(attention_metrics, dict)
                 else None
             ),
+            latest_media_id=receipt.get("media_id"),
+            latest_permalink=receipt.get("permalink"),
+            latest_probe_requested=bool(probe_context.get("requested")),
+            latest_probe_publish_executed=bool(probe_context.get("publish_executed")),
+            latest_ingest_attempted=bool(performance_ingest.get("attempted")),
             records_with_real_metrics=with_real,
             records_without_real_metrics=without_real,
             records_with_ingest_error=with_error,
             records_with_attention_metrics=with_attention_metrics,
-            records_with_experiment_resolution=with_experiment_resolution,
-            records_with_episodic_memory=with_episodic_memory,
+            records_with_probe_publish=with_probe_publish,
             source_status_counts=status_counts,
         )
