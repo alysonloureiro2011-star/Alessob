@@ -18,6 +18,8 @@ class ExperimentRegistrySummary:
     latest_experiment_id: str | None
     latest_status: str | None
     latest_decision_state: str | None
+    latest_resolution_state: str | None
+    latest_evidence_state: str | None
     winner_confidence: float | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +118,8 @@ class ExperimentRegistry:
             latest_experiment_id=latest.get("experiment_id"),
             latest_status=latest.get("status"),
             latest_decision_state=latest.get("decision_state"),
+            latest_resolution_state=latest.get("resolution_state"),
+            latest_evidence_state=latest.get("evidence_state"),
             winner_confidence=winner_confidence,
         )
 
@@ -134,6 +138,9 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
     reward_prediction = dict(record.get("reward_prediction") or {})
     sampler_decision = dict(record.get("sampler_decision") or record.get("thompson_sampler") or {})
     resonance_engine = dict(record.get("resonance_engine") or {})
+    evidence_interpreter = dict(record.get("evidence_interpreter") or {})
+    experiment_resolution = dict(record.get("experiment_resolution") or {})
+    recommendation_engine = dict(record.get("recommendation_engine") or {})
 
     topic_seed = str(creative_plan.get("topic_seed") or creative_plan.get("trend_input") or "tema")
     template_id = str(visual_template.get("template_id") or creative_plan.get("visual_style") or "default")
@@ -148,14 +155,21 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
 
     source_status = str(real_metrics.get("source_status") or "not_available_yet")
     operational_state = str(record.get("operational_state") or "technical_test")
-    winner_candidate = bool(sampler_decision.get("winner_candidate"))
+    winner_candidate = bool(experiment_resolution.get("winner_candidate") or sampler_decision.get("winner_candidate"))
+    loser_candidate = bool(experiment_resolution.get("loser_candidate"))
     decision_state = sampler_decision.get("decision_state") or "collecting"
+    resolution_state = experiment_resolution.get("resolution_state") or "collecting"
     selected_variant = sampler_decision.get("selected_variant") or variant_key
-    confidence_level = sampler_decision.get("confidence_level") or "low"
+    confidence_level = experiment_resolution.get("confidence_level") or sampler_decision.get("confidence_level") or "low"
     posterior_mean = sampler_decision.get("posterior_mean")
     conservative_mode = bool(sampler_decision.get("conservative_mode", True))
+    evidence_state = evidence_interpreter.get("evidence_state")
+    evidence_strength = evidence_interpreter.get("evidence_strength")
+    can_resolve = bool(experiment_resolution.get("can_resolve"))
+    promotion_readiness = experiment_resolution.get("promotion_readiness") or "not_ready"
+    keep_collecting = bool(experiment_resolution.get("keep_collecting", True))
 
-    if source_status == "collected" and winner_candidate:
+    if resolution_state == "resolved_conservative":
         status = "resolved"
     elif source_status == "ingest_error":
         status = "ingest_error"
@@ -180,13 +194,20 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
             "mode": "pending_real_metrics" if status == "collecting" else "closed_first_read",
         },
         "status": status,
-        "decision": "review_manually" if status == "resolved" else "observe",
+        "decision": recommendation_engine.get("recommended_action") or ("review_manually" if status == "resolved" else "observe"),
         "decision_state": decision_state,
         "selected_variant": selected_variant,
         "confidence_level": confidence_level,
         "posterior_mean": posterior_mean,
         "winner_candidate": winner_candidate,
+        "loser_candidate": loser_candidate,
+        "keep_collecting": keep_collecting,
         "conservative_mode": conservative_mode,
+        "evidence_state": evidence_state,
+        "evidence_strength": evidence_strength,
+        "resolution_state": resolution_state,
+        "can_resolve": can_resolve,
+        "promotion_readiness": promotion_readiness,
         "resonance_score": resonance_engine.get("resonance_score"),
         "reward_prediction_score": reward_prediction.get("reward_prediction_score"),
         "attention_score": attention_breakdown.get("attention_score"),
