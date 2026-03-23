@@ -17,6 +17,7 @@ class ExperimentRegistrySummary:
     experiments_resolved_percent: float
     latest_experiment_id: str | None
     latest_status: str | None
+    latest_decision_state: str | None
     winner_confidence: float | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,16 +92,16 @@ class ExperimentRegistry:
             resolved_items = [
                 item
                 for item in items
-                if item.get("status") == "resolved" and item.get("attention_score") is not None
+                if item.get("status") == "resolved" and item.get("posterior_mean") is not None
             ]
             if len(resolved_items) >= 2:
                 ordered = sorted(
                     resolved_items,
-                    key=lambda x: float(x.get("attention_score") or 0),
+                    key=lambda x: float(x.get("posterior_mean") or 0),
                     reverse=True,
                 )
-                top = float(ordered[0].get("attention_score") or 0)
-                second = float(ordered[1].get("attention_score") or 0)
+                top = float(ordered[0].get("posterior_mean") or 0)
+                second = float(ordered[1].get("posterior_mean") or 0)
                 if top > 0:
                     winner_confidence = round(max(0.0, min((top - second) / top * 100.0, 100.0)), 2)
                     break
@@ -114,6 +115,7 @@ class ExperimentRegistry:
             experiments_resolved_percent=percent,
             latest_experiment_id=latest.get("experiment_id"),
             latest_status=latest.get("status"),
+            latest_decision_state=latest.get("decision_state"),
             winner_confidence=winner_confidence,
         )
 
@@ -129,6 +131,9 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
     attention_breakdown = dict(attention_metrics.get("breakdown") or {})
     real_metrics = dict(record.get("real_metrics") or {})
     visual_template = dict(record.get("visual_template") or {})
+    reward_prediction = dict(record.get("reward_prediction") or {})
+    sampler_decision = dict(record.get("sampler_decision") or record.get("thompson_sampler") or {})
+    resonance_engine = dict(record.get("resonance_engine") or {})
 
     topic_seed = str(creative_plan.get("topic_seed") or creative_plan.get("trend_input") or "tema")
     template_id = str(visual_template.get("template_id") or creative_plan.get("visual_style") or "default")
@@ -143,8 +148,14 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
 
     source_status = str(real_metrics.get("source_status") or "not_available_yet")
     operational_state = str(record.get("operational_state") or "technical_test")
+    winner_candidate = bool(sampler_decision.get("winner_candidate"))
+    decision_state = sampler_decision.get("decision_state") or "collecting"
+    selected_variant = sampler_decision.get("selected_variant") or variant_key
+    confidence_level = sampler_decision.get("confidence_level") or "low"
+    posterior_mean = sampler_decision.get("posterior_mean")
+    conservative_mode = bool(sampler_decision.get("conservative_mode", True))
 
-    if source_status == "collected" and attention_breakdown.get("attention_score") is not None:
+    if source_status == "collected" and winner_candidate:
         status = "resolved"
     elif source_status == "ingest_error":
         status = "ingest_error"
@@ -152,14 +163,6 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
         status = "blocked"
     else:
         status = "collecting"
-
-    decision = "observe"
-    if status == "blocked":
-        decision = "hold"
-    elif status == "ingest_error":
-        decision = "retry_ingestion"
-    elif status == "resolved":
-        decision = "review_manually"
 
     return {
         "experiment_id": experiment_id,
@@ -177,7 +180,15 @@ def build_experiment_record(*, record: dict[str, Any]) -> dict[str, Any]:
             "mode": "pending_real_metrics" if status == "collecting" else "closed_first_read",
         },
         "status": status,
-        "decision": decision,
+        "decision": "review_manually" if status == "resolved" else "observe",
+        "decision_state": decision_state,
+        "selected_variant": selected_variant,
+        "confidence_level": confidence_level,
+        "posterior_mean": posterior_mean,
+        "winner_candidate": winner_candidate,
+        "conservative_mode": conservative_mode,
+        "resonance_score": resonance_engine.get("resonance_score"),
+        "reward_prediction_score": reward_prediction.get("reward_prediction_score"),
         "attention_score": attention_breakdown.get("attention_score"),
         "winner_confidence": None,
     }
