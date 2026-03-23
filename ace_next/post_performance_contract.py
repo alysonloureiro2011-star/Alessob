@@ -11,6 +11,21 @@ def _stable_id(*parts: str) -> str:
     return f"plr_{digest}"
 
 
+def _derive_evidence_bridge_state(
+    *,
+    has_receipt: bool,
+    has_media_id: bool,
+    has_permalink: bool,
+) -> str:
+    if has_receipt and has_media_id and has_permalink:
+        return "receipt_media_permalink_linked"
+    if has_receipt and has_media_id:
+        return "receipt_media_linked"
+    if has_receipt:
+        return "receipt_only"
+    return "no_receipt"
+
+
 def build_post_performance_contract(
     *,
     trend: str,
@@ -24,11 +39,20 @@ def build_post_performance_contract(
 ) -> dict[str, Any]:
     now = datetime.utcnow().isoformat()
     receipt = dict(publish_result or {})
+
     publish_status = str(receipt.get("publish_status") or "not_executed")
     created_at = str(receipt.get("created_at") or now)
     creation_id = str(receipt.get("creation_id") or "")
+    receipt_id = str(receipt.get("receipt_id") or "")
     media_id = str(receipt.get("media_id") or "")
     permalink = str(receipt.get("permalink") or "")
+    content_type = receipt.get("content_type")
+    style = receipt.get("style")
+
+    has_receipt = bool(receipt_id)
+    has_media_id = bool(media_id)
+    has_permalink = bool(permalink)
+
     record_id = _stable_id(
         trend.strip(),
         created_at,
@@ -46,6 +70,30 @@ def build_post_performance_contract(
             "registro criado sem métricas falsas",
             "nenhuma política editorial/visual/marca foi alterada automaticamente",
         ],
+    }
+
+    publish_receipt_bridge = {
+        "publish_status": publish_status,
+        "receipt_id": receipt_id or None,
+        "media_id": media_id or None,
+        "permalink": permalink or None,
+        "content_type": content_type,
+        "style": style,
+        "operational_state": operational_state,
+        "created_at": created_at,
+    }
+
+    evidence_bridge = {
+        "has_real_receipt": has_receipt,
+        "has_media_id": has_media_id,
+        "has_permalink": has_permalink,
+        "latest_real_metrics_status": None,
+        "latest_source_status": None,
+        "evidence_bridge_state": _derive_evidence_bridge_state(
+            has_receipt=has_receipt,
+            has_media_id=has_media_id,
+            has_permalink=has_permalink,
+        ),
     }
 
     return {
@@ -72,13 +120,18 @@ def build_post_performance_contract(
             "hook": creative_plan.get("hook"),
             "operational_state": operational_state,
             "trend": trend,
+            "content_type": content_type,
+            "style": style,
         },
+        "publish_receipt_bridge": publish_receipt_bridge,
+        "evidence_bridge": evidence_bridge,
         "linkage": {
             "creation_id": creation_id or None,
+            "receipt_id": receipt_id or None,
             "media_id": media_id or None,
             "permalink": permalink or None,
-            "style": receipt.get("style"),
-            "content_type": receipt.get("content_type"),
+            "style": style,
+            "content_type": content_type,
         },
         "insight_control": {
             "can_record": True,
