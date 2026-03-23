@@ -203,10 +203,17 @@ def create_official_app() -> Flask:
             str(request.args.get("placeholder", "0")).strip().lower()
             in ("1", "true", "yes", "on")
         )
+        force_real_probe = (
+            str(request.args.get("real_probe", "0")).strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        probe_state = (request.args.get("probe_state") or "auto").strip()
 
         result = runtime.run(
             trend=trend,
             force_placeholder=force_placeholder,
+            force_real_probe=force_real_probe,
+            probe_state=probe_state,
         )
 
         return jsonify(result)
