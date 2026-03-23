@@ -47,8 +47,14 @@ class PublishReceipt:
         return asdict(self)
 
 
+def _probe_enabled(linkage_context: dict[str, Any] | None) -> bool:
+    probe = dict((linkage_context or {}).get("probe") or {})
+    return bool(probe.get("requested"))
+
+
 def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
     created_at = kwargs.get("created_at") or datetime.utcnow().isoformat()
+    linkage_context = kwargs.get("linkage_context")
     return PublishReceipt(
         ok=bool(kwargs.get("ok", False)),
         publish_status=kwargs.get("publish_status") or "placeholder",
@@ -60,7 +66,7 @@ def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
         caption=kwargs.get("caption"),
         media_path=kwargs.get("media_path"),
         media_url=kwargs.get("media_url"),
-        linkage_context=kwargs.get("linkage_context"),
+        linkage_context=linkage_context,
         raw_publish_result=kwargs.get("raw_publish_result"),
         error=kwargs.get("error") or "publish_placeholder_fallback",
         creation_id=kwargs.get("creation_id"),
@@ -298,6 +304,7 @@ class PublishService:
         media_path: str | None,
         linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        probe = dict((linkage_context or {}).get("probe") or {})
         receipt = build_placeholder_receipt(
             created_at=datetime.now().isoformat(),
             receipt_id=f"receipt_{uuid.uuid4().hex}",
@@ -311,6 +318,7 @@ class PublishService:
             raw_publish_result={
                 "mode": "placeholder",
                 "real_publish_enabled": self.config.enable_real_publish,
+                "probe": probe,
             },
             error="placeholder_mode",
         )
@@ -329,6 +337,7 @@ class PublishService:
         linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ig_id = self.config.ig_id
+        probe = dict((linkage_context or {}).get("probe") or {})
 
         if not self.config.enable_real_publish:
             return self.publish_placeholder(
@@ -383,7 +392,7 @@ class PublishService:
                 media_url=media_url,
                 linkage_context=linkage_context,
                 error="container_fail",
-                raw_publish_result={"container": container},
+                raw_publish_result={"container": container, "probe": probe},
             )
 
         creation_id = ((container.get("data") or {}).get("id"))
@@ -397,7 +406,7 @@ class PublishService:
                 media_url=media_url,
                 linkage_context=linkage_context,
                 error="creation_id_ausente",
-                raw_publish_result={"container": container},
+                raw_publish_result={"container": container, "probe": probe},
             )
 
         published = self._publish_with_retry(
@@ -414,7 +423,7 @@ class PublishService:
                 media_url=media_url,
                 linkage_context=linkage_context,
                 error="publish_fail",
-                raw_publish_result={"container": container, "published": published},
+                raw_publish_result={"container": container, "published": published, "probe": probe},
                 creation_id=creation_id,
             )
 
@@ -431,9 +440,11 @@ class PublishService:
             if info.get("ok"):
                 permalink = ((info.get("data") or {}).get("permalink"))
 
+        publish_status = "published_real_probe" if _probe_enabled(linkage_context) else "published"
+
         receipt = PublishReceipt(
             ok=True,
-            publish_status="published",
+            publish_status=publish_status,
             created_at=datetime.now().isoformat(),
             receipt_id=f"receipt_{uuid.uuid4().hex}",
             content_type=content_type,
@@ -447,6 +458,7 @@ class PublishService:
                 "container": container,
                 "published": published,
                 "info": info,
+                "probe": probe,
             },
             error=None,
             creation_id=creation_id,
