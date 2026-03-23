@@ -13,10 +13,17 @@ class EpisodicPerformanceMemorySummary:
     total_episodes: int
     latest_episode_id: str | None
     latest_real_metrics_status: str | None
+    latest_media_id: str | None
+    latest_permalink: str | None
+    latest_evidence_state: str | None
+    latest_resolution_state: str | None
+    latest_recommendation_state: str | None
     memory_reuse_rate: float
     learning_validity_score: float
     episodes_with_real_metrics: int
     episodes_with_receipt: int
+    episodes_with_media_id: int
+    episodes_with_permalink: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,9 +88,12 @@ class EpisodicPerformanceMemory:
 
         with_real = sum(
             1 for item in episodes
-            if str(item.get("real_metrics_status") or "") == "collected"
+            if str(item.get("real_metrics_status") or "") in {"collected", "partial_collected"}
         )
         with_receipt = sum(1 for item in episodes if bool(item.get("receipt_linked")))
+        with_media_id = sum(1 for item in episodes if bool(item.get("has_media_id")))
+        with_permalink = sum(1 for item in episodes if bool(item.get("has_permalink")))
+        evidence_ready = sum(1 for item in episodes if bool(item.get("evidence_ready_for_resolution")))
 
         seen_pairs: set[tuple[str, str]] = set()
         reused = 0
@@ -97,8 +107,22 @@ class EpisodicPerformanceMemory:
         memory_reuse_rate = round((reused / len(episodes)) * 100.0, 2) if episodes else 0.0
 
         receipt_ratio = (with_receipt / len(episodes)) if episodes else 0.0
+        media_ratio = (with_media_id / len(episodes)) if episodes else 0.0
+        permalink_ratio = (with_permalink / len(episodes)) if episodes else 0.0
         real_ratio = (with_real / len(episodes)) if episodes else 0.0
-        learning_validity_score = round(((receipt_ratio * 0.5) + (real_ratio * 0.5)) * 100.0, 2)
+        evidence_ready_ratio = (evidence_ready / len(episodes)) if episodes else 0.0
+
+        learning_validity_score = round(
+            (
+                (receipt_ratio * 0.25)
+                + (media_ratio * 0.20)
+                + (permalink_ratio * 0.10)
+                + (real_ratio * 0.25)
+                + (evidence_ready_ratio * 0.20)
+            )
+            * 100.0,
+            2,
+        )
 
         return EpisodicPerformanceMemorySummary(
             ok=True,
@@ -106,10 +130,17 @@ class EpisodicPerformanceMemory:
             total_episodes=len(episodes),
             latest_episode_id=latest.get("episode_id"),
             latest_real_metrics_status=latest.get("real_metrics_status"),
+            latest_media_id=latest.get("media_id"),
+            latest_permalink=latest.get("permalink"),
+            latest_evidence_state=latest.get("evidence_state"),
+            latest_resolution_state=latest.get("resolution_state"),
+            latest_recommendation_state=latest.get("recommendation_state"),
             memory_reuse_rate=memory_reuse_rate,
             learning_validity_score=learning_validity_score,
             episodes_with_real_metrics=with_real,
             episodes_with_receipt=with_receipt,
+            episodes_with_media_id=with_media_id,
+            episodes_with_permalink=with_permalink,
         )
 
 
@@ -119,6 +150,13 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
     real_metrics = dict(record.get("real_metrics") or {})
     experiment_context = dict(record.get("experiment_registry") or {})
     visual_template = dict(record.get("visual_template") or {})
+    evidence_bridge = dict(record.get("evidence_bridge") or {})
+    evidence_interpreter = dict(record.get("evidence_interpreter") or {})
+    experiment_resolution = dict(record.get("experiment_resolution") or {})
+    recommendation_engine = dict(record.get("recommendation_engine") or {})
+
+    media_id = receipt.get("media_id")
+    permalink = receipt.get("permalink")
 
     return {
         "episode_id": record.get("record_id"),
@@ -128,8 +166,18 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
         "headline": creative_plan.get("headline"),
         "template_id": visual_template.get("template_id"),
         "operational_state": record.get("operational_state"),
-        "receipt_linked": bool(receipt),
+        "receipt_linked": bool(receipt.get("receipt_id")),
         "receipt_id": receipt.get("receipt_id"),
+        "publish_status": receipt.get("publish_status"),
+        "has_media_id": bool(media_id),
+        "has_permalink": bool(permalink),
+        "media_id": media_id,
+        "permalink": permalink,
         "real_metrics_status": real_metrics.get("source_status"),
         "experiment_id": experiment_context.get("experiment_id"),
+        "evidence_bridge_state": evidence_bridge.get("evidence_bridge_state"),
+        "evidence_state": evidence_interpreter.get("evidence_state"),
+        "evidence_ready_for_resolution": evidence_interpreter.get("evidence_ready_for_resolution"),
+        "resolution_state": experiment_resolution.get("resolution_state"),
+        "recommendation_state": recommendation_engine.get("recommended_action"),
     }
