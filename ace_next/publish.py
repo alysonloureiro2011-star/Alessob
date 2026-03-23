@@ -45,6 +45,11 @@ class PublishReceipt:
     creation_id: str | None = None
     media_id: str | None = None
     permalink: str | None = None
+    operational_state: str | None = None
+    real_probe_requested: bool = False
+    real_probe_executed: bool = False
+    probe_state_requested: str | None = None
+    probe_state_effective: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,6 +78,11 @@ def build_placeholder_receipt(**kwargs: Any) -> PublishReceipt:
         creation_id=kwargs.get("creation_id"),
         media_id=kwargs.get("media_id"),
         permalink=kwargs.get("permalink"),
+        operational_state=kwargs.get("operational_state"),
+        real_probe_requested=bool(kwargs.get("real_probe_requested", False)),
+        real_probe_executed=bool(kwargs.get("real_probe_executed", False)),
+        probe_state_requested=kwargs.get("probe_state_requested"),
+        probe_state_effective=kwargs.get("probe_state_effective"),
     )
 
 
@@ -275,6 +285,7 @@ class PublishService:
         media_id: str | None = None,
         permalink: str | None = None,
     ) -> dict[str, Any]:
+        probe = _probe_payload(linkage_context)
         receipt = PublishReceipt(
             ok=False,
             publish_status="error",
@@ -292,6 +303,11 @@ class PublishService:
             creation_id=creation_id,
             media_id=media_id,
             permalink=permalink,
+            operational_state=(linkage_context or {}).get("operational_state"),
+            real_probe_requested=bool(probe.get("requested")),
+            real_probe_executed=False,
+            probe_state_requested=probe.get("requested_state"),
+            probe_state_effective=probe.get("effective_state"),
         )
         return self.save_error(receipt)
 
@@ -305,6 +321,7 @@ class PublishService:
         media_path: str | None,
         linkage_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        probe = _probe_payload(linkage_context)
         receipt = build_placeholder_receipt(
             created_at=datetime.now().isoformat(),
             receipt_id=f"receipt_{uuid.uuid4().hex}",
@@ -318,9 +335,14 @@ class PublishService:
             raw_publish_result={
                 "mode": "placeholder",
                 "real_publish_enabled": self.config.enable_real_publish,
-                "probe": _probe_payload(linkage_context),
+                "probe": probe,
             },
             error="placeholder_mode",
+            operational_state=(linkage_context or {}).get("operational_state"),
+            real_probe_requested=bool(probe.get("requested")),
+            real_probe_executed=False,
+            probe_state_requested=probe.get("requested_state"),
+            probe_state_effective=probe.get("effective_state"),
         )
         saved = self.save_receipt(receipt)
         self.save_error(receipt)
@@ -494,5 +516,10 @@ class PublishService:
             creation_id=creation_id,
             media_id=media_id,
             permalink=permalink,
+            operational_state=(linkage_context or {}).get("operational_state"),
+            real_probe_requested=True,
+            real_probe_executed=True,
+            probe_state_requested=probe.get("requested_state"),
+            probe_state_effective=probe.get("effective_state"),
         )
         return self.save_receipt(receipt)
