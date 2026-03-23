@@ -115,6 +115,10 @@ def build_post_performance_contract(
         "reward_prediction": {},
         "sampler_decision": {},
         "decision_core_summary": {},
+        "evidence_interpreter": {},
+        "experiment_resolution": {},
+        "recommendation_engine": {},
+        "wave10_summary": {},
         "variant_context": {
             "headline": creative_plan.get("headline"),
             "hook": creative_plan.get("hook"),
@@ -125,6 +129,12 @@ def build_post_performance_contract(
         },
         "publish_receipt_bridge": publish_receipt_bridge,
         "evidence_bridge": evidence_bridge,
+        "resolution_context": {
+            "evidence_state": None,
+            "evidence_strength": None,
+            "resolution_state": None,
+            "recommended_action": None,
+        },
         "linkage": {
             "creation_id": creation_id or None,
             "receipt_id": receipt_id or None,
