@@ -8,7 +8,15 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
+from .llm_orchestrator import llm_orchestrator_status
 from .mission_control import decide_mission
+from .observability_views import (
+    build_analytics_view,
+    build_llm_debug_view,
+    build_mission_debug_view,
+    build_observability_bundle,
+    build_perf_view,
+)
 from .token_upgrade import (
     exchange_code_for_token_with_redirect,
     exchange_instagram_long_lived_token,
@@ -49,6 +57,20 @@ def create_official_app() -> Flask:
             runtime = OfficialRuntime(config)
             runtime_holder["runtime"] = runtime
         return runtime
+
+    def _build_runtime_probe_payload(runtime, trend: str | None) -> dict[str, Any]:
+        trend = (trend or "").strip()
+        if not trend:
+            return {
+                "runtime": runtime.snapshot(),
+                "last_publish": runtime.publish.last_publish(),
+            }
+        return runtime.run(
+            trend=trend,
+            force_placeholder=False,
+            force_real_probe=False,
+            probe_state="auto",
+        )
 
     @app.before_request
     def before_request_sync_ig_token() -> None:
@@ -140,6 +162,99 @@ def create_official_app() -> Flask:
                 {
                     "ok": False,
                     "route": "/mission/test",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            ), 400
+
+    @app.get("/debug/mission")
+    def debug_mission() -> object:
+        try:
+            runtime = get_runtime()
+            trend = (request.args.get("trend") or "").strip() or None
+            payload = _build_runtime_probe_payload(runtime, trend)
+            view = build_mission_debug_view(payload)
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/debug/mission",
+                    "view": view,
+                }
+            )
+        except Exception as exc:
+            return jsonify(
+                {
+                    "ok": False,
+                    "route": "/debug/mission",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            ), 400
+
+    @app.get("/ext/perf")
+    def ext_perf() -> object:
+        try:
+            runtime = get_runtime()
+            trend = (request.args.get("trend") or "").strip() or None
+            payload = _build_runtime_probe_payload(runtime, trend)
+            view = build_perf_view(payload)
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/ext/perf",
+                    "view": view,
+                }
+            )
+        except Exception as exc:
+            return jsonify(
+                {
+                    "ok": False,
+                    "route": "/ext/perf",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            ), 400
+
+    @app.get("/debug/analytics")
+    def debug_analytics() -> object:
+        try:
+            runtime = get_runtime()
+            trend = (request.args.get("trend") or "").strip() or None
+            payload = _build_runtime_probe_payload(runtime, trend)
+            llm_status = llm_orchestrator_status()
+            bundle = build_observability_bundle(payload, orchestrator_status=llm_status)
+            analytics = build_analytics_view(payload)
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/debug/analytics",
+                    "analytics": analytics,
+                    "bundle": bundle,
+                }
+            )
+        except Exception as exc:
+            return jsonify(
+                {
+                    "ok": False,
+                    "route": "/debug/analytics",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            ), 400
+
+    @app.get("/debug/llm/status")
+    def debug_llm_status() -> object:
+        try:
+            status = llm_orchestrator_status()
+            view = build_llm_debug_view(status)
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/debug/llm/status",
+                    "view": view,
+                }
+            )
+        except Exception as exc:
+            return jsonify(
+                {
+                    "ok": False,
+                    "route": "/debug/llm/status",
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             ), 400
