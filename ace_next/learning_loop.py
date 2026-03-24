@@ -37,6 +37,151 @@ def _recommended_action(record: dict[str, Any]) -> str:
     return str(recommendation.get("recommended_action") or "unknown")
 
 
+def _attention_breakdown(record: dict[str, Any]) -> dict[str, Any]:
+    return dict((record.get("attention_metrics") or {}).get("breakdown") or {})
+
+
+def _decision_core_summary(record: dict[str, Any]) -> dict[str, Any]:
+    return dict(record.get("decision_core_summary") or {})
+
+
+def _real_collection_state(records: list[dict[str, Any]], latest: dict[str, Any]) -> dict[str, Any]:
+    source_status_values = [_source_status(record) for record in records]
+    counts = dict(Counter(source_status_values))
+
+    collected = counts.get("collected", 0) + counts.get("partial_collected", 0)
+    errors = counts.get("ingest_error", 0) + counts.get("collection_error", 0) + counts.get("missing_token", 0)
+    waiting = max(len(records) - collected - errors, 0)
+
+    latest_real_metrics = dict(latest.get("real_metrics") or {})
+
+    return {
+        "ok": True,
+        "records_with_real_collection": collected,
+        "records_waiting_real_collection": waiting,
+        "records_with_collection_error": errors,
+        "latest_source_status": latest_real_metrics.get("source_status"),
+        "latest_source_reason": latest_real_metrics.get("source_reason"),
+        "latest_collected_at": latest_real_metrics.get("collected_at"),
+        "source_status_counts": counts,
+    }
+
+
+def _real_analysis_state(records: list[dict[str, Any]], latest: dict[str, Any]) -> dict[str, Any]:
+    latest_attention = _attention_breakdown(latest)
+    latest_decision = _decision_core_summary(latest)
+
+    attention_available = sum(
+        1
+        for record in records
+        if _attention_breakdown(record).get("attention_score") is not None
+    )
+
+    return {
+        "ok": True,
+        "records_with_attention_analysis": attention_available,
+        "latest_attention_score": latest_attention.get("attention_score"),
+        "latest_view_rate": latest_attention.get("view_rate"),
+        "latest_skip_rate": latest_attention.get("skip_rate"),
+        "latest_avg_watch_time": latest_attention.get("avg_watch_time"),
+        "latest_completion_proxy": latest_attention.get("completion_proxy"),
+        "latest_share_rate": latest_attention.get("share_rate"),
+        "latest_save_rate": latest_attention.get("save_rate"),
+        "latest_comment_depth_score": latest_attention.get("comment_depth_score"),
+        "latest_views_momentum": latest_attention.get("views_momentum"),
+        "latest_series_continuation_rate": latest_attention.get("series_continuation_rate"),
+        "latest_resonance_score": latest_decision.get("resonance_score"),
+        "latest_reward_prediction_score": latest_decision.get("reward_prediction_score"),
+    }
+
+
+def _insight_generation_state(latest: dict[str, Any]) -> dict[str, Any]:
+    latest_recommendation = dict(latest.get("recommendation_engine") or {})
+    latest_reflection = dict(latest.get("reflection_memory") or {})
+
+    return {
+        "ok": True,
+        "can_generate_insight": True,
+        "latest_recommended_action": latest_recommendation.get("recommended_action"),
+        "latest_next_best_step": latest_recommendation.get("next_best_step"),
+        "latest_recommendation_reason": latest_recommendation.get("recommendation_reason"),
+        "latest_reflection_notes": latest_reflection.get("notes"),
+        "insight_mode": "conservative_suggestion_only",
+    }
+
+
+def _controlled_validation_state(latest: dict[str, Any]) -> dict[str, Any]:
+    latest_evidence = dict(latest.get("evidence_interpreter") or {})
+    latest_resolution = dict(latest.get("experiment_resolution") or {})
+    latest_recommendation = dict(latest.get("recommendation_engine") or {})
+
+    return {
+        "ok": True,
+        "evidence_state": latest_evidence.get("evidence_state"),
+        "evidence_strength": latest_evidence.get("evidence_strength"),
+        "evidence_ready_for_resolution": latest_evidence.get("evidence_ready_for_resolution"),
+        "resolution_state": latest_resolution.get("resolution_state"),
+        "can_resolve": latest_resolution.get("can_resolve"),
+        "promotion_readiness": latest_resolution.get("promotion_readiness"),
+        "requires_human_review": latest_recommendation.get("requires_human_review"),
+        "brand_live_allowed": False,
+    }
+
+
+def _controlled_adjustment_state(latest: dict[str, Any]) -> dict[str, Any]:
+    latest_resolution = dict(latest.get("experiment_resolution") or {})
+    latest_recommendation = dict(latest.get("recommendation_engine") or {})
+    recommended_action = str(latest_recommendation.get("recommended_action") or "")
+
+    safe_actions = {
+        "collect_more",
+        "repeat_probe",
+        "compare_variant",
+        "hold_position",
+        "promote_to_editorial_staging_candidate",
+        "discard_variant",
+        "human_review_required",
+    }
+
+    return {
+        "ok": True,
+        "controlled_adjustment_only": True,
+        "policy_autonomy": False,
+        "brand_live_automation": False,
+        "latest_recommended_action": recommended_action or None,
+        "adjustment_action_is_safe": recommended_action in safe_actions if recommended_action else False,
+        "can_adjust_parameters_only": bool(latest_resolution.get("can_resolve")),
+        "requires_human_review": latest_recommendation.get("requires_human_review"),
+    }
+
+
+def _accumulated_learning_state(records: list[dict[str, Any]], latest: dict[str, Any]) -> dict[str, Any]:
+    evidence_ready_count = sum(
+        1
+        for record in records
+        if bool((record.get("evidence_interpreter") or {}).get("evidence_ready_for_resolution"))
+    )
+    resolved_count = sum(
+        1
+        for record in records
+        if str((record.get("experiment_resolution") or {}).get("resolution_state") or "") == "resolved_conservative"
+    )
+
+    latest_episode = dict(latest.get("episodic_performance_memory") or {})
+
+    return {
+        "ok": True,
+        "records_considered": len(records),
+        "evidence_ready_records": evidence_ready_count,
+        "resolved_conservative_records": resolved_count,
+        "latest_episode_id": latest_episode.get("episode_id"),
+        "latest_real_metrics_status": latest_episode.get("real_metrics_status"),
+        "latest_evidence_state": latest_episode.get("evidence_state"),
+        "latest_resolution_state": latest_episode.get("resolution_state"),
+        "latest_recommendation_state": latest_episode.get("recommendation_state"),
+    }
+
+
 def build_learning_loop_summary(
     *,
     records: list[dict[str, Any]],
@@ -148,6 +293,31 @@ def build_learning_loop_summary(
             "can_change_editorial_policy": False,
             "can_change_visual_policy": False,
             "can_autopublish_brand_live": False,
+        },
+        "real_collection_state": _real_collection_state(records, latest),
+        "real_analysis_state": _real_analysis_state(records, latest),
+        "insight_generation_state": _insight_generation_state(latest),
+        "controlled_validation_state": _controlled_validation_state(latest),
+        "controlled_adjustment_state": _controlled_adjustment_state(latest),
+        "accumulated_learning_state": _accumulated_learning_state(records, latest),
+        "episodic_memory_state": {
+            "latest_episode_id": latest_episode.get("episode_id"),
+            "latest_real_metrics_status": latest_episode.get("real_metrics_status"),
+            "latest_evidence_state": latest_episode.get("evidence_state"),
+            "latest_resolution_state": latest_episode.get("resolution_state"),
+            "latest_recommendation_state": latest_episode.get("recommendation_state"),
+            "has_media_id": latest_episode.get("has_media_id"),
+            "has_permalink": latest_episode.get("has_permalink"),
+            "has_real_receipt": latest_episode.get("has_real_receipt"),
+        },
+        "performance_memory_state": {
+            "records_considered": len(records),
+            "latest_record_id": latest.get("record_id"),
+            "latest_publish_status": latest.get("publish_status"),
+            "latest_real_metrics_status": latest_real_metrics.get("source_status"),
+            "latest_attention_score": ((latest_attention.get("breakdown") or {}).get("attention_score")),
+            "latest_evidence_state": latest_evidence.get("evidence_state"),
+            "latest_resolution_state": latest_resolution.get("resolution_state"),
         },
         "suggestions": suggestions,
     }
