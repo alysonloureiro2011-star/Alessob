@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
-from .brand_ontology import get_brand_ontology, ontology_lexicon_hits
-
-
-def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip()).lower()
+from .brand_lexicon import get_brand_lexicon, normalize_text, scan_brand_alignment
 
 
 def _bounded(value: float) -> float:
@@ -19,111 +14,102 @@ def evaluate_caption_comprehension(
     hook: str,
     body: str,
     cta: str,
-    ontology: dict | None = None,
-) -> dict:
-    ontology = ontology or get_brand_ontology()
+    lexicon: dict | None = None,
+) -> dict[str, Any]:
+    lexicon = lexicon or get_brand_lexicon()
 
-    headline_n = _normalize(headline)
-    hook_n = _normalize(hook)
-    body_n = _normalize(body)
-    cta_n = _normalize(cta)
-    full_text = " ".join([headline_n, hook_n, body_n, cta_n])
+    headline_n = normalize_text(headline)
+    hook_n = normalize_text(hook)
+    body_n = normalize_text(body)
+    cta_n = normalize_text(cta)
+    full_text = " ".join([headline_n, hook_n, body_n, cta_n]).strip()
+
+    alignment = scan_brand_alignment(full_text, lexicon)
 
     flags: list[str] = []
     reasons: list[str] = []
 
-    forbidden_hits = []
-    for pattern in ontology.get("forbidden_patterns", []):
-        if _normalize(pattern) in full_text:
-            forbidden_hits.append(pattern)
+    if alignment["disallowed_patterns"]:
+        flags.append("disallowed_patterns")
+        reasons.append("foram detectados padrões proibidos pela marca")
 
-    if forbidden_hits:
-        flags.append("forbidden_patterns")
-        reasons.append("foram detectados padrões proibidos da marca")
+    if alignment["disallowed_cta_patterns"]:
+        flags.append("weak_cta")
+        reasons.append("o CTA usa padrões frouxos ou genéricos")
 
-    if any(term in full_text for term in ["acredite", "mude sua vida", "sua melhor versão", "destrave sua vida"]):
-        flags.append("coach_generic")
-        reasons.append("o texto cai em coach genérico")
-
-    if any(term in full_text for term in ["segredo", "imperdível", "viral", "fórmula", "antes que seja tarde"]):
-        flags.append("commodity_language")
-        reasons.append("o texto soa commodity/apelativo")
+    if len(body_n.split()) < 22:
+        flags.append("abstracao_excessiva")
+        reasons.append("o body está curto demais para sustentar consequência real")
 
     if len(set(full_text.split())) < 18:
-        flags.append("low_semantic_variety")
-        reasons.append("o texto está curto ou pouco denso semanticamente")
+        flags.append("frase_bonita_sem_consequencia")
+        reasons.append("o texto tem pouca densidade semântica")
 
-    if len(cta_n) < 28 or any(term in cta_n for term in ["comente aqui", "marca alguém", "corre"]):
-        flags.append("weak_cta")
-        reasons.append("o CTA ainda está fraco ou genérico")
+    if any(term in full_text for term in ["acredite", "merece mais", "destrave sua vida", "melhor versão"]):
+        flags.append("coach_commodity")
+        reasons.append("o texto caiu em coach barato")
 
-    if len(body_n.split(". ")) < 2:
-        flags.append("thin_body")
-        reasons.append("o body ainda não sustenta progressão suficiente")
+    if not alignment["tension_anchors"] and not any(
+        term in full_text for term in ["erro", "custo", "travamento", "ruido", "desgaste", "quase sempre"]
+    ):
+        flags.append("tensao_fraca")
+        reasons.append("faltou tensão narrativa suficiente")
 
-    lexicon_hits = ontology_lexicon_hits(full_text, ontology)
-
-    clarity = 6.0
+    clarity = 5.5
     if len(headline_n) >= 28:
         clarity += 1.0
-    if len(hook_n) >= 80:
+    if len(hook_n) >= 90:
         clarity += 1.0
-    if len(body_n) >= 150:
-        clarity += 1.0
-    if "?" not in headline_n:
-        clarity += 0.5
+    if len(body_n) >= 170:
+        clarity += 1.1
+    if alignment["clarity_anchors"]:
+        clarity += 1.1
     clarity = _bounded(clarity)
 
-    semantic_density = 5.5 + min(len(lexicon_hits), 3) * 1.1
-    if len(set(full_text.split())) >= 28:
-        semantic_density += 1.0
+    semantic_density = 5.0
+    semantic_density += min(len(alignment["semantic_anchors"]) * 0.9, 2.7)
+    semantic_density += min(len(set(full_text.split())) / 25.0, 1.6)
     semantic_density = _bounded(semantic_density)
 
-    naturality = 6.0
-    if not forbidden_hits:
-        naturality += 1.0
+    naturality = 5.8
+    if not alignment["disallowed_patterns"]:
+        naturality += 1.2
     if "!" not in full_text:
-        naturality += 0.8
-    if "você precisa" not in full_text:
         naturality += 0.7
+    if len(body_n.split(". ")) >= 2:
+        naturality += 0.9
+    if "você precisa" not in full_text:
+        naturality += 0.8
     naturality = _bounded(naturality)
 
-    anti_commodity = 5.5
-    if "commodity_language" not in flags:
-        anti_commodity += 2.0
-    if "coach_generic" not in flags:
+    anti_commodity = 5.0
+    if not alignment["disallowed_patterns"]:
+        anti_commodity += 1.8
+    if not alignment["disallowed_cta_patterns"]:
         anti_commodity += 1.0
+    if not any(term in full_text for term in ["viral", "segredo", "imperdivel", "formula"]):
+        anti_commodity += 1.2
     anti_commodity = _bounded(anti_commodity)
 
-    anti_generic = 5.5
-    if len(lexicon_hits) >= 2:
-        anti_generic += 1.5
-    if len(set(full_text.split())) >= 24:
+    anti_generic = 5.0
+    anti_generic += min(len(alignment["semantic_anchors"]) * 0.7, 2.1)
+    if alignment["approved_language_patterns"]:
         anti_generic += 1.0
-    if "coach_generic" not in flags:
+    if not any(term in full_text for term in ["melhor versao", "mude sua vida", "acredite em voce"]):
         anti_generic += 1.0
     anti_generic = _bounded(anti_generic)
 
-    cta_quality = 5.5
-    if any(cta_n.startswith(prefix) for prefix in ["salve", "envie", "compartilhe", "releia", "use isso"]):
-        cta_quality += 1.5
+    cta_quality = 5.0
+    if alignment["approved_cta_patterns"]:
+        cta_quality += 2.0
     if len(cta_n) >= 45:
         cta_quality += 1.0
-    if "weak_cta" not in flags:
+    if not alignment["disallowed_cta_patterns"]:
         cta_quality += 1.0
     cta_quality = _bounded(cta_quality)
 
     score = round(
-        (
-            clarity
-            + semantic_density
-            + naturality
-            + anti_commodity
-            + anti_generic
-            + cta_quality
-        )
-        / 6
-        * 10,
+        ((clarity + semantic_density + naturality + anti_commodity + anti_generic + cta_quality) / 6) * 10,
         2,
     )
 
@@ -133,13 +119,12 @@ def evaluate_caption_comprehension(
         and anti_commodity >= 8.0
         and naturality >= 7.5
         and cta_quality >= 7.0
-        and "forbidden_patterns" not in flags
-        and "coach_generic" not in flags
-        and "commodity_language" not in flags
+        and "disallowed_patterns" not in flags
+        and "coach_commodity" not in flags
     )
 
     if approved and not reasons:
-        reasons.append("caption clara, densa, natural e alinhada à marca")
+        reasons.append("caption clara, forte e alinhada à marca")
 
     return {
         "ok": True,
@@ -155,5 +140,24 @@ def evaluate_caption_comprehension(
             "anti_generic": anti_generic,
             "cta_quality": cta_quality,
         },
-        "lexicon_hits": lexicon_hits,
+        "alignment": alignment,
     }
+
+
+def caption_gate_examples() -> dict[str, Any]:
+    lexicon = get_brand_lexicon()
+    rejected = evaluate_caption_comprehension(
+        headline="Acredite em você e tudo vai mudar",
+        hook="Descubra o segredo que ninguém te conta",
+        body="Você merece mais. Sua vida pode mudar agora.",
+        cta="Comente aqui",
+        lexicon=lexicon,
+    )
+    approved = evaluate_caption_comprehension(
+        headline="Sem disciplina, clareza perde força antes de virar resultado.",
+        hook="O travamento raramente nasce da falta de esforço. Quase sempre nasce de mover muito sem critério suficiente.",
+        body="Quando falta estrutura, intenção não sustenta consistência. O ponto não é parecer forte. O ponto é construir leitura, prioridade e execução repetível.",
+        cta="Salve para revisar antes da próxima decisão e envie para alguém que precisa de mais eixo e menos ruído.",
+        lexicon=lexicon,
+    )
+    return {"ok": True, "approved_example": approved, "rejected_example": rejected}
