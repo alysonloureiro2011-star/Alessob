@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .creative_planner_soberano_v1 import build_creative_plan_soberano_v1
 from .editorial_examples import examples_context
 from .editorial_policy import BRAND_PERSONA, POLICY_VERSION, TONE_OF_VOICE, get_editorial_policy, lexicon_hits
 from .editorial_rubric import evaluate_editorial_quality
+
+
+logger = logging.getLogger(__name__)
 
 STOPWORDS = {
     "a", "ao", "aos", "as", "às", "com", "como", "da", "das", "de", "do", "dos", "e", "é",
@@ -51,9 +56,19 @@ class CreativePlan:
     brand_lexicon_hits: list[str]
     approved_example_ids: list[str]
     rejected_example_ids: list[str]
-    editorial_score_breakdown: dict[str, int]
+    editorial_score_breakdown: dict[str, Any]
     editorial_reasons: list[str]
     editorial_flags: list[str]
+    planner_selected: str
+    problem: str | None = None
+    insight: str | None = None
+    format_recommendation: str | None = None
+    hook_family: str | None = None
+    narrative_tension: str | None = None
+    payoff: str | None = None
+    sequel_potential: str | None = None
+    risk_flags: list[str] | None = None
+    editorial_critic: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,7 +80,8 @@ def _clean_text(value: str) -> str:
 
 def _strip_accents(value: str) -> str:
     return "".join(
-        char for char in unicodedata.normalize("NFKD", value or "") if not unicodedata.combining(char)
+        char for char in unicodedata.normalize("NFKD", value or "")
+        if not unicodedata.combining(char)
     )
 
 
@@ -264,7 +280,84 @@ def _first_comment(topic: str, support_points: list[str], hashtags: list[str]) -
     return f"{opening} {proof} {' '.join(hashtags[:4])}".strip()
 
 
-def build_creative_plan(trend: str) -> CreativePlan:
+def _compose_caption(hook: str, headline: str, body: str, support_points: list[str], cta: str, hashtags: list[str]) -> str:
+    bullets = "\n".join(f"• {point}" for point in support_points[:3])
+    return (
+        f"{hook}\n\n"
+        f"{headline}\n\n"
+        f"{body}\n\n"
+        f"Pontos de apoio:\n{bullets}\n\n"
+        f"{cta}\n\n"
+        f"{' '.join(hashtags[:5])}"
+    )
+
+
+def _map_soberano_to_creative_plan(trend: str, sovereign: dict[str, Any]) -> CreativePlan:
+    topic_seed = _topic_seed(str(sovereign.get("topic_seed") or trend))
+    keywords = _keywords(topic_seed)
+    family = _family(keywords)
+    hashtags = _hashtags(keywords, family)
+    support_points = [str(item) for item in sovereign.get("support_points") or []][:3]
+    cta = str(sovereign.get("cta") or "Salve para reler e envie para alguém que precisa disso.")
+    hook = str(sovereign.get("hook") or "")
+    headline = str(sovereign.get("headline") or "")
+    body = str(sovereign.get("body") or "")
+    caption = _compose_caption(hook, headline, body, support_points, cta, hashtags)
+    first_comment = _first_comment(topic_seed, support_points, hashtags)
+
+    critic = dict(sovereign.get("critic") or {})
+    notes = list(sovereign.get("notes") or [])
+    notes.append("planner_selected=creative_planner_soberano_v1")
+
+    logger.info("planner_selected=creative_planner_soberano_v1")
+    logger.info("planner_generation_ok=true")
+    logger.info("caption_gate_result=%s", (critic.get("caption_gate") or {}).get("approved"))
+    logger.info("editorial_critic_result=%s", critic.get("approved"))
+
+    return CreativePlan(
+        trend_input=_clean_text(trend),
+        topic_seed=topic_seed,
+        series_name=str(sovereign.get("series_name") or SERIES_NAME),
+        objective=str(sovereign.get("problem") or "reorganizar percepção, direção e execução"),
+        strategic_target_format=STRATEGIC_TARGET_FORMAT,
+        publish_format_now=PUBLISH_FORMAT_NOW,
+        angle=str(sovereign.get("angle") or ""),
+        hook=hook,
+        headline=headline,
+        body=body,
+        support_points=support_points,
+        caption=caption,
+        first_comment=first_comment,
+        hashtags=hashtags,
+        cta=cta,
+        visual_style=VISUAL_STYLE,
+        color_profile=_choose_color_profile(keywords),
+        publish_style=PUBLISH_STYLE,
+        quality_score=int(round(float(critic.get("final_score") or 0))),
+        notes=notes,
+        policy_version=str(get_editorial_policy().get("version") or POLICY_VERSION),
+        brand_persona=BRAND_PERSONA,
+        tone_of_voice=list(TONE_OF_VOICE),
+        brand_lexicon_hits=list(sovereign.get("brand_fit_signals") or lexicon_hits(caption)),
+        approved_example_ids=list(examples_context(topic_seed)["approved_ids"]),
+        rejected_example_ids=list(examples_context(topic_seed)["rejected_ids"]),
+        editorial_score_breakdown=dict(critic.get("breakdown") or {}),
+        editorial_reasons=list(critic.get("rejection_reasons") or ["critic_aprovou_sem_restrições"]),
+        editorial_flags=list((critic.get("caption_gate") or {}).get("flags") or []),
+        planner_selected="creative_planner_soberano_v1",
+        problem=str(sovereign.get("problem") or ""),
+        insight=str(sovereign.get("insight") or ""),
+        format_recommendation=str(sovereign.get("format_recommendation") or PUBLISH_FORMAT_NOW),
+        hook_family=str(sovereign.get("hook_family") or ""),
+        narrative_tension=str(sovereign.get("narrative_tension") or ""),
+        payoff=str(sovereign.get("payoff") or ""),
+        sequel_potential=str(sovereign.get("sequel_potential") or "medium"),
+        risk_flags=list((critic.get("caption_gate") or {}).get("flags") or []),
+        editorial_critic=critic,
+    )
+
+
+def _build_creative_plan_legacy(trend: str) -> CreativePlan:
     policy = get_editorial_policy()
     clean_input = _clean_text(trend)
     topic = _topic_seed(clean_input)
@@ -294,26 +387,18 @@ def build_creative_plan(trend: str) -> CreativePlan:
         "hashtags": hashtags,
     }
     editorial_qa = evaluate_editorial_quality(draft_plan)
-
-    caption = (
-        f"{hook}\n\n"
-        f"{headline}\n\n"
-        f"{body}\n\n"
-        f"Pontos de apoio:\n"
-        f"• {support_points[0]}\n"
-        f"• {support_points[1]}\n"
-        f"• {support_points[2]}\n\n"
-        f"{cta}\n\n"
-        f"{' '.join(hashtags[:5])}"
-    )
+    caption = _compose_caption(hook, headline, body, support_points, cta, hashtags)
 
     notes = [
         f"policy={POLICY_VERSION}",
         f"editorial_family={family}",
         "foundation_editorial_model_v1_active",
-        "planner_mode=anti_cliche_anti_commodity",
-        "strategic_target=reel_premium",
+        "planner_mode=legacy_fallback",
+        "planner_selected=creative_planner_legacy",
     ]
+
+    logger.info("planner_selected=creative_planner_legacy")
+    logger.info("planner_generation_ok=legacy")
 
     return CreativePlan(
         trend_input=clean_input,
@@ -345,4 +430,22 @@ def build_creative_plan(trend: str) -> CreativePlan:
         editorial_score_breakdown=dict(editorial_qa.breakdown),
         editorial_reasons=list(editorial_qa.reasons),
         editorial_flags=list(editorial_qa.flags),
+        planner_selected="creative_planner_legacy",
     )
+
+
+def build_creative_plan(trend: str) -> CreativePlan:
+    try:
+        sovereign = build_creative_plan_soberano_v1(
+            topic_seed=trend,
+            signal_context=None,
+            brand_context=None,
+            format_hint=None,
+        )
+        return _map_soberano_to_creative_plan(trend, sovereign)
+    except Exception as exc:
+        logger.exception("planner_generation_fail")
+        legacy = _build_creative_plan_legacy(trend)
+        legacy.notes.append(f"planner_generation_fail=creative_planner_soberano_v1:{type(exc).__name__}")
+        legacy.notes.append("planner_selected=creative_planner_legacy_after_soberano_fail")
+        return legacy
