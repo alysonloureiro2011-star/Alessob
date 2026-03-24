@@ -15,6 +15,14 @@ BLOCKED_QUALITY = "blocked_quality"
 BLOCKED_BRAND = "blocked_brand"
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class PublicationAuthorizationResult:
     selected_state: str
@@ -23,6 +31,8 @@ class PublicationAuthorizationResult:
     can_publish_real: bool
     brand_live_blocked_by_default: bool
     brand_live_candidate: bool
+    main_surface_allowed: bool
+    requires_human_review: bool
     reasons: list[str]
     summary: str
 
@@ -38,7 +48,12 @@ def authorize_publication(
     perceptual_qa: dict[str, Any],
     rubric: RubricEngineResult,
     brand_veto: BrandVetoResult,
+    env_flags: dict[str, Any] | None = None,
+    request_flags: dict[str, Any] | None = None,
 ) -> PublicationAuthorizationResult:
+    env_flags = dict(env_flags or {})
+    request_flags = dict(request_flags or {})
+
     supported_states = [
         TECHNICAL_TEST,
         INTERNAL_LAB,
@@ -49,8 +64,12 @@ def authorize_publication(
     ]
 
     reasons: list[str] = []
+    require_human_review = _as_bool(env_flags.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"), True)
     brand_live_blocked_by_default = True
+
     brand_live_candidate = rubric.eligible_for_brand_live and brand_veto.approved
+    explicit_brand_live_request = _as_bool(request_flags.get("brand_live_arm"), False)
+    human_review_approved = _as_bool(request_flags.get("human_review_approved"), False)
 
     if force_placeholder:
         reasons.append("placeholder solicitado: rota técnica autorizada apenas para teste")
@@ -61,8 +80,10 @@ def authorize_publication(
             can_publish_real=False,
             brand_live_blocked_by_default=brand_live_blocked_by_default,
             brand_live_candidate=brand_live_candidate,
+            main_surface_allowed=False,
+            requires_human_review=require_human_review,
             reasons=reasons,
-            summary="teste técnico permitido; publish de marca continua bloqueado",
+            summary="teste técnico permitido; publish principal continua bloqueado",
         )
 
     if brand_veto.blocked:
@@ -74,6 +95,8 @@ def authorize_publication(
             can_publish_real=False,
             brand_live_blocked_by_default=brand_live_blocked_by_default,
             brand_live_candidate=False,
+            main_surface_allowed=False,
+            requires_human_review=require_human_review,
             reasons=reasons,
             summary="peça bloqueada por marca",
         )
@@ -93,12 +116,14 @@ def authorize_publication(
             can_publish_real=False,
             brand_live_blocked_by_default=brand_live_blocked_by_default,
             brand_live_candidate=False,
+            main_surface_allowed=False,
+            requires_human_review=require_human_review,
             reasons=reasons,
             summary="peça bloqueada por qualidade",
         )
 
     if rubric.global_score < 8.4:
-        reasons.append("a peça passou no mínimo, mas ainda é laboratório interno")
+        reasons.append("a peça passou no mínimo, mas continua em laboratório interno")
         return PublicationAuthorizationResult(
             selected_state=INTERNAL_LAB,
             supported_states=supported_states,
@@ -106,12 +131,14 @@ def authorize_publication(
             can_publish_real=False,
             brand_live_blocked_by_default=brand_live_blocked_by_default,
             brand_live_candidate=False,
+            main_surface_allowed=False,
+            requires_human_review=require_human_review,
             reasons=reasons,
-            summary="peça autorizada apenas para laboratório interno",
+            summary="peça autorizada apenas para internal_lab",
         )
 
     if rubric.global_score < 8.8:
-        reasons.append("a peça pode avançar para staging editorial, mas não para live de marca")
+        reasons.append("a peça pode avançar para staging editorial, mas não para superfície principal")
         return PublicationAuthorizationResult(
             selected_state=EDITORIAL_STAGING,
             supported_states=supported_states,
@@ -119,18 +146,32 @@ def authorize_publication(
             can_publish_real=False,
             brand_live_blocked_by_default=brand_live_blocked_by_default,
             brand_live_candidate=False,
+            main_surface_allowed=False,
+            requires_human_review=require_human_review,
             reasons=reasons,
-            summary="peça autorizada para staging editorial",
+            summary="peça autorizada para editorial_staging",
         )
 
-    reasons.append("a peça atingiu nível potencial de brand_live, mas brand_live continua bloqueado por padrão na Onda 3")
+    reasons.append("a peça atingiu candidatura a brand_live, mas a superfície principal continua protegida")
+    if require_human_review:
+        reasons.append("brand_live exige revisão humana explícita")
+    if not explicit_brand_live_request:
+        reasons.append("brand_live não foi armado explicitamente")
+
+    can_publish_real = bool(
+        explicit_brand_live_request
+        and (not require_human_review or human_review_approved)
+    )
+
     return PublicationAuthorizationResult(
-        selected_state=EDITORIAL_STAGING,
+        selected_state=BRAND_LIVE,
         supported_states=supported_states,
         can_publish_placeholder=False,
-        can_publish_real=False,
+        can_publish_real=can_publish_real,
         brand_live_blocked_by_default=brand_live_blocked_by_default,
         brand_live_candidate=brand_live_candidate,
+        main_surface_allowed=can_publish_real,
+        requires_human_review=require_human_review,
         reasons=reasons,
-        summary="brand_live continua bloqueado por padrão; peça fica em staging editorial",
+        summary="brand_live é o único estado elegível para superfície principal, mas segue protegido por padrão",
     )
