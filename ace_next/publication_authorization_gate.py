@@ -38,10 +38,7 @@ def _safe_dict(value: Any) -> dict[str, Any]:
 def _merge_reasons(*reason_lists: Any) -> list[str]:
     merged: list[str] = []
     for item in reason_lists:
-        if isinstance(item, list):
-            values = item
-        else:
-            values = [item]
+        values = item if isinstance(item, list) else [item]
         for value in values:
             text = str(value or "").strip()
             if text and text not in merged:
