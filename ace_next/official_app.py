@@ -8,11 +8,32 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
+from .mission_control import decide_mission
 from .token_upgrade import (
     exchange_code_for_token_with_redirect,
     exchange_instagram_long_lived_token,
     upgrade_token_via_facebook_exchange,
 )
+
+
+def _safe_float_param(name: str) -> float | None:
+    raw = request.args.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid_float_param:{name}")
+
+
+def _safe_int_param(name: str, default: int = 0) -> int:
+    raw = request.args.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid_int_param:{name}")
 
 
 def create_official_app() -> Flask:
@@ -69,6 +90,59 @@ def create_official_app() -> Flask:
                 "last_publish": runtime.publish.last_publish(),
             }
         )
+
+    @app.get("/mission/test")
+    def mission_test() -> object:
+        try:
+            trend = (request.args.get("trend") or "teste real").strip()
+            format_hint = (request.args.get("format_hint") or "").strip() or None
+            recent_signal_score = _safe_float_param("recent_signal_score")
+            active_jobs = _safe_int_param("active_jobs", default=0)
+            pending_jobs = _safe_int_param("pending_jobs", default=0)
+
+            queue_state = {
+                "active_jobs": active_jobs,
+                "pending_jobs": pending_jobs,
+            }
+
+            runtime = get_runtime()
+            runtime_snapshot = runtime.snapshot()
+
+            signal_context = {
+                "source": "http_route",
+                "route": "/mission/test",
+            }
+
+            brand_context = {
+                "brand_surface_mode": runtime_snapshot.get("brand_surface_mode"),
+                "brand_live_allowed": runtime_snapshot.get("brand_live_allowed"),
+            }
+
+            decision = decide_mission(
+                trend,
+                format_hint=format_hint,
+                signal_context=signal_context,
+                brand_context=brand_context,
+                queue_state=queue_state,
+                recent_signal_score=recent_signal_score,
+            )
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/mission/test",
+                    "decision": decision,
+                    "runtime": runtime_snapshot,
+                }
+            )
+        except Exception as exc:
+            return jsonify(
+                {
+                    "ok": False,
+                    "route": "/mission/test",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            ), 400
 
     @app.get("/debug/token/source")
     def debug_token_source() -> object:
