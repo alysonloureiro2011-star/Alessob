@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
 
 from .auth_store import auth_path, load_instagram_auth, reset_instagram_auth
 from .config import load_config
-from .official_runtime import OfficialRuntime
 from .token_upgrade import (
     exchange_code_for_token_with_redirect,
     exchange_instagram_long_lived_token,
@@ -19,11 +19,12 @@ def create_official_app() -> Flask:
     config = load_config()
     app = Flask(__name__)
 
-    runtime_holder: dict[str, OfficialRuntime] = {}
+    runtime_holder: dict[str, Any] = {}
 
-    def get_runtime() -> OfficialRuntime:
+    def get_runtime():
         runtime = runtime_holder.get("runtime")
         if runtime is None:
+            from .official_runtime import OfficialRuntime
             runtime = OfficialRuntime(config)
             runtime_holder["runtime"] = runtime
         return runtime
@@ -41,6 +42,7 @@ def create_official_app() -> Flask:
         return jsonify(
             {
                 "ok": True,
+                "app": "ace_next",
                 "timestamp": datetime.now().isoformat(),
             }
         )
@@ -51,6 +53,8 @@ def create_official_app() -> Flask:
             {
                 "ok": True,
                 "app": "ace_next",
+                "health_mode": "lightweight",
+                "runtime_loaded": "runtime" in runtime_holder,
                 "timestamp": datetime.now().isoformat(),
             }
         )
