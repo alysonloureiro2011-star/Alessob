@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import unicodedata
 from typing import Any
@@ -9,6 +11,7 @@ from .editorial_critic_v1 import evaluate_editorial_critic
 
 
 VALID_FORMATS = {"image", "carousel", "story", "reel"}
+WEAK_INPUTS = {"", "teste", "teste real", "oi", "hello", "123"}
 
 
 def _clean(value: str) -> str:
@@ -70,6 +73,15 @@ def _choose_format(domain: str, format_hint: str | None) -> str:
     if domain in {"branding", "prosperity"}:
         return "carousel"
     return "image"
+
+
+def _sequel_for_format(value: str) -> str:
+    normalized = _normalize(value)
+    if normalized in {"reel", "carousel"}:
+        return "high"
+    if normalized == "story":
+        return "medium"
+    return "medium"
 
 
 def _compose_editorial_payload(topic_seed: str, domain: str) -> dict[str, Any]:
@@ -169,23 +181,289 @@ def _compose_editorial_payload(topic_seed: str, domain: str) -> dict[str, Any]:
     }
 
 
-def build_creative_plan_soberano_v1(
+def _llm_planner_enabled() -> bool:
+    return str(os.environ.get("ACE_USE_LLM_PLANNER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_json_block(raw_text: str) -> str | None:
+    if not raw_text:
+        return None
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return raw_text[start:end + 1]
+
+
+def _safe_parse_json(raw_text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(raw_text)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _normalize_support_points(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        text = _clean(str(item))
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned[:5]
+
+
+def _build_deterministic_payload(topic_seed: str, domain: str, format_hint: str | None) -> dict[str, Any]:
+    payload = dict(_compose_editorial_payload(topic_seed, domain))
+    payload["format_recommendation"] = _choose_format(domain, format_hint)
+    payload["sequel_potential"] = _sequel_for_format(payload["format_recommendation"])
+    return payload
+
+
+def _build_llm_prompt(
+    *,
     topic_seed: str,
-    signal_context: dict | None = None,
-    brand_context: dict | None = None,
-    format_hint: str | None = None,
+    domain: str,
+    format_hint: str | None,
+    signal_context: dict[str, Any],
+    brand_context: dict[str, Any],
+) -> str:
+    preferred_format = _choose_format(domain, format_hint)
+    series_name = _clean(str(brand_context.get("series_name") or "Liberta a Verdade"))
+
+    return f"""
+Você é o planner editorial soberano do ACE Ω.
+Sua tarefa é gerar um plano editorial premium em JSON puro.
+
+Regras absolutas:
+- sem markdown
+- sem comentários
+- sem texto fora do JSON
+- linguagem premium
+- anti-coach genérico
+- anti-clichê
+- anti-commodity
+- anti-frase vazia
+- proibido usar expressões como "ninguém te conta", "segredo", "acredite em você", "sua vida vai mudar"
+- clareza, tensão, valor percebido e naturalidade
+- o texto deve soar humano, firme e inteligente
+- suporte em português do Brasil
+
+Contexto:
+- topic_seed: {topic_seed}
+- domain: {domain}
+- preferred_format: {preferred_format}
+- series_name: {series_name}
+- signal_context: {json.dumps(signal_context, ensure_ascii=False)}
+- brand_context: {json.dumps(brand_context, ensure_ascii=False)}
+
+Retorne JSON com ESTES campos:
+{{
+  "problem": "string",
+  "insight": "string",
+  "angle": "string",
+  "hook_family": "string",
+  "hook": "string",
+  "headline": "string",
+  "narrative_tension": "string",
+  "payoff": "string",
+  "cta": "string",
+  "body": "string",
+  "support_points": ["string", "string", "string"],
+  "format_recommendation": "image|carousel|story|reel",
+  "sequel_potential": "low|medium|high"
+}}
+""".strip()
+
+
+def _validate_llm_payload(
+    payload: dict[str, Any],
+    *,
+    domain: str,
+    format_hint: str | None,
+) -> dict[str, Any] | None:
+    required_string_fields = [
+        "problem",
+        "insight",
+        "angle",
+        "hook_family",
+        "hook",
+        "headline",
+        "narrative_tension",
+        "payoff",
+        "cta",
+        "body",
+    ]
+
+    normalized: dict[str, Any] = {}
+    for field in required_string_fields:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            return None
+        cleaned = _clean(value)
+        if not cleaned:
+            return None
+        normalized[field] = cleaned
+
+    support_points = _normalize_support_points(payload.get("support_points"))
+    if len(support_points) < 2:
+        return None
+    normalized["support_points"] = support_points
+
+    format_recommendation = _normalize(str(payload.get("format_recommendation") or ""))
+    if format_recommendation not in VALID_FORMATS:
+        format_recommendation = _choose_format(domain, format_hint)
+    normalized["format_recommendation"] = format_recommendation
+
+    sequel_potential = _normalize(str(payload.get("sequel_potential") or ""))
+    if sequel_potential not in {"low", "medium", "high"}:
+        sequel_potential = _sequel_for_format(format_recommendation)
+    normalized["sequel_potential"] = sequel_potential
+
+    return normalized
+
+
+def _looks_generic(payload: dict[str, Any], lexicon: dict[str, Any]) -> bool:
+    text = " ".join(
+        [
+            str(payload.get("headline") or ""),
+            str(payload.get("hook") or ""),
+            str(payload.get("body") or ""),
+            str(payload.get("cta") or ""),
+            " ".join(payload.get("support_points") or []),
+        ]
+    )
+    normalized = _normalize(text)
+
+    banned_fragments = {
+        "ninguem te conta",
+        "segredo",
+        "acredite em voce",
+        "sua vida vai mudar",
+        "descubra o segredo",
+        "mude sua vida",
+    }
+
+    if any(fragment in normalized for fragment in banned_fragments):
+        return True
+
+    for pattern in lexicon.get("disallowed_patterns") or []:
+        if _normalize(str(pattern)) and _normalize(str(pattern)) in normalized:
+            return True
+
+    if len(_clean(str(payload.get("headline") or ""))) < 14:
+        return True
+    if len(_clean(str(payload.get("hook") or ""))) < 24:
+        return True
+    if len(_clean(str(payload.get("body") or ""))) < 80:
+        return True
+    if len(payload.get("support_points") or []) < 2:
+        return True
+
+    return False
+
+
+def _llm_payload(
+    *,
+    topic_seed: str,
+    domain: str,
+    format_hint: str | None,
+    signal_context: dict[str, Any],
+    brand_context: dict[str, Any],
+    lexicon: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any], str]:
+    if not _llm_planner_enabled():
+        return (
+            None,
+            {
+                "attempted": False,
+                "provider": None,
+                "ok": False,
+                "reason": "llm_planner_disabled",
+            },
+            "deterministic",
+        )
+
+    try:
+        from .llm_orchestrator import generate_text, llm_orchestrator_status
+    except Exception as exc:
+        return (
+            None,
+            {
+                "attempted": False,
+                "provider": None,
+                "ok": False,
+                "reason": f"orchestrator_unavailable:{type(exc).__name__}",
+            },
+            "llm_fallback_to_deterministic",
+        )
+
+    try:
+        _ = llm_orchestrator_status()
+    except Exception:
+        pass
+
+    prompt = _build_llm_prompt(
+        topic_seed=topic_seed,
+        domain=domain,
+        format_hint=format_hint,
+        signal_context=signal_context,
+        brand_context=brand_context,
+    )
+
+    result = generate_text("planner", prompt)
+    provider = result.get("provider")
+
+    llm_status = {
+        "attempted": True,
+        "provider": provider,
+        "ok": False,
+        "reason": None,
+    }
+
+    if not result.get("ok"):
+        llm_status["reason"] = str(result.get("reason") or "llm_generation_failed")
+        return None, llm_status, "llm_fallback_to_deterministic"
+
+    raw_output = str(result.get("result") or "")
+    json_block = _extract_json_block(raw_output)
+    if not json_block:
+        llm_status["reason"] = "json_block_not_found"
+        return None, llm_status, "llm_fallback_to_deterministic"
+
+    parsed = _safe_parse_json(json_block)
+    if not parsed:
+        llm_status["reason"] = "json_parse_failed"
+        return None, llm_status, "llm_fallback_to_deterministic"
+
+    validated = _validate_llm_payload(
+        parsed,
+        domain=domain,
+        format_hint=format_hint,
+    )
+    if not validated:
+        llm_status["reason"] = "invalid_json_contract"
+        return None, llm_status, "llm_fallback_to_deterministic"
+
+    if _looks_generic(validated, lexicon):
+        llm_status["reason"] = "generic_or_commodity_llm_output"
+        return None, llm_status, "llm_fallback_to_deterministic"
+
+    llm_status["ok"] = True
+    llm_status["reason"] = None
+    return validated, llm_status, "llm_assisted"
+
+
+def _finalize_plan(
+    *,
+    topic_seed: str,
+    payload: dict[str, Any],
+    lexicon: dict[str, Any],
+    brand_context: dict[str, Any],
+    planner_generation_mode: str,
+    llm_status: dict[str, Any],
 ) -> dict[str, Any]:
-    signal_context = dict(signal_context or {})
-    brand_context = dict(brand_context or {})
-    lexicon = get_brand_lexicon()
-
-    topic_seed = _clean(topic_seed or "clareza, disciplina e direção")
-    if _normalize(topic_seed) in {"", "teste", "teste real", "oi", "hello", "123"}:
-        topic_seed = "clareza, disciplina e direção"
-
-    domain = _detect_domain(topic_seed)
-    payload = _compose_editorial_payload(topic_seed, domain)
-    format_recommendation = _choose_format(domain, format_hint)
     body = payload["body"]
     support_points = list(payload["support_points"])
     full_text = " ".join([payload["headline"], payload["hook"], body, payload["cta"], *support_points])
@@ -193,10 +471,21 @@ def build_creative_plan_soberano_v1(
     alignment = scan_brand_alignment(full_text, lexicon)
     critic = evaluate_editorial_critic(payload, lexicon)
 
-    sequel_potential = "high" if format_recommendation in {"reel", "carousel"} else "medium"
+    format_recommendation = payload["format_recommendation"]
+    sequel_potential = payload["sequel_potential"]
     series_name = brand_context.get("series_name") or lexicon["brand_name"]
 
-    plan = {
+    notes = [
+        "planner_selected=creative_planner_soberano_v1",
+        f"planner_generation_mode={planner_generation_mode}",
+        f"editorial_critic_approved={critic.get('approved')}",
+    ]
+    if llm_status.get("provider"):
+        notes.append(f"llm_provider={llm_status.get('provider')}")
+    if llm_status.get("reason"):
+        notes.append(f"llm_reason={llm_status.get('reason')}")
+
+    return {
         "ok": True,
         "topic_seed": topic_seed,
         "problem": payload["problem"],
@@ -232,13 +521,54 @@ def build_creative_plan_soberano_v1(
         ],
         "rejected_patterns": list(lexicon["disallowed_patterns"]),
         "critic": critic,
-        "notes": [
-            "planner_selected=creative_planner_soberano_v1",
-            "planner_generation_ok=true",
-            f"editorial_critic_approved={critic.get('approved')}",
-        ],
+        "planner_selected": "creative_planner_soberano_v1",
+        "planner_generation_mode": planner_generation_mode,
+        "llm_status": llm_status,
+        "notes": notes,
     }
-    return plan
+
+
+def build_creative_plan_soberano_v1(
+    topic_seed: str,
+    signal_context: dict | None = None,
+    brand_context: dict | None = None,
+    format_hint: str | None = None,
+) -> dict[str, Any]:
+    signal_context = dict(signal_context or {})
+    brand_context = dict(brand_context or {})
+    lexicon = get_brand_lexicon()
+
+    topic_seed = _clean(topic_seed or "clareza, disciplina e direção")
+    if _normalize(topic_seed) in WEAK_INPUTS:
+        topic_seed = "clareza, disciplina e direção"
+
+    domain = _detect_domain(topic_seed)
+    deterministic_payload = _build_deterministic_payload(topic_seed, domain, format_hint)
+
+    llm_payload, llm_status, planner_generation_mode = _llm_payload(
+        topic_seed=topic_seed,
+        domain=domain,
+        format_hint=format_hint,
+        signal_context=signal_context,
+        brand_context=brand_context,
+        lexicon=lexicon,
+    )
+
+    if llm_payload is not None:
+        payload = llm_payload
+    else:
+        payload = deterministic_payload
+        if planner_generation_mode not in {"deterministic", "llm_fallback_to_deterministic"}:
+            planner_generation_mode = "deterministic"
+
+    return _finalize_plan(
+        topic_seed=topic_seed,
+        payload=payload,
+        lexicon=lexicon,
+        brand_context=brand_context,
+        planner_generation_mode=planner_generation_mode,
+        llm_status=llm_status,
+    )
 
 
 def planner_soberano_examples() -> dict[str, Any]:
@@ -272,4 +602,8 @@ def planner_soberano_examples() -> dict[str, Any]:
             }
         ),
     }
-    return {"ok": True, "approved_example": approved, "rejected_example": rejected_like}
+    return {
+        "ok": True,
+        "approved_example": approved,
+        "rejected_example": rejected_like,
+    }
