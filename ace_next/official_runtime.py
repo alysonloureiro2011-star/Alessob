@@ -5,9 +5,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .auth_store import load_instagram_auth, sync_instagram_token_sources
+from .brand_surface_isolation import resolve_brand_surface_policy
 from .config import AceNextConfig
 from .creative_planner import build_creative_plan
 from .editorial_rubric import evaluate_editorial_quality
+from .lab_probe_policy import resolve_lab_probe_policy
 from .perceptual_qa import evaluate_perceptual_quality
 from .publish import PublishService
 from .render_env_sync import persist_instagram_token_to_render
@@ -85,9 +87,16 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 def _normalize_probe_state(value: str | None) -> str:
     normalized = str(value or "auto").strip().lower()
-    if normalized in {"auto", "internal_lab", "editorial_staging"}:
+    if normalized in {"auto", "internal_lab", "editorial_staging", "brand_live"}:
         return normalized
     return "auto"
+
+
+def _as_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class OfficialRuntime:
@@ -95,6 +104,14 @@ class OfficialRuntime:
         self.config = config
         self.publish = PublishService(config)
         self._boot_sync()
+
+    def _brand_env_flags(self) -> dict[str, Any]:
+        return {
+            "ACE_BRAND_SURFACE_MODE": os.environ.get("ACE_BRAND_SURFACE_MODE", "protected"),
+            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE", False),
+            "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING", False),
+            "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": _as_bool_env("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE", True),
+        }
 
     def _refresh_threshold_days(self) -> int:
         try:
@@ -236,6 +253,7 @@ class OfficialRuntime:
     def snapshot(self) -> dict:
         sync = self.sync_instagram_auth()
         token_state = self._auth_state()
+        env_flags = self._brand_env_flags()
         return {
             "timestamp": datetime.now().isoformat(),
             "token_present": bool(self.config.ig_token),
@@ -257,6 +275,8 @@ class OfficialRuntime:
             "real_probe_route_supported": True,
             "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
             "brand_live_allowed": False,
+            "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+            "brand_surface_flags": env_flags,
         }
 
     def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -293,15 +313,16 @@ class OfficialRuntime:
                 "technical_test",
                 "internal_lab",
                 "editorial_staging",
+                "brand_live",
                 "blocked_quality",
                 "blocked_brand",
-                "brand_live",
             ],
-            "brand_live_allowed": False,
-            "brand_live_blocked_by_default": True,
-            "brand_live_candidate": False,
             "can_publish_placeholder": bool(force_placeholder),
             "can_publish_real": False,
+            "brand_live_blocked_by_default": True,
+            "brand_live_candidate": False,
+            "main_surface_allowed": False,
+            "requires_human_review": True,
             "block_reasons": [reason] if not force_placeholder else [],
             "reasons": [reason],
             "summary": "authorization stack em fallback seguro",
@@ -317,6 +338,8 @@ class OfficialRuntime:
         editorial_qa: dict[str, Any],
         visual_qa: dict[str, Any],
         perceptual_qa: dict[str, Any],
+        env_flags: dict[str, Any],
+        request_flags: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         if AUTH_STACK_IMPORT_ERROR or not evaluate_rubric_engine or not evaluate_brand_veto_gate or not authorize_publication:
             return self._authorization_fallback(
@@ -345,6 +368,8 @@ class OfficialRuntime:
                 perceptual_qa=perceptual_qa,
                 rubric=rubric,
                 brand_veto=brand_veto,
+                env_flags=env_flags,
+                request_flags=request_flags,
             )
 
             rubric_dict = rubric.to_dict()
@@ -670,6 +695,8 @@ class OfficialRuntime:
                 "latest_source_status": real_metrics.get("source_status"),
                 "evidence_bridge_state": evidence_interpreter.get("bridge_state"),
             }
+            record["brand_surface_policy"] = probe_context.get("brand_surface_policy")
+            record["lab_probe_policy"] = probe_context.get("lab_probe_policy")
 
             record["post_performance"] = {
                 "status": real_metrics.get("source_status"),
@@ -773,6 +800,15 @@ class OfficialRuntime:
         trend = (trend or "teste real").strip()
         probe_state_requested = _normalize_probe_state(probe_state)
 
+        env_flags = self._brand_env_flags()
+        request_flags = {
+            "probe_requested": bool(force_real_probe) and not force_placeholder,
+            "explicit_probe_arm": bool(force_real_probe) and not force_placeholder,
+            "explicit_main_surface_publish": bool(force_real_probe) and not force_placeholder,
+            "brand_live_arm": False,
+            "human_review_approved": False,
+        }
+
         try:
             plan = build_creative_plan(trend)
             plan_dict = plan.to_dict()
@@ -874,6 +910,8 @@ class OfficialRuntime:
             editorial_qa=editorial_qa,
             visual_qa=visual_qa,
             perceptual_qa=perceptual_qa,
+            env_flags=env_flags,
+            request_flags=request_flags,
         )
 
         try:
@@ -893,98 +931,140 @@ class OfficialRuntime:
 
         authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
         operational_state = authorization_state
-        block_reasons = list(publication_authorization_gate.get("block_reasons") or [])
+        block_reasons = list(publication_authorization_gate.get("reasons") or [])
+        if publication_authorization_gate.get("stack_ok") is False:
+            block_reasons.extend(publication_authorization_gate.get("block_reasons") or [])
 
-        probe_context = {
-            "requested": bool(force_real_probe) and not force_placeholder,
-            "requested_state": probe_state_requested,
-            "effective_state": None,
-            "eligible": False,
-            "publish_executed": False,
-            "render_executed": False,
-            "render_path": None,
-            "allow_real_publish": False,
-        }
+        lab_probe_policy = resolve_lab_probe_policy(
+            operational_state=authorization_state,
+            requested_probe=request_flags["probe_requested"],
+            requested_state=probe_state_requested,
+            env_flags=env_flags,
+            request_flags=request_flags,
+        )
 
-        if probe_context["requested"]:
-            if probe_state_requested in REAL_PROBE_ALLOWED_STATES:
-                probe_context["effective_state"] = probe_state_requested
-                probe_context["eligible"] = True
-                probe_context["allow_real_publish"] = True
-                operational_state = probe_state_requested
-            elif probe_state_requested == "auto" and authorization_state in REAL_PROBE_ALLOWED_STATES:
-                probe_context["effective_state"] = authorization_state
-                probe_context["eligible"] = True
-                probe_context["allow_real_publish"] = True
-                operational_state = authorization_state
-            else:
-                block_reasons.append(
-                    f"real_probe_not_allowed_for_state:{probe_state_requested or authorization_state}"
-                )
+        brand_surface_policy = resolve_brand_surface_policy(
+            operational_state=authorization_state,
+            requested_real_publish=lab_probe_policy.get("requested_real_publish", False),
+            env_flags=env_flags,
+            request_flags=request_flags,
+            quality_context={
+                "brand_live_candidate": publication_authorization_gate.get("brand_live_candidate"),
+                "can_publish_real": publication_authorization_gate.get("can_publish_real"),
+            },
+        )
+
+        if lab_probe_policy.get("probe_block_reason"):
+            block_reasons.append(str(lab_probe_policy.get("probe_block_reason")))
+        if brand_surface_policy.get("block_reason"):
+            block_reasons.append(str(brand_surface_policy.get("block_reason")))
+
+        render_path = None
+        render_error = None
+        publish_result: dict[str, Any] | None = None
 
         linkage_context = {
             "operational_state": operational_state,
             "brand_live_allowed": False,
-            "probe": dict(probe_context),
+            "probe": {},
+            "brand_surface_policy": brand_surface_policy,
+            "lab_probe_policy": lab_probe_policy,
         }
 
-        publish_result = None
-
-        try:
-            if force_placeholder or (publication_authorization_gate.get("can_publish_placeholder") and not probe_context["eligible"]):
-                publish_result = self.publish.publish_placeholder(
-                    trend=trend,
-                    style=str(plan.publish_style),
-                    content_type=str(plan.publish_format_now),
-                    caption=str(plan.caption),
-                    media_path=None,
-                    linkage_context=linkage_context,
-                )
-            elif probe_context["eligible"]:
-                media_path = None
+        if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
+            publish_result = self.publish.publish_placeholder(
+                trend=trend,
+                style=str(plan.publish_style),
+                content_type=str(plan.publish_format_now),
+                caption=str(plan.caption),
+                media_path=None,
+                linkage_context=linkage_context,
+            )
+        else:
+            should_render = bool(lab_probe_policy.get("probe_render_requested"))
+            if should_render:
                 try:
-                    media_path = render_visual_foundation_card(
+                    render_path = render_visual_foundation_card(
                         config=self.config,
                         plan=plan_dict,
                         identity=visual_identity,
                         typography=typography,
                     )
-                    probe_context["render_executed"] = True
-                    probe_context["render_path"] = media_path
+                    lab_probe_policy["probe_render_executed"] = True
+                    lab_probe_policy["render_path"] = render_path
                 except Exception as exc:
-                    block_reasons.append(f"probe_render_error: {type(exc).__name__}: {exc}")
+                    render_error = f"render_error: {type(exc).__name__}: {exc}"
+                    block_reasons.append(render_error)
+                    lab_probe_policy["probe_render_executed"] = False
+                    lab_probe_policy["render_path"] = None
 
-                linkage_context["probe"] = dict(probe_context)
-                if media_path:
-                    publish_result = self.publish.publish_real(
-                        trend=trend,
-                        style=str(plan.publish_style),
-                        content_type=str(plan.publish_format_now),
-                        caption=str(plan.caption),
-                        media_path=media_path,
-                        linkage_context=linkage_context,
-                    )
-                    publish_status = str((publish_result or {}).get("publish_status") or "")
-                    probe_context["publish_executed"] = publish_status == "published_real_probe"
-                    linkage_context["probe"] = dict(probe_context)
-                else:
-                    publish_result = {
-                        "ok": False,
-                        "publish_status": "probe_render_error",
-                        "error": "probe_render_error",
-                    }
-            elif probe_context["requested"]:
-                publish_result = {
-                    "ok": False,
-                    "publish_status": "probe_not_allowed",
-                    "error": "probe_not_allowed",
+            effective_real_publish = bool(
+                lab_probe_policy.get("probe_eligible")
+                and brand_surface_policy.get("main_surface_allowed")
+                and render_path
+            )
+
+            if effective_real_publish:
+                linkage_context["probe"] = {
+                    "requested": lab_probe_policy.get("probe_requested"),
+                    "requested_state": lab_probe_policy.get("probe_state_requested"),
+                    "effective_state": lab_probe_policy.get("probe_state_effective"),
+                    "eligible": True,
+                    "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
+                    "publish_executed": False,
+                    "render_path": render_path,
+                    "allow_real_publish": True,
+                    "probe_block_reason": None,
+                    "surface_mode": brand_surface_policy.get("surface_mode"),
                 }
-        except Exception as exc:
-            publish_result = {
-                "ok": False,
-                "error": f"publish_error: {type(exc).__name__}: {exc}",
-            }
-            block_reasons.append(f"publish_error: {type(exc).__name__}: {exc}")
+                publish_result = self.publish.publish_real(
+                    trend=trend,
+                    style=str(plan.publish_style),
+                    content_type=str(plan.publish_format_now),
+                    caption=str(plan.caption),
+                    media_path=render_path,
+                    linkage_context=linkage_context,
+                )
+                publish_status = str((publish_result or {}).get("publish_status") or "")
+                lab_probe_policy["probe_publish_executed"] = publish_status == "published_real_probe"
+            else:
+                publish_result = {
+                    "ok": True,
+                    "publish_status": "not_published_surface_protected",
+                    "operational_state": operational_state,
+                    "content_type": str(plan.publish_format_now),
+                    "style": str(plan.publish_style),
+                    "created_at": datetime.now().isoformat(),
+                    "render_path": render_path,
+                    "surface_mode": brand_surface_policy.get("surface_mode"),
+                    "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
+                    "probe_requested": lab_probe_policy.get("probe_requested"),
+                    "probe_eligible": lab_probe_policy.get("probe_eligible"),
+                    "probe_publish_executed": False,
+                    "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
+                    "render_error": render_error,
+                }
+
+        probe_context = {
+            "requested": bool(lab_probe_policy.get("probe_requested")),
+            "requested_state": lab_probe_policy.get("probe_state_requested"),
+            "effective_state": lab_probe_policy.get("probe_state_effective"),
+            "eligible": bool(
+                lab_probe_policy.get("probe_eligible")
+                and brand_surface_policy.get("main_surface_allowed")
+            ),
+            "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
+            "publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
+            "render_path": render_path,
+            "allow_real_publish": bool(
+                lab_probe_policy.get("probe_eligible")
+                and brand_surface_policy.get("main_surface_allowed")
+            ),
+            "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
+            "surface_mode": brand_surface_policy.get("surface_mode"),
+            "brand_surface_policy": brand_surface_policy,
+            "lab_probe_policy": lab_probe_policy,
+        }
 
         (
             post_performance_contract,
@@ -1024,16 +1104,18 @@ class OfficialRuntime:
             "mode": operational_state,
             "authorization_state": authorization_state,
             "operational_state": operational_state,
+            "surface_mode": brand_surface_policy.get("surface_mode"),
+            "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
             "brand_live_allowed": False,
             "real_probe_route_supported": True,
             "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
+            "probe_requested": bool(lab_probe_policy.get("probe_requested")),
+            "probe_eligible": bool(lab_probe_policy.get("probe_eligible")),
+            "probe_publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
+            "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
             "block_reasons": block_reasons,
-            "real_probe_requested": probe_context["requested"],
-            "probe_state_requested": probe_context["requested_state"],
-            "real_probe_allowed": probe_context["eligible"],
-            "probe_state_effective": probe_context["effective_state"],
-            "real_probe_executed": probe_context["publish_executed"],
-            "probe_context": probe_context,
+            "brand_surface_policy": brand_surface_policy,
+            "lab_probe_policy": lab_probe_policy,
             "trend": trend,
             "creative_plan": plan_dict,
             "editorial_qa": editorial_qa,
@@ -1062,6 +1144,8 @@ class OfficialRuntime:
             "evidence_interpreter": evidence_interpreter,
             "experiment_resolution": experiment_resolution,
             "recommendation_engine": recommendation_engine,
+            "recommendation_state": recommendation_engine.get("recommended_action") if isinstance(recommendation_engine, dict) else None,
+            "resolution_state": experiment_resolution.get("resolution_state") if isinstance(experiment_resolution, dict) else None,
             "wave10_summary": wave10_summary,
             "wave11_summary": wave11_summary,
             "experiment_registry": experiment_registry,
