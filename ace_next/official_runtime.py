@@ -10,6 +10,7 @@ from .config import AceNextConfig
 from .creative_planner import build_creative_plan
 from .editorial_rubric import evaluate_editorial_quality
 from .lab_probe_policy import resolve_lab_probe_policy
+from .mission_control import decide_mission
 from .perceptual_qa import evaluate_perceptual_quality
 from .publish import PublishService
 from .render_env_sync import persist_instagram_token_to_render
@@ -99,6 +100,10 @@ def _as_bool_env(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _mission_approval_required() -> bool:
+    return _as_bool_env("ACE_REQUIRE_MISSION_APPROVAL", False)
+
+
 class OfficialRuntime:
     def __init__(self, config: AceNextConfig):
         self.config = config
@@ -130,6 +135,9 @@ class OfficialRuntime:
             return int(os.environ.get("ACE_TOKEN_ASSUMED_TTL_DAYS", "60"))
         except Exception:
             return 60
+
+    def _runtime_queue_state(self) -> dict[str, int]:
+        return {"active_jobs": 0, "pending_jobs": 0}
 
     def _auth_state(self) -> dict[str, Any]:
         stored = load_instagram_auth(self.config)
@@ -809,6 +817,72 @@ class OfficialRuntime:
             "human_review_approved": False,
         }
 
+        mission_control_state = {
+            "enabled": True,
+            "approval_required": _mission_approval_required(),
+            "blocked": False,
+        }
+
+        try:
+            mission_decision = decide_mission(
+                trend,
+                format_hint=None,
+                signal_context={
+                    "source": "official_runtime",
+                    "mode": "run",
+                },
+                brand_context={
+                    "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+                    "brand_live_allowed": False,
+                },
+                queue_state=self._runtime_queue_state(),
+                recent_signal_score=None,
+            )
+        except Exception as exc:
+            mission_decision = {
+                "ok": False,
+                "should_act": True,
+                "reason": f"mission_control_runtime_error: {type(exc).__name__}: {exc}",
+                "decision_state": "fallback_allow",
+                "trend": trend,
+                "trend_normalized": trend.strip().lower(),
+                "style": "unknown",
+                "content_type": "image",
+                "goal": "authority",
+                "hypothesis": "mission_control_unavailable_runtime_fallback",
+                "priority": 0.5,
+                "api_budget_mode": "lean",
+                "confidence": 0.2,
+                "planner_selected": "mission_control_runtime_fallback",
+                "queue_full": False,
+                "signal_strength": "unknown",
+                "guardrails": {
+                    "brand_live_allowed": False,
+                    "safe_for_brand_live": False,
+                    "requires_human_review": True,
+                },
+                "inputs": {},
+            }
+            mission_control_state["fallback"] = True
+            mission_control_state["error"] = mission_decision["reason"]
+
+        if mission_control_state["approval_required"] and not bool(mission_decision.get("should_act")):
+            mission_control_state["blocked"] = True
+            return {
+                "ok": True,
+                "mode": "blocked_by_mission_control",
+                "authorization_state": "blocked_by_mission_control",
+                "operational_state": "blocked_by_mission_control",
+                "brand_live_allowed": False,
+                "trend": trend,
+                "mission_decision": mission_decision,
+                "mission_control_state": mission_control_state,
+                "block_reasons": [mission_decision.get("reason")],
+                "runtime": self.snapshot(),
+                "publish_result": None,
+                "last_publish": self.publish.last_publish(),
+            }
+
         try:
             plan = build_creative_plan(trend)
             plan_dict = plan.to_dict()
@@ -819,6 +893,8 @@ class OfficialRuntime:
                 "brand_live_allowed": False,
                 "block_reasons": [f"creative_planner_error: {type(exc).__name__}: {exc}"],
                 "error": f"creative_planner_error: {type(exc).__name__}: {exc}",
+                "mission_decision": mission_decision,
+                "mission_control_state": mission_control_state,
                 "runtime": self.snapshot(),
                 "publish_result": None,
                 "last_publish": self.publish.last_publish(),
@@ -1117,6 +1193,8 @@ class OfficialRuntime:
             "brand_surface_policy": brand_surface_policy,
             "lab_probe_policy": lab_probe_policy,
             "trend": trend,
+            "mission_decision": mission_decision,
+            "mission_control_state": mission_control_state,
             "creative_plan": plan_dict,
             "editorial_qa": editorial_qa,
             "visual_contract": visual_contract_dict,
