@@ -40,6 +40,7 @@ def _slide_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "carousel",
         },
         {
             "index": 2,
@@ -51,6 +52,7 @@ def _slide_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "carousel",
         },
     ]
 
@@ -66,10 +68,11 @@ def _slide_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
                 "support_points": group[1:] if len(group) > 1 else [],
                 "series_name": plan.get("series_name") or "Liberta a Verdade",
                 "topic_seed": plan.get("topic_seed") or headline,
+                "format_recommendation": "carousel",
             }
         )
 
-    while len(slides) < 3:
+    while len(slides) < 4:
         slides.append(
             {
                 "index": len(slides) + 1,
@@ -81,6 +84,7 @@ def _slide_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
                 "support_points": [],
                 "series_name": plan.get("series_name") or "Liberta a Verdade",
                 "topic_seed": plan.get("topic_seed") or headline,
+                "format_recommendation": "carousel",
             }
         )
 
@@ -95,6 +99,7 @@ def _slide_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "carousel",
         }
     )
 
@@ -109,10 +114,12 @@ def _render_slide(
     capture_mode: str = "safe",
 ) -> dict[str, Any]:
     try:
+        from .visual_payload_compactor import compact_visual_payload
         from .visual_premium_bridge import build_visual_premium_bridge
 
+        compacted = compact_visual_payload(slide_payload, strategic_format="carousel")
         return build_visual_premium_bridge(
-            creative_plan=slide_payload,
+            creative_plan=compacted,
             visual_identity=visual_identity,
             visual_contract=visual_contract,
             strategic_format="carousel",
