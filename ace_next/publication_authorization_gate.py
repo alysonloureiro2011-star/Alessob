@@ -78,6 +78,10 @@ class PublicationAuthorizationResult:
     premium_score: float | None
     eligible_for_editorial_staging: bool
     eligible_for_brand_live_candidate: bool
+    staging_hardening_applied: bool
+    staging_hardening_report: dict[str, Any]
+    pre_hardening_state: str | None
+    post_hardening_state: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,6 +96,10 @@ def _default_gate_payload(
     reasons: list[str],
     summary: str,
     premium_protocol: dict[str, Any],
+    staging_hardening_applied: bool,
+    staging_hardening_report: dict[str, Any],
+    pre_hardening_state: str | None,
+    post_hardening_state: str | None,
 ) -> PublicationAuthorizationResult:
     blocked_state = selected_state in {BLOCKED_BRAND, BLOCKED_QUALITY}
     brand_live_candidate = bool(premium_protocol.get("eligible_for_brand_live_candidate"))
@@ -112,6 +120,10 @@ def _default_gate_payload(
         premium_score=premium_protocol.get("premium_score"),
         eligible_for_editorial_staging=bool(premium_protocol.get("eligible_for_editorial_staging")),
         eligible_for_brand_live_candidate=brand_live_candidate,
+        staging_hardening_applied=staging_hardening_applied,
+        staging_hardening_report=staging_hardening_report,
+        pre_hardening_state=pre_hardening_state,
+        post_hardening_state=post_hardening_state,
     )
 
 
@@ -125,9 +137,17 @@ def authorize_publication(
     brand_veto: BrandVetoResult,
     env_flags: dict[str, Any] | None = None,
     request_flags: dict[str, Any] | None = None,
+    staging_hardener: dict[str, Any] | None = None,
 ) -> PublicationAuthorizationResult:
     env_flags = dict(env_flags or {})
     request_flags = dict(request_flags or {})
+
+    visual_qa_dict = _safe_dict(visual_qa)
+    hardener = _safe_dict(staging_hardener) or _safe_dict(visual_qa_dict.get("staging_hardener"))
+    hardening_report = _safe_dict(hardener.get("hardening_report"))
+    staging_hardening_applied = bool(hardener.get("ok")) or bool(hardening_report)
+    pre_hardening_state = "blocked_brand" if staging_hardening_applied else None
+    post_hardening_state = None
 
     supported_states = [
         TECHNICAL_TEST,
@@ -144,7 +164,7 @@ def authorize_publication(
         premium_protocol = evaluate_premium_eligibility_protocol(
             creative_plan=None,
             editorial_qa=_safe_dict(editorial_qa),
-            visual_qa=_safe_dict(visual_qa),
+            visual_qa=visual_qa_dict,
             perceptual_qa=_safe_dict(perceptual_qa),
             rubric_engine=_safe_dict(rubric),
             brand_veto_gate=_safe_dict(brand_veto),
@@ -190,9 +210,14 @@ def authorize_publication(
             reasons=reasons,
             summary="teste técnico permitido; publish principal continua bloqueado",
             premium_protocol=premium_protocol,
+            staging_hardening_applied=staging_hardening_applied,
+            staging_hardening_report=hardening_report,
+            pre_hardening_state=pre_hardening_state,
+            post_hardening_state=TECHNICAL_TEST,
         )
 
     selected_state = _state_from_premium_protocol(premium_classification)
+    post_hardening_state = selected_state
 
     if premium_classification == BLOCKED_BRAND:
         reasons = _merge_reasons(
@@ -208,6 +233,10 @@ def authorize_publication(
             reasons=reasons,
             summary="peça bloqueada por risco de marca",
             premium_protocol=premium_protocol,
+            staging_hardening_applied=staging_hardening_applied,
+            staging_hardening_report=hardening_report,
+            pre_hardening_state=pre_hardening_state,
+            post_hardening_state=BLOCKED_BRAND,
         )
 
     if premium_classification == BLOCKED_QUALITY:
@@ -224,6 +253,10 @@ def authorize_publication(
             reasons=reasons,
             summary="peça bloqueada por qualidade premium insuficiente",
             premium_protocol=premium_protocol,
+            staging_hardening_applied=staging_hardening_applied,
+            staging_hardening_report=hardening_report,
+            pre_hardening_state=pre_hardening_state,
+            post_hardening_state=BLOCKED_QUALITY,
         )
 
     if premium_classification == "editorial_staging":
@@ -239,6 +272,10 @@ def authorize_publication(
             reasons=reasons,
             summary="peça aprovada apenas para editorial_staging",
             premium_protocol=premium_protocol,
+            staging_hardening_applied=staging_hardening_applied,
+            staging_hardening_report=hardening_report,
+            pre_hardening_state=pre_hardening_state,
+            post_hardening_state=EDITORIAL_STAGING,
         )
 
     if premium_classification == "brand_live_candidate":
@@ -255,6 +292,10 @@ def authorize_publication(
             reasons=reasons,
             summary="peça candidata a brand_live, mas ainda sob revisão humana obrigatória",
             premium_protocol=premium_protocol,
+            staging_hardening_applied=staging_hardening_applied,
+            staging_hardening_report=hardening_report,
+            pre_hardening_state=pre_hardening_state,
+            post_hardening_state=EDITORIAL_STAGING,
         )
 
     reasons = _merge_reasons(
@@ -276,4 +317,8 @@ def authorize_publication(
         reasons=reasons or [summary],
         summary=summary,
         premium_protocol=premium_protocol,
+        staging_hardening_applied=staging_hardening_applied,
+        staging_hardening_report=hardening_report,
+        pre_hardening_state=pre_hardening_state,
+        post_hardening_state=post_hardening_state,
     )
