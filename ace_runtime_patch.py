@@ -107,6 +107,33 @@ def _coerce_json_payload(response):
     return None
 
 
+def _derive_bridge_state_from_receipt(receipt):
+    receipt = dict(receipt or {})
+    has_receipt = bool(receipt.get("receipt_id"))
+    has_media_id = bool(receipt.get("media_id"))
+    has_permalink = bool(receipt.get("permalink"))
+
+    if has_receipt and has_media_id and has_permalink:
+        return "receipt_with_permalink"
+    if has_receipt and has_media_id:
+        return "receipt_with_media_id"
+    if has_receipt:
+        return "receipt_linked"
+    return "no_receipt"
+
+
+def _derive_evidence_state_from_receipt(receipt):
+    receipt = dict(receipt or {})
+    has_receipt = bool(receipt.get("receipt_id"))
+    has_media_id = bool(receipt.get("media_id"))
+
+    if not has_receipt:
+        return "no_receipt"
+    if has_receipt and not has_media_id:
+        return "receipt_only"
+    return "linked_real_target"
+
+
 def apply_runtime_patch(app):
     if app.config.get("ACE_RUNTIME_PATCH_V5_LOADED"):
         return
@@ -117,7 +144,15 @@ def apply_runtime_patch(app):
         "loaded": False,
         "runtime_available": False,
         "error": None,
-        "routes": ["/", "/health", "/ext/runtime", "/ext/publish/last", "/ext/test/publish"],
+        "routes": [
+            "/",
+            "/health",
+            "/ext/runtime",
+            "/ext/publish/last",
+            "/ext/test/publish",
+            "/ext/instagram/status",
+            "/ext/evidence/last",
+        ],
     }
     app.config["ACE_NEXT_BRIDGE_STATE"] = bridge_state
 
@@ -322,10 +357,92 @@ def apply_runtime_patch(app):
                 500,
             )
 
+    def ace_next_bridge_instagram_status_view():
+        try:
+            runtime_snapshot = _runtime_snapshot()
+            readiness = _legacy_readiness()
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/ext/instagram/status",
+                    "instagram_readiness": readiness,
+                    "runtime": runtime_snapshot,
+                    "bridge": dict(bridge_state),
+                }
+            )
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "route": "/ext/instagram/status",
+                        "error": str(e),
+                        "bridge": dict(bridge_state),
+                    }
+                ),
+                500,
+            )
+
+    def ace_next_bridge_evidence_last_view():
+        try:
+            publish_payload = _last_publish_payload()
+            receipt = dict(publish_payload.get("last_publish_receipt") or {})
+            runtime_snapshot = _runtime_snapshot()
+            performance_store = dict((runtime_snapshot.get("performance_store") or {})) if isinstance(runtime_snapshot, dict) else {}
+
+            evidence_bridge_state = (
+                performance_store.get("latest_evidence_bridge_state")
+                or _derive_bridge_state_from_receipt(receipt)
+            )
+            evidence_state = _derive_evidence_state_from_receipt(receipt)
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "route": "/ext/evidence/last",
+                    "publish_status": receipt.get("publish_status"),
+                    "receipt_id": receipt.get("receipt_id"),
+                    "media_id": receipt.get("media_id"),
+                    "permalink": receipt.get("permalink"),
+                    "real_probe_requested": receipt.get("real_probe_requested"),
+                    "real_probe_executed": receipt.get("real_probe_executed"),
+                    "probe_state_requested": receipt.get("probe_state_requested"),
+                    "probe_state_effective": receipt.get("probe_state_effective"),
+                    "evidence_state": evidence_state,
+                    "evidence_bridge_state": evidence_bridge_state,
+                    "performance_store": performance_store,
+                    "last_publish_error": publish_payload.get("last_publish_error"),
+                    "bridge": dict(bridge_state),
+                }
+            )
+        except Exception as e:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "route": "/ext/evidence/last",
+                        "error": str(e),
+                        "bridge": dict(bridge_state),
+                    }
+                ),
+                500,
+            )
+
     def ace_next_bridge_test_publish_view():
         trend = str(request.args.get("trend", "")).strip() or None
         live = _truthy(request.args.get("live"))
         placeholder = _truthy(request.args.get("placeholder"))
+
+        raw_probe = request.args.get("probe")
+        if raw_probe is None:
+            raw_probe = request.args.get("real_probe")
+        force_real_probe = _truthy(raw_probe)
+
+        probe_state = str(
+            request.args.get("state")
+            or request.args.get("probe_state")
+            or "auto"
+        ).strip() or "auto"
 
         if not live:
             return jsonify(
@@ -335,6 +452,13 @@ def apply_runtime_patch(app):
                     "mode": "diagnostic",
                     "live_requested": False,
                     "trend": trend,
+                    "placeholder_requested": placeholder,
+                    "probe_requested": force_real_probe,
+                    "probe_state": probe_state,
+                    "next_live_example": (
+                        "/ext/test/publish?live=1&probe=1&state=editorial_staging"
+                        "&trend=probe_editorial_staging"
+                    ),
                     "instagram_readiness": _legacy_readiness(),
                     "bridge": dict(bridge_state),
                 }
@@ -343,14 +467,19 @@ def apply_runtime_patch(app):
         if runtime is not None and hasattr(runtime, "run"):
             try:
                 payload = runtime.run(
-                    trend=trend,
+                    trend=trend or "teste real",
                     force_placeholder=placeholder,
+                    force_real_probe=force_real_probe,
+                    probe_state=probe_state,
                 )
                 if isinstance(payload, dict):
                     payload = dict(payload)
                     payload.setdefault("instagram_readiness", _legacy_readiness())
                     payload["bridge"] = dict(bridge_state)
                     payload["live_requested"] = True
+                    payload["placeholder_requested"] = placeholder
+                    payload["probe_requested_http"] = force_real_probe
+                    payload["probe_state_http"] = probe_state
                     return jsonify(payload)
             except Exception as e:
                 return (
@@ -361,6 +490,9 @@ def apply_runtime_patch(app):
                             "error": str(e),
                             "trend": trend,
                             "live_requested": True,
+                            "placeholder_requested": placeholder,
+                            "probe_requested_http": force_real_probe,
+                            "probe_state_http": probe_state,
                             "bridge": dict(bridge_state),
                         }
                     ),
@@ -375,6 +507,9 @@ def apply_runtime_patch(app):
                 "reason": "ace_next_runtime_unavailable",
                 "trend": trend,
                 "live_requested": True,
+                "placeholder_requested": placeholder,
+                "probe_requested_http": force_real_probe,
+                "probe_state_http": probe_state,
                 "instagram_readiness": _legacy_readiness(),
                 "bridge": dict(bridge_state),
             }
@@ -385,6 +520,8 @@ def apply_runtime_patch(app):
     _bind_get_route("/ext/runtime", "ace_ext_runtime_v1", ace_next_bridge_runtime_view)
     _bind_get_route("/ext/publish/last", "ace_last_publish_v1", ace_next_bridge_last_publish_view)
     _bind_get_route("/ext/test/publish", "ace_ext_test_publish_v2", ace_next_bridge_test_publish_view)
+    _bind_get_route("/ext/instagram/status", "ace_ext_instagram_status_v1", ace_next_bridge_instagram_status_view)
+    _bind_get_route("/ext/evidence/last", "ace_ext_evidence_last_v1", ace_next_bridge_evidence_last_view)
 
     _safe_log(
         "INFO",
