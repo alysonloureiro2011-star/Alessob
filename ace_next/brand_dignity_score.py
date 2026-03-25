@@ -114,8 +114,10 @@ def evaluate_brand_dignity_score(
         support_points = []
     support_points = [_clean_text(x) for x in support_points if _clean_text(x)]
 
-    compaction_report = _safe_dict(creative_plan.get("compaction_report"))
-    hidden_overflow_count = int(compaction_report.get("hidden_overflow_count") or 0)
+    hardening_report = _safe_dict(creative_plan.get("hardening_report"))
+    hidden_overflow = creative_plan.get("hidden_overflow_for_caption")
+    if not isinstance(hidden_overflow, list):
+        hidden_overflow = []
 
     visual_score_seen = _safe_float(visual_qa.get("final_score"))
     if visual_score_seen is not None and visual_score_seen > 10:
@@ -132,13 +134,13 @@ def evaluate_brand_dignity_score(
     cheap_cta_detected = _cta_signal(cta)
 
     support_limit = 1 if strategic_format == "story" else 2
-    cta_limit = 42 if strategic_format == "story" else 48
-    body_limit = 120 if strategic_format == "story" else 210
+    cta_limit = 32 if strategic_format == "story" else 42
+    body_limit = 90 if strategic_format in {"story", "carousel"} else 120
 
     brand_fit = 8.5 if premium_template_used else 7.4
     anti_commodity = 8.4 if not generic_phrase_detected else 6.5
     premium_feel = 8.3 if premium_template_used else 7.2
-    clarity = 8.4 if len(headline) <= 92 and len(cta) <= cta_limit and len(body) <= body_limit else 7.1
+    clarity = 8.4 if len(headline) <= 62 and len(cta) <= cta_limit and len(body) <= body_limit else 7.1
     visual_dignity = hierarchy_score_seen or visual_score_seen or 7.1
     naturality = 8.3 if not generic_phrase_detected and not cheap_cta_detected else 6.8
 
@@ -156,10 +158,15 @@ def evaluate_brand_dignity_score(
     if len(cta) > cta_limit:
         clarity -= 0.8
         premium_feel -= 0.5
-    if len(hook) > 120:
-        anti_commodity -= 0.3
+    if len(hook) > 90:
+        anti_commodity -= 0.4
         premium_feel -= 0.4
-    if hidden_overflow_count > 0 and len(support_points) <= support_limit:
+    if len(body) > body_limit:
+        clarity -= 0.8
+        premium_feel -= 0.4
+    if hardening_report.get("headline_compacted") or hardening_report.get("body_compacted"):
+        clarity += 0.2
+    if hidden_overflow and len(support_points) <= support_limit:
         clarity += 0.2
 
     breakdown = {
@@ -197,6 +204,9 @@ def evaluate_brand_dignity_score(
     if len(cta) > cta_limit:
         reasons.append("CTA longa demais para o formato")
         recommendations.append("encurtar CTA")
+    if len(body) > body_limit:
+        reasons.append("body longa demais para staging")
+        recommendations.append("cortar body")
     if not premium_template_used:
         reasons.append("template premium não detectado")
         recommendations.append("usar template premium explícito")
@@ -219,8 +229,9 @@ def evaluate_brand_dignity_score(
         "cheap_cta_detected": cheap_cta_detected,
         "visual_score_seen": visual_score_seen,
         "hierarchy_score_seen": hierarchy_score_seen,
-        "hidden_overflow_count": hidden_overflow_count,
+        "hidden_overflow_count": len(hidden_overflow),
         "format": strategic_format,
+        "hardening_applied": bool(creative_plan.get("hardening_applied")),
     }
 
     if not reasons:
@@ -236,51 +247,4 @@ def evaluate_brand_dignity_score(
         "reasons": reasons,
         "recommendations": recommendations,
         "signals": signals,
-    }
-
-
-def brand_dignity_score_examples() -> dict:
-    premium = evaluate_brand_dignity_score(
-        creative_plan={
-            "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
-            "hook": "O problema raramente é falta de esforço.",
-            "body": "Estrutura transforma intenção em direção real.",
-            "cta": "Salve para revisar antes da próxima decisão.",
-            "support_points": ["Clareza sem base vira intenção solta.", "Disciplina protege consistência."],
-            "format_recommendation": "image",
-            "compaction_report": {"hidden_overflow_count": 1},
-        },
-        visual_qa={"final_score": 84},
-        hierarchy_gate={"final_score": 82},
-        template_meta={"premium_tier": "premium_core", "template_id": "hero_card_v1"},
-    )
-    borderline = evaluate_brand_dignity_score(
-        creative_plan={
-            "headline": "Você precisa ver isso agora.",
-            "cta": "Salve se fez sentido.",
-            "support_points": ["Mais foco.", "Mais resultado.", "Mais disciplina."],
-            "format_recommendation": "image",
-        },
-        visual_qa={"final_score": 79},
-        hierarchy_gate={"final_score": 77},
-        template_meta={"premium_tier": "premium_core", "template_id": "hero_card_v1"},
-    )
-    commodity = evaluate_brand_dignity_score(
-        creative_plan={
-            "headline": "Descubra o segredo que ninguém te conta.",
-            "hook": "Isso muda tudo agora.",
-            "body": "Sua vida vai mudar agora.",
-            "cta": "Comente aqui agora.",
-            "support_points": ["Mais foco.", "Mais energia.", "Mais resultado.", "Mais motivação."],
-            "format_recommendation": "image",
-        },
-        visual_qa={"final_score": 72},
-        hierarchy_gate={"final_score": 70},
-        template_meta={},
-    )
-    return {
-        "ok": True,
-        "premium_example": premium,
-        "borderline_example": borderline,
-        "commodity_risk_example": commodity,
     }
