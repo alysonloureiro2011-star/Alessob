@@ -7,11 +7,13 @@ import unicodedata
 from typing import Any
 
 from .brand_lexicon import get_brand_lexicon, scan_brand_alignment
+from .distribution_timing_v1 import build_distribution_context_v1
 from .editorial_critic_v1 import evaluate_editorial_critic
-
+from .serial_continuity_engine_v1 import build_serial_continuity_engine_v1
 
 VALID_FORMATS = {"image", "carousel", "story", "reel"}
 WEAK_INPUTS = {"", "teste", "teste real", "oi", "hello", "123"}
+PLANNER_VERSION = "editorial_soberano_v1"
 
 
 def _clean(value: str) -> str:
@@ -69,7 +71,7 @@ def _choose_format(domain: str, format_hint: str | None) -> str:
     if hint in VALID_FORMATS:
         return hint
     if domain == "emotion":
-        return "reel"
+        return "story"
     if domain in {"branding", "prosperity"}:
         return "carousel"
     return "image"
@@ -155,7 +157,7 @@ def _compose_editorial_payload(topic_seed: str, domain: str) -> dict[str, Any]:
             "narrative_tension": "pressa sem base corrói consistência",
             "payoff": "o tema sai do abstrato e entra na execução concreta",
             "cta": "Salve isso como régua de execução e compartilhe com quem precisa trocar pressa por construção.",
-            "body": f"Resultado não respeita ansiedade. Respeita base. Quando {secondary} sustenta o processo e {tertiary} organiza prioridade, o tema deixa de soar abstrato e começa a responder a execução real.",
+            "body": f"Resultado não respeita ansiedade. Respeita base. Quando {secondary} sustenta o processo e {tertiary} organiza prioridade, o tema deixa de soar abstrato e começa a responder à execução real.",
             "support_points": [
                 f"{secondary.capitalize()} reduz desperdício de energia.",
                 f"{tertiary.capitalize()} protege foco contra distração.",
@@ -455,12 +457,61 @@ def _llm_payload(
     return validated, llm_status, "llm_assisted"
 
 
+def _collect_memory_context(signal_context: dict[str, Any], brand_context: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for source in [brand_context, signal_context]:
+        for key in [
+            "ace_content_history",
+            "ace_candidate_posts",
+            "recent_posts",
+            "recent_content",
+            "episodic_performance_memory",
+            "experiment_registry",
+            "performance_context",
+        ]:
+            if key in source and source.get(key) is not None:
+                merged[key] = source.get(key)
+    return merged
+
+
+def _perceived_value_hypothesis(payload: dict[str, Any], domain: str) -> str:
+    if domain == "branding":
+        return "clareza de recorte + utilidade rápida + identidade forte aumentam salvamento e autoridade percebida"
+    if domain == "emotion":
+        return "tensão real + clareza prática + densidade baixa aumentam leitura completa e compartilhamento íntimo"
+    if domain == "prosperity":
+        return "processo concreto + payoff aplicável aumentam save rate e comentário de reconhecimento"
+    return "fricção real + payoff concreto + CTA sóbria aumentam valor percebido sem cheirar a commodity"
+
+
+def _fallback_flags(planner_generation_mode: str, llm_status: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    if planner_generation_mode == "deterministic":
+        flags.append("deterministic_path")
+    if planner_generation_mode == "llm_fallback_to_deterministic":
+        flags.append("llm_fallback_to_deterministic")
+    if llm_status.get("reason"):
+        flags.append(str(llm_status.get("reason")))
+    return flags
+
+
+def _official_path_quality_state(critic: dict[str, Any]) -> str:
+    caption_gate = critic.get("caption_gate") or {}
+    if critic.get("approved") and caption_gate.get("approved"):
+        return "approved"
+    if critic.get("failed_floors"):
+        return "needs_rewrite"
+    return "conservative_fallback"
+
+
 def _finalize_plan(
     *,
     topic_seed: str,
+    domain: str,
     payload: dict[str, Any],
     lexicon: dict[str, Any],
     brand_context: dict[str, Any],
+    signal_context: dict[str, Any],
     planner_generation_mode: str,
     llm_status: dict[str, Any],
 ) -> dict[str, Any]:
@@ -470,15 +521,36 @@ def _finalize_plan(
 
     alignment = scan_brand_alignment(full_text, lexicon)
     critic = evaluate_editorial_critic(payload, lexicon)
+    caption_gate = critic.get("caption_gate") or {}
 
-    format_recommendation = payload["format_recommendation"]
-    sequel_potential = payload["sequel_potential"]
-    series_name = brand_context.get("series_name") or lexicon["brand_name"]
+    memory_context = _collect_memory_context(signal_context, brand_context)
+    serial_continuity = build_serial_continuity_engine_v1(
+        topic_seed=topic_seed,
+        hook=payload["hook"],
+        angle=payload["angle"],
+        sequel_potential=payload["sequel_potential"],
+        memory_context=memory_context,
+        series_name=brand_context.get("series_name"),
+    )
+    distribution_context = build_distribution_context_v1(
+        format_recommendation=payload["format_recommendation"],
+        serial_continuity=serial_continuity,
+        performance_context=memory_context.get("performance_context"),
+        signal_context=signal_context,
+    )
+
+    series_name = serial_continuity.get("series_name") or brand_context.get("series_name") or lexicon["brand_name"]
+    deterministic_path = planner_generation_mode != "llm_assisted"
+    fallback_flags = _fallback_flags(planner_generation_mode, llm_status)
+    official_path_quality_state = _official_path_quality_state(critic)
 
     notes = [
         "planner_selected=creative_planner_soberano_v1",
         f"planner_generation_mode={planner_generation_mode}",
         f"editorial_critic_approved={critic.get('approved')}",
+        f"caption_gate_approved={caption_gate.get('approved')}",
+        f"serial_candidate={serial_continuity.get('sequel_candidate')}",
+        f"distribution_source_mode={distribution_context.get('source_mode')}",
     ]
     if llm_status.get("provider"):
         notes.append(f"llm_provider={llm_status.get('provider')}")
@@ -499,31 +571,29 @@ def _finalize_plan(
         "narrative_tension": payload["narrative_tension"],
         "payoff": payload["payoff"],
         "cta": payload["cta"],
-        "format_recommendation": format_recommendation,
-        "sequel_potential": sequel_potential,
+        "format_recommendation": payload["format_recommendation"],
+        "strategic_target_format": payload["format_recommendation"],
+        "sequel_potential": payload["sequel_potential"],
         "series_name": series_name,
+        "continuation_candidate": bool(serial_continuity.get("sequel_candidate")),
+        "brand_lexicon_hits": alignment["semantic_anchors"] + alignment["approved_language_patterns"][:2],
         "brand_fit_signals": alignment["semantic_anchors"] + alignment["approved_language_patterns"][:2],
-        "anti_generic_signals": [
-            "ângulo utilitário e não ornamental",
-            "headline causal em vez de slogan",
-            "hook com custo, erro ou contraste de leitura",
-        ],
-        "anti_commodity_signals": [
-            "sem promessa apelativa",
-            "CTA útil em vez de mendigado",
-            "sem gatilho barato de urgência",
-        ],
-        "tone_controls": [
-            "clareza antes de volume",
-            "autoridade sem arrogância",
-            "naturalidade sem frase inflada",
-            "tensão ética sem sensacionalismo",
-        ],
-        "rejected_patterns": list(lexicon["disallowed_patterns"]),
+        "anti_generic_risk": "high" if "anti_genericity" in (critic.get("failed_floors") or []) else "low",
+        "perceived_value_hypothesis": _perceived_value_hypothesis(payload, domain),
+        "timing_hypothesis": distribution_context.get("timing_hypothesis"),
+        "planner_version": PLANNER_VERSION,
+        "planner_mode": planner_generation_mode,
+        "deterministic": deterministic_path,
+        "deterministic_path": deterministic_path,
+        "serial_continuity": serial_continuity,
+        "distribution_context": distribution_context,
         "critic": critic,
+        "editorial_critic": critic,
+        "caption_gate": caption_gate,
         "planner_selected": "creative_planner_soberano_v1",
-        "planner_generation_mode": planner_generation_mode,
         "llm_status": llm_status,
+        "fallback_flags": fallback_flags,
+        "official_path_quality_state": official_path_quality_state,
         "notes": notes,
     }
 
@@ -563,9 +633,11 @@ def build_creative_plan_soberano_v1(
 
     return _finalize_plan(
         topic_seed=topic_seed,
+        domain=domain,
         payload=payload,
         lexicon=lexicon,
         brand_context=brand_context,
+        signal_context=signal_context,
         planner_generation_mode=planner_generation_mode,
         llm_status=llm_status,
     )
@@ -586,11 +658,6 @@ def planner_soberano_examples() -> dict[str, Any]:
         "cta": "Comente aqui",
         "format_recommendation": "image",
         "sequel_potential": "low",
-        "brand_fit_signals": [],
-        "anti_generic_signals": [],
-        "anti_commodity_signals": [],
-        "tone_controls": [],
-        "rejected_patterns": get_brand_lexicon()["disallowed_patterns"],
         "critic": evaluate_editorial_critic(
             {
                 "headline": "Acredite em você e tudo vai mudar",
