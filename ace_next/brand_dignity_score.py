@@ -22,9 +22,18 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
 
+def _normalize_format(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"story", "stories"}:
+        return "story"
+    if normalized in {"carousel", "image"}:
+        return normalized
+    return "image"
+
+
 def _text_signal(value: str) -> bool:
     text = _clean_text(value).lower()
-    banned = [
+    banned = {
         "ninguém te conta",
         "ninguem te conta",
         "segredo",
@@ -32,13 +41,14 @@ def _text_signal(value: str) -> bool:
         "sua vida vai mudar",
         "acredite em você",
         "acredite em voce",
-    ]
+        "isso muda tudo",
+    }
     return any(item in text for item in banned)
 
 
 def _cta_signal(value: str) -> bool:
     text = _clean_text(value).lower()
-    cheap = [
+    cheap = {
         "comente aqui",
         "corre",
         "chama na dm",
@@ -46,13 +56,13 @@ def _cta_signal(value: str) -> bool:
         "não perde",
         "nao perde",
         "compra agora",
-    ]
+    }
     return any(item in text for item in cheap)
 
 
 def _headline_signal(value: str) -> bool:
     text = _clean_text(value).lower()
-    generic = [
+    generic = {
         "descubra",
         "segredo",
         "ninguém te conta",
@@ -60,13 +70,8 @@ def _headline_signal(value: str) -> bool:
         "isso muda tudo",
         "você precisa",
         "voce precisa",
-    ]
+    }
     return any(item in text for item in generic)
-
-
-def _support_signal(items: list[str]) -> bool:
-    cleaned = [_clean_text(x) for x in items if _clean_text(x)]
-    return len(cleaned) > 3
 
 
 def _classify(final_score: float, failed_floors: list[str], generic_phrase: bool, cheap_cta: bool) -> str:
@@ -93,48 +98,69 @@ def evaluate_brand_dignity_score(
     hierarchy_gate = _safe_dict(hierarchy_gate)
     template_meta = _safe_dict(template_meta)
 
+    strategic_format = _normalize_format(
+        creative_plan.get("strategic_target_format")
+        or creative_plan.get("publish_format_now")
+        or creative_plan.get("format_recommendation")
+    )
+
     headline = _clean_text(creative_plan.get("headline"))
+    hook = _clean_text(creative_plan.get("hook"))
+    body = _clean_text(creative_plan.get("body"))
     cta = _clean_text(creative_plan.get("cta"))
+
     support_points = creative_plan.get("support_points")
     if not isinstance(support_points, list):
         support_points = []
     support_points = [_clean_text(x) for x in support_points if _clean_text(x)]
 
+    compaction_report = _safe_dict(creative_plan.get("compaction_report"))
+    hidden_overflow_count = int(compaction_report.get("hidden_overflow_count") or 0)
+
     visual_score_seen = _safe_float(visual_qa.get("final_score"))
-    if visual_score_seen is not None:
+    if visual_score_seen is not None and visual_score_seen > 10:
         visual_score_seen = round(visual_score_seen / 10.0, 2)
 
     hierarchy_score_seen = _safe_float(hierarchy_gate.get("final_score"))
-    if hierarchy_score_seen is not None:
+    if hierarchy_score_seen is not None and hierarchy_score_seen > 10:
         hierarchy_score_seen = round(hierarchy_score_seen / 10.0, 2)
 
-    premium_template_used = bool(template_meta.get("premium_tier"))
-    generic_phrase_detected = _headline_signal(headline) or _text_signal(
-        " ".join(
-            [
-                headline,
-                _clean_text(creative_plan.get("hook")),
-                _clean_text(creative_plan.get("body")),
-            ]
-        )
-    )
+    template_id = _clean_text(template_meta.get("template_id"))
+    premium_template_used = bool(template_meta.get("premium_tier")) or template_id.endswith("_v1")
+
+    generic_phrase_detected = _headline_signal(headline) or _text_signal(" ".join([headline, hook, body]))
     cheap_cta_detected = _cta_signal(cta)
 
-    brand_fit = 8.6 if premium_template_used else 7.5
-    anti_commodity = 8.5 if not generic_phrase_detected else 6.4
-    premium_feel = 8.4 if premium_template_used else 7.2
-    clarity = 8.4 if 18 <= len(headline) <= 92 and len(cta) <= 72 else 7.0
+    support_limit = 1 if strategic_format == "story" else 2
+    cta_limit = 42 if strategic_format == "story" else 48
+    body_limit = 120 if strategic_format == "story" else 210
+
+    brand_fit = 8.5 if premium_template_used else 7.4
+    anti_commodity = 8.4 if not generic_phrase_detected else 6.5
+    premium_feel = 8.3 if premium_template_used else 7.2
+    clarity = 8.4 if len(headline) <= 92 and len(cta) <= cta_limit and len(body) <= body_limit else 7.1
     visual_dignity = hierarchy_score_seen or visual_score_seen or 7.1
     naturality = 8.3 if not generic_phrase_detected and not cheap_cta_detected else 6.8
 
-    if _support_signal(support_points):
-        premium_feel -= 0.6
+    if len(support_points) > support_limit:
+        premium_feel -= 0.8
+        clarity -= 0.4
     if cheap_cta_detected:
-        premium_feel -= 0.7
-        anti_commodity -= 0.5
+        premium_feel -= 0.8
+        anti_commodity -= 0.6
+        naturality -= 0.5
     if generic_phrase_detected:
-        brand_fit -= 0.5
+        brand_fit -= 0.6
+        anti_commodity -= 1.0
         naturality -= 0.7
+    if len(cta) > cta_limit:
+        clarity -= 0.8
+        premium_feel -= 0.5
+    if len(hook) > 120:
+        anti_commodity -= 0.3
+        premium_feel -= 0.4
+    if hidden_overflow_count > 0 and len(support_points) <= support_limit:
+        clarity += 0.2
 
     breakdown = {
         "brand_fit": round(max(0.0, min(10.0, brand_fit)), 2),
@@ -165,9 +191,12 @@ def evaluate_brand_dignity_score(
     if cheap_cta_detected:
         reasons.append("CTA vulgar ou pedinte")
         recommendations.append("substituir CTA por orientação mais sóbria")
-    if _support_signal(support_points):
+    if len(support_points) > support_limit:
         reasons.append("support points em excesso")
-        recommendations.append("reduzir support points para no máximo 3")
+        recommendations.append("reduzir support points visíveis")
+    if len(cta) > cta_limit:
+        reasons.append("CTA longa demais para o formato")
+        recommendations.append("encurtar CTA")
     if not premium_template_used:
         reasons.append("template premium não detectado")
         recommendations.append("usar template premium explícito")
@@ -181,6 +210,8 @@ def evaluate_brand_dignity_score(
 
     signals = {
         "headline_chars": len(headline),
+        "hook_chars": len(hook),
+        "body_chars": len(body),
         "cta_chars": len(cta),
         "support_points_count": len(support_points),
         "premium_template_used": premium_template_used,
@@ -188,6 +219,8 @@ def evaluate_brand_dignity_score(
         "cheap_cta_detected": cheap_cta_detected,
         "visual_score_seen": visual_score_seen,
         "hierarchy_score_seen": hierarchy_score_seen,
+        "hidden_overflow_count": hidden_overflow_count,
+        "format": strategic_format,
     }
 
     if not reasons:
@@ -210,31 +243,36 @@ def brand_dignity_score_examples() -> dict:
     premium = evaluate_brand_dignity_score(
         creative_plan={
             "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
-            "cta": "Salve para revisar antes da próxima decisão.",
-            "support_points": ["Clareza sem base vira intenção solta.", "Disciplina protege consistência."],
             "hook": "O problema raramente é falta de esforço.",
             "body": "Estrutura transforma intenção em direção real.",
+            "cta": "Salve para revisar antes da próxima decisão.",
+            "support_points": ["Clareza sem base vira intenção solta.", "Disciplina protege consistência."],
+            "format_recommendation": "image",
+            "compaction_report": {"hidden_overflow_count": 1},
         },
         visual_qa={"final_score": 84},
         hierarchy_gate={"final_score": 82},
-        template_meta={"premium_tier": "premium_core"},
+        template_meta={"premium_tier": "premium_core", "template_id": "hero_card_v1"},
     )
     borderline = evaluate_brand_dignity_score(
         creative_plan={
             "headline": "Você precisa ver isso agora.",
             "cta": "Salve se fez sentido.",
             "support_points": ["Mais foco.", "Mais resultado.", "Mais disciplina."],
+            "format_recommendation": "image",
         },
         visual_qa={"final_score": 79},
         hierarchy_gate={"final_score": 77},
-        template_meta={"premium_tier": "premium_core"},
+        template_meta={"premium_tier": "premium_core", "template_id": "hero_card_v1"},
     )
     commodity = evaluate_brand_dignity_score(
         creative_plan={
             "headline": "Descubra o segredo que ninguém te conta.",
+            "hook": "Isso muda tudo agora.",
+            "body": "Sua vida vai mudar agora.",
             "cta": "Comente aqui agora.",
             "support_points": ["Mais foco.", "Mais energia.", "Mais resultado.", "Mais motivação."],
-            "body": "Sua vida vai mudar agora.",
+            "format_recommendation": "image",
         },
         visual_qa={"final_score": 72},
         hierarchy_gate={"final_score": 70},
