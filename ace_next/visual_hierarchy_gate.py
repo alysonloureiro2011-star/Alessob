@@ -2,138 +2,340 @@ from __future__ import annotations
 
 from typing import Any
 
-from .visual_foundation_soberana_v1 import build_visual_foundation_soberana_v1
+
+FORMAT_LIMITS = {
+    "image": {
+        "minimum_score": 78,
+        "minimum_hierarchy": 7.5,
+        "minimum_legibility": 7.5,
+        "minimum_contrast": 7.0,
+        "minimum_spacing": 7.2,
+        "minimum_cognitive_load": 7.2,
+        "minimum_premium_feel": 7.5,
+        "headline_lines": 3,
+        "hook_lines": 2,
+        "body_lines": 3,
+        "cta_lines": 1,
+        "support_points_max": 2,
+    },
+    "carousel": {
+        "minimum_score": 78,
+        "minimum_hierarchy": 7.5,
+        "minimum_legibility": 7.5,
+        "minimum_contrast": 7.0,
+        "minimum_spacing": 7.2,
+        "minimum_cognitive_load": 7.2,
+        "minimum_premium_feel": 7.5,
+        "headline_lines": 3,
+        "hook_lines": 2,
+        "body_lines": 3,
+        "cta_lines": 1,
+        "support_points_max": 2,
+    },
+    "story": {
+        "minimum_score": 78,
+        "minimum_hierarchy": 7.5,
+        "minimum_legibility": 7.5,
+        "minimum_contrast": 7.0,
+        "minimum_spacing": 7.2,
+        "minimum_cognitive_load": 7.2,
+        "minimum_premium_feel": 7.5,
+        "headline_lines": 3,
+        "hook_lines": 2,
+        "body_lines": 3,
+        "cta_lines": 2,
+        "support_points_max": 1,
+    },
+}
 
 
-def _bounded(value: float) -> float:
-    return max(0.0, min(round(value, 2), 10.0))
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _normalize_format(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"story", "stories"}:
+        return "story"
+    if normalized in {"carousel", "image"}:
+        return normalized
+    return "image"
+
+
+def _line_estimate(text: str, chars_per_line: int) -> int:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return 0
+    return max(1, (len(cleaned) + chars_per_line - 1) // chars_per_line)
+
+
+def _chars_per_line_estimate(format_name: str, field: str) -> int:
+    if format_name == "story":
+        return {"headline": 24, "hook": 34, "body": 40, "cta": 26}.get(field, 34)
+    if format_name == "carousel":
+        return {"headline": 28, "hook": 36, "body": 42, "cta": 28}.get(field, 36)
+    return {"headline": 28, "hook": 36, "body": 46, "cta": 34}.get(field, 36)
+
+
+def _redundancy_ratio(parts: list[str]) -> float:
+    cleaned = [_clean_text(part).lower() for part in parts if _clean_text(part)]
+    if len(cleaned) < 2:
+        return 0.0
+    unique_words = set()
+    total_words = 0
+    for part in cleaned:
+        words = [word for word in part.split() if word]
+        total_words += len(words)
+        unique_words.update(words)
+    if total_words == 0:
+        return 0.0
+    return round(1.0 - (len(unique_words) / total_words), 2)
+
+
+def _score_hierarchy(metrics: dict[str, Any], limits: dict[str, Any], has_block_order: bool) -> float:
+    score = 8.8
+    if not has_block_order:
+        score -= 0.7
+    if metrics["headline_lines"] > limits["headline_lines"]:
+        score -= 1.2
+    if metrics["hook_lines"] > limits["hook_lines"]:
+        score -= 0.9
+    if metrics["cta_lines"] > limits["cta_lines"]:
+        score -= 0.8
+    if metrics["support_points_count"] > limits["support_points_max"]:
+        score -= 0.7
+    return max(0.0, min(10.0, round(score, 2)))
+
+
+def _score_legibility(metrics: dict[str, Any], limits: dict[str, Any]) -> float:
+    score = 8.9
+    if metrics["headline_lines"] > limits["headline_lines"]:
+        score -= 1.0
+    if metrics["body_lines"] > limits["body_lines"]:
+        score -= 1.1
+    if metrics["cta_lines"] > limits["cta_lines"]:
+        score -= 0.7
+    if metrics["headline_chars"] > 92:
+        score -= 0.4
+    return max(0.0, min(10.0, round(score, 2)))
+
+
+def _score_contrast(template_meta: dict[str, Any], brand_system: dict[str, Any]) -> float:
+    score = 7.2
+    if brand_system.get("text_contrast_policy"):
+        score += 0.6
+    if template_meta.get("premium_tier"):
+        score += 0.5
+    if template_meta.get("html_ready") is True:
+        score += 0.3
+    return max(0.0, min(10.0, round(score, 2)))
+
+
+def _score_spacing(metrics: dict[str, Any], limits: dict[str, Any]) -> float:
+    score = 8.6
+    if metrics["support_points_count"] > limits["support_points_max"]:
+        score -= 1.1
+    if metrics["body_lines"] > limits["body_lines"]:
+        score -= 0.9
+    if metrics["headline_lines"] + metrics["hook_lines"] + metrics["body_lines"] > 8:
+        score -= 0.8
+    return max(0.0, min(10.0, round(score, 2)))
+
+
+def _score_cognitive_load(metrics: dict[str, Any], limits: dict[str, Any]) -> float:
+    score = 8.7
+    if metrics["redundancy_ratio"] > 0.45:
+        score -= 1.0
+    if metrics["density_signal"] == "high":
+        score -= 1.2
+    if metrics["support_points_count"] > limits["support_points_max"]:
+        score -= 0.8
+    if metrics["body_lines"] > limits["body_lines"]:
+        score -= 0.8
+    return max(0.0, min(10.0, round(score, 2)))
+
+
+def _score_premium_feel(payload: dict[str, Any], template_meta: dict[str, Any], metrics: dict[str, Any]) -> float:
+    text = " ".join(
+        [
+            _clean_text(payload.get("headline")),
+            _clean_text(payload.get("hook")),
+            _clean_text(payload.get("body")),
+            _clean_text(payload.get("cta")),
+        ]
+    ).lower()
+
+    score = 8.5
+    if template_meta.get("premium_tier"):
+        score += 0.4
+    if any(token in text for token in {"segredo", "ninguém te conta", "ninguem te conta", "comente aqui", "corre"}):
+        score -= 1.4
+    if metrics["support_points_count"] > 2:
+        score -= 0.8
+    if metrics["density_signal"] == "high":
+        score -= 0.7
+    return max(0.0, min(10.0, round(score, 2)))
 
 
 def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
-    contract = dict(contract or {})
-    brand_system = dict(contract.get("brand_system") or {})
-    template_spec = dict(contract.get("template_spec") or {})
-    layout_payload = dict(contract.get("layout_payload") or {})
-    gate_payload = dict(contract.get("gate_payload") or {})
-    display_payload = dict(layout_payload.get("display_payload") or {})
-    computed_lines = dict(gate_payload.get("computed_line_estimates") or {})
-    line_expectations = dict(gate_payload.get("line_expectations") or {})
-    thresholds = dict(gate_payload.get("minimum_scores") or {})
+    contract = _safe_dict(contract)
+    brand_system = _safe_dict(contract.get("brand_system"))
+    template_spec = _safe_dict(contract.get("template_spec"))
+    layout_payload = _safe_dict(contract.get("layout_payload"))
+    gate_payload = _safe_dict(contract.get("gate_payload"))
+    display_payload = _safe_dict(layout_payload.get("display_payload"))
 
-    failed_floors: list[str] = []
-    rejection_reasons: list[str] = []
-    recommendations: list[str] = []
+    format_name = _normalize_format(
+        gate_payload.get("format")
+        or display_payload.get("format")
+        or template_spec.get("strategic_format")
+    )
+    base_limits = dict(FORMAT_LIMITS[format_name])
+    custom_mins = _safe_dict(gate_payload.get("minimum_scores"))
+    limits = {
+        **base_limits,
+        "minimum_score": int(custom_mins.get("minimum_score", base_limits["minimum_score"])),
+        "minimum_hierarchy": float(custom_mins.get("hierarchy", base_limits["minimum_hierarchy"])),
+        "minimum_legibility": float(custom_mins.get("legibility", base_limits["minimum_legibility"])),
+        "minimum_contrast": float(custom_mins.get("contrast", base_limits["minimum_contrast"])),
+        "minimum_spacing": float(custom_mins.get("spacing", base_limits["minimum_spacing"])),
+        "minimum_cognitive_load": float(custom_mins.get("cognitive_load", base_limits["minimum_cognitive_load"])),
+        "minimum_premium_feel": float(custom_mins.get("premium_feel", base_limits["minimum_premium_feel"])),
+    }
 
-    anti_generic_rules = list((brand_system.get("brand_dignity_constraints") or {}).get("anti_generic_identity_rules") or [])
-    template_id = str(template_spec.get("template_id") or "")
+    support_points = display_payload.get("support_points")
+    if not isinstance(support_points, list):
+        support_points = []
 
-    headline_lines = int(computed_lines.get("headline_lines") or 0)
-    hook_lines = int(computed_lines.get("hook_lines") or 0)
-    body_lines = int(computed_lines.get("body_lines") or 0)
-    cta_lines = int(computed_lines.get("cta_lines") or 0)
-    support_points_count = len(display_payload.get("support_points") or [])
+    metrics = {
+        "headline_chars": len(_clean_text(display_payload.get("headline"))),
+        "hook_chars": len(_clean_text(display_payload.get("hook"))),
+        "body_chars": len(_clean_text(display_payload.get("body"))),
+        "cta_chars": len(_clean_text(display_payload.get("cta"))),
+        "support_points_count": len([x for x in support_points if _clean_text(x)]),
+        "estimated_headline_lines": _line_estimate(display_payload.get("headline"), _chars_per_line_estimate(format_name, "headline")),
+        "estimated_hook_lines": _line_estimate(display_payload.get("hook"), _chars_per_line_estimate(format_name, "hook")),
+        "estimated_body_lines": _line_estimate(display_payload.get("body"), _chars_per_line_estimate(format_name, "body")),
+        "estimated_cta_lines": _line_estimate(display_payload.get("cta"), _chars_per_line_estimate(format_name, "cta")),
+        "redundancy_ratio": _redundancy_ratio(
+            [
+                display_payload.get("headline"),
+                display_payload.get("hook"),
+                display_payload.get("body"),
+                *support_points,
+                display_payload.get("cta"),
+            ]
+        ),
+        "density_signal": "low",
+        "format": format_name,
+        "template_id": template_spec.get("template_id"),
+    }
 
-    brand_dignity_score = 5.8
-    if "premium" in template_id:
-        brand_dignity_score += 1.1
-    if anti_generic_rules:
-        brand_dignity_score += 1.0
-    if "template barato" not in " ".join(anti_generic_rules).lower():
-        brand_dignity_score += 0.4
-    if headline_lines <= 3 and hook_lines <= 2:
-        brand_dignity_score += 0.7
-    brand_dignity_score = _bounded(brand_dignity_score)
+    metrics["headline_lines"] = metrics["estimated_headline_lines"]
+    metrics["hook_lines"] = metrics["estimated_hook_lines"]
+    metrics["body_lines"] = metrics["estimated_body_lines"]
+    metrics["cta_lines"] = metrics["estimated_cta_lines"]
 
-    contrast_score = 7.8
-    if brand_system.get("text_contrast_policy"):
-        contrast_score += 0.6
-    if display_payload.get("headline") and display_payload.get("hook"):
-        contrast_score += 0.3
-    contrast_score = _bounded(contrast_score)
+    total_lines = metrics["headline_lines"] + metrics["hook_lines"] + metrics["body_lines"] + metrics["cta_lines"]
+    if total_lines >= 10 or metrics["support_points_count"] > limits["support_points_max"]:
+        metrics["density_signal"] = "high"
+    elif total_lines >= 7:
+        metrics["density_signal"] = "medium"
 
-    composition_score = 5.8
-    if template_spec.get("block_order"):
-        composition_score += 1.0
-    if headline_lines <= 3:
-        composition_score += 1.0
-    if body_lines <= 3:
-        composition_score += 1.0
-    if support_points_count <= 2:
-        composition_score += 0.7
-    composition_score = _bounded(composition_score)
+    has_block_order = bool(template_spec.get("block_order"))
 
-    legibility_score = 5.8
-    if headline_lines <= int(line_expectations.get("headline_lines", 3)):
-        legibility_score += 1.2
-    if hook_lines <= int(line_expectations.get("hook_lines", 2)):
-        legibility_score += 1.1
-    if body_lines <= int(line_expectations.get("body_lines", 3)):
-        legibility_score += 1.0
-    if cta_lines <= int(line_expectations.get("cta_lines", 1)):
-        legibility_score += 0.8
-    legibility_score = _bounded(legibility_score)
+    hierarchy = _score_hierarchy(metrics, limits, has_block_order)
+    legibility = _score_legibility(metrics, limits)
+    contrast = _score_contrast(template_spec, brand_system)
+    spacing = _score_spacing(metrics, limits)
+    cognitive_load = _score_cognitive_load(metrics, limits)
+    premium_feel = _score_premium_feel(display_payload, template_spec, metrics)
 
-    hierarchy_score = 5.8
-    if template_spec.get("block_order") == ["eyebrow", "headline", "hook", "body", "support", "cta"]:
-        hierarchy_score += 1.2
-    elif template_spec.get("block_order"):
-        hierarchy_score += 0.9
-    if display_payload.get("headline") and display_payload.get("cta"):
-        hierarchy_score += 0.8
-    if headline_lines <= 3 and cta_lines <= 1:
-        hierarchy_score += 1.0
-    hierarchy_score = _bounded(hierarchy_score)
-
-    noise_control_score = 5.6
-    if support_points_count <= 2:
-        noise_control_score += 1.4
-    if body_lines <= 3:
-        noise_control_score += 1.0
-    if cta_lines <= 1:
-        noise_control_score += 1.0
-    if headline_lines <= 3 and hook_lines <= 2:
-        noise_control_score += 0.8
-    noise_control_score = _bounded(noise_control_score)
+    composition_score = round((hierarchy + spacing) / 2.0, 2)
+    noise_control_score = cognitive_load
+    brand_dignity_score = premium_feel
 
     breakdown = {
+        "hierarchy": hierarchy,
+        "legibility": legibility,
+        "contrast": contrast,
+        "spacing": spacing,
+        "cognitive_load": cognitive_load,
+        "premium_feel": premium_feel,
         "brand_dignity_score": brand_dignity_score,
-        "contrast_score": contrast_score,
+        "contrast_score": contrast,
         "composition_score": composition_score,
-        "legibility_score": legibility_score,
-        "hierarchy_score": hierarchy_score,
+        "legibility_score": legibility,
+        "hierarchy_score": hierarchy,
         "noise_control_score": noise_control_score,
     }
 
-    for key, minimum in thresholds.items():
-        if breakdown.get(key, 0) < float(minimum):
-            failed_floors.append(key)
+    final_score = round(
+        (
+            hierarchy * 0.22
+            + legibility * 0.22
+            + contrast * 0.14
+            + spacing * 0.14
+            + cognitive_load * 0.14
+            + premium_feel * 0.14
+        )
+        * 10,
+        2,
+    )
 
-    if headline_lines > int(line_expectations.get("headline_lines", 3)):
+    failed_floors: list[str] = []
+    if hierarchy < limits["minimum_hierarchy"]:
+        failed_floors.append("hierarchy")
+    if legibility < limits["minimum_legibility"]:
+        failed_floors.append("legibility")
+    if contrast < limits["minimum_contrast"]:
+        failed_floors.append("contrast")
+    if spacing < limits["minimum_spacing"]:
+        failed_floors.append("spacing")
+    if cognitive_load < limits["minimum_cognitive_load"]:
+        failed_floors.append("cognitive_load")
+    if premium_feel < limits["minimum_premium_feel"]:
+        failed_floors.append("premium_feel")
+    if final_score < limits["minimum_score"]:
+        failed_floors.append("minimum_score")
+
+    rejection_reasons: list[str] = []
+    recommendations: list[str] = []
+
+    if metrics["headline_lines"] > limits["headline_lines"]:
         rejection_reasons.append("headline excedeu o line budget")
-        recommendations.append("encurtar headline e remover pressão tipográfica")
-
-    if hook_lines > int(line_expectations.get("hook_lines", 2)):
+        recommendations.append("reduzir headline")
+    if metrics["hook_lines"] > limits["hook_lines"]:
         rejection_reasons.append("hook excedeu o line budget")
-        recommendations.append("reduzir hook para contraste curto e mais claro")
-
-    if body_lines > int(line_expectations.get("body_lines", 3)):
+        recommendations.append("encurtar hook")
+    if metrics["body_lines"] > limits["body_lines"]:
         rejection_reasons.append("body excedeu o line budget")
-        recommendations.append("cortar explicação excessiva e preservar só a espinha semântica")
-
-    if cta_lines > int(line_expectations.get("cta_lines", 1)):
+        recommendations.append("baixar densidade do body")
+    if metrics["cta_lines"] > limits["cta_lines"]:
         rejection_reasons.append("CTA longo demais para peça premium")
-        recommendations.append("mover densidade para legenda e manter CTA curto dentro da peça")
-
-    if support_points_count > 2:
+        recommendations.append("encurtar CTA")
+    if metrics["support_points_count"] > limits["support_points_max"]:
         rejection_reasons.append("support points em excesso")
-        recommendations.append("manter no máximo dois supports visíveis")
+        recommendations.append("reduzir support points")
+    if metrics["redundancy_ratio"] > 0.45:
+        rejection_reasons.append("redundância textual elevada")
+        recommendations.append("separar melhor hook e body")
+    if metrics["density_signal"] == "high":
+        rejection_reasons.append("densidade cognitiva alta")
+        recommendations.append("baixar densidade cognitiva")
 
-    if brand_dignity_score < thresholds.get("brand_dignity_score", 8.0):
-        rejection_reasons.append("a peça ainda não sustenta dignidade visual soberana")
-        recommendations.append("reduzir aparência de template e reforçar identidade premium")
-
-    approved = len(failed_floors) == 0 and len(rejection_reasons) == 0
-    final_score = round((sum(breakdown.values()) / len(breakdown)) * 10, 2)
+    approved = len(failed_floors) == 0
 
     if approved and not rejection_reasons:
         rejection_reasons.append("visual dentro do piso soberano para fundação premium")
@@ -142,61 +344,55 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "approved": approved,
         "final_score": final_score,
+        "minimum_score": limits["minimum_score"],
         "breakdown": breakdown,
         "failed_floors": failed_floors,
         "rejection_reasons": rejection_reasons,
         "recommendations": recommendations,
         "brand_dignity_score": brand_dignity_score,
-        "contrast_score": contrast_score,
+        "contrast_score": contrast,
         "composition_score": composition_score,
-        "legibility_score": legibility_score,
-        "hierarchy_score": hierarchy_score,
+        "legibility_score": legibility,
+        "hierarchy_score": hierarchy,
         "noise_control_score": noise_control_score,
-        "metrics": {
-            "headline_lines": headline_lines,
-            "hook_lines": hook_lines,
-            "body_lines": body_lines,
-            "cta_lines": cta_lines,
-            "support_points_count": support_points_count,
-            "template_id": template_id,
-        },
+        "metrics": metrics,
+        "contract": limits,
     }
 
 
 def visual_hierarchy_gate_examples() -> dict[str, Any]:
-    approved_payload = build_visual_foundation_soberana_v1(
-        {
-            "topic_seed": "clareza, disciplina e direção",
-            "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
-            "hook": "O problema raramente é falta de esforço. Quase sempre é mover muito sem critério suficiente.",
-            "body": "Quando estrutura entra, intenção deixa de depender do humor do dia e a execução passa a responder a processo.",
-            "support_points": [
-                "Clareza sem base vira intenção solta.",
-                "Disciplina protege consistência quando o entusiasmo cai.",
-            ],
-            "cta": "Salve para revisar antes da próxima decisão.",
-            "format_recommendation": "image",
-            "series_name": "Liberta a Verdade",
-        }
-    )
-    rejected_payload = build_visual_foundation_soberana_v1(
-        {
-            "topic_seed": "motivação",
-            "headline": "Acredite em você e tudo vai mudar hoje mesmo agora para sempre",
-            "hook": "Descubra o segredo antes que seja tarde porque ninguém te conta isso e tudo pode ser diferente agora",
-            "body": "Sua vida pode mudar. Basta querer. Compartilhe com todo mundo porque esse conteúdo é imperdível e viral.",
-            "support_points": [
-                "Mais foco.",
-                "Mais resultado.",
-                "Mais energia.",
-            ],
-            "cta": "Comente aqui agora",
-            "format_recommendation": "image",
-            "series_name": "Liberta a Verdade",
-        }
-    )
+    approved_payload = {
+        "brand_system": {"text_contrast_policy": "premium_high_contrast"},
+        "template_spec": {"template_id": "hero_card_v1", "premium_tier": "premium_core", "block_order": ["eyebrow", "headline", "hook", "body", "support_points", "cta"]},
+        "layout_payload": {
+            "display_payload": {
+                "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
+                "hook": "O problema raramente é falta de esforço.",
+                "body": "Quando estrutura entra, intenção deixa de depender do humor do dia.",
+                "cta": "Salve para revisar.",
+                "support_points": ["Clareza sem base vira intenção solta.", "Disciplina protege consistência."],
+                "format": "image",
+            }
+        },
+        "gate_payload": {"format": "image"},
+    }
+    blocked_payload = {
+        "brand_system": {"text_contrast_policy": "premium_high_contrast"},
+        "template_spec": {"template_id": "hero_card_v1", "premium_tier": "premium_core", "block_order": ["eyebrow", "headline", "hook", "body", "support_points", "cta"]},
+        "layout_payload": {
+            "display_payload": {
+                "headline": "Descubra o segredo que ninguém te conta sobre como mudar tudo agora mesmo",
+                "hook": "Você precisa ver isso antes que seja tarde demais porque realmente muda tudo",
+                "body": "Esse texto está denso demais e tenta carregar explicação, tensão, promessa e CTA ao mesmo tempo, o que derruba a legibilidade.",
+                "cta": "Comente aqui agora para eu te mandar mais",
+                "support_points": ["Mais foco.", "Mais energia.", "Mais resultado."],
+                "format": "image",
+            }
+        },
+        "gate_payload": {"format": "image"},
+    }
     return {
         "ok": True,
         "approved_example": evaluate_visual_hierarchy_gate(approved_payload),
-        "rejected_example": evaluate_visual_hierarchy_gate(rejected_payload),
+        "blocked_example": evaluate_visual_hierarchy_gate(blocked_payload),
     }
