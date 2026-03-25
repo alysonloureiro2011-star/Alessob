@@ -15,12 +15,14 @@ def _story_safe_zone_contract(visual_contract: dict[str, Any] | None = None) -> 
         "safe_zone_top": int(visual_contract.get("safe_zone_top", 140)),
         "safe_zone_bottom": int(visual_contract.get("safe_zone_bottom", 220)),
         "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 62)),
+        "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 90)),
         "body_chars_budget": int(visual_contract.get("body_chars_budget", 120)),
         "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 42)),
         "headline_max_lines": int(visual_contract.get("headline_max_lines", 3)),
         "hook_max_lines": int(visual_contract.get("hook_max_lines", 2)),
         "body_max_lines": int(visual_contract.get("body_max_lines", 3)),
         "cta_max_lines": int(visual_contract.get("cta_max_lines", 2)),
+        "support_points_max": int(visual_contract.get("support_points_max", 1)),
     }
 
 
@@ -35,39 +37,42 @@ def _story_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
         support_points = []
     support_points = [str(x or "").strip() for x in support_points if str(x or "").strip()]
 
-    frames = [
+    return [
         {
             "index": 1,
             "role": "hook_frame",
-            "headline": headline[:62],
-            "hook": hook[:96],
+            "headline": headline,
+            "hook": hook,
             "body": "",
             "cta": "",
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "story",
         },
         {
             "index": 2,
             "role": "thesis_frame",
             "headline": "A tese",
             "hook": "",
-            "body": body[:120],
+            "body": body,
             "cta": "",
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "story",
         },
         {
             "index": 3,
             "role": "support_frame",
             "headline": "O suporte",
             "hook": "",
-            "body": (support_points[0] if support_points else body[:100]),
+            "body": support_points[0] if support_points else body,
             "cta": "",
             "support_points": support_points[1:2],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "story",
         },
         {
             "index": 4,
@@ -75,13 +80,13 @@ def _story_payloads_from_plan(creative_plan: dict[str, Any]) -> list[dict[str, A
             "headline": "Continua.",
             "hook": "",
             "body": "A sequência só faz sentido quando cada frame carrega uma ideia central.",
-            "cta": cta[:42],
+            "cta": cta,
             "support_points": [],
             "series_name": plan.get("series_name") or "Liberta a Verdade",
             "topic_seed": plan.get("topic_seed") or headline,
+            "format_recommendation": "story",
         },
     ]
-    return frames
 
 
 def _render_frame(
@@ -92,10 +97,12 @@ def _render_frame(
     capture_mode: str = "safe",
 ) -> dict[str, Any]:
     try:
+        from .visual_payload_compactor import compact_visual_payload
         from .visual_premium_bridge import build_visual_premium_bridge
 
+        compacted = compact_visual_payload(frame_payload, strategic_format="story")
         return build_visual_premium_bridge(
-            creative_plan=frame_payload,
+            creative_plan=compacted,
             visual_identity=visual_identity,
             visual_contract=visual_contract,
             strategic_format="story",
@@ -124,6 +131,7 @@ def _validate_story_density(frames: list[dict[str, Any]]) -> dict[str, Any]:
         "headline_budget_ok": True,
         "body_budget_ok": True,
         "cta_budget_ok": True,
+        "support_budget_ok": True,
     }
 
     for frame in frames:
@@ -133,6 +141,8 @@ def _validate_story_density(frames: list[dict[str, Any]]) -> dict[str, Any]:
             checks["body_budget_ok"] = False
         if len(str(frame.get("cta") or "")) > 42:
             checks["cta_budget_ok"] = False
+        if len(frame.get("support_points") or []) > 1:
+            checks["support_budget_ok"] = False
 
     checks["approved"] = all(checks.values())
     return checks
