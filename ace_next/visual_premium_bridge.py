@@ -47,10 +47,10 @@ def _default_visual_contract(
             "mobile_first": bool(visual_contract.get("mobile_first", True)),
             "safe_zone_top": int(visual_contract.get("safe_zone_top", 140)),
             "safe_zone_bottom": int(visual_contract.get("safe_zone_bottom", 220)),
-            "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 62)),
-            "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 90)),
-            "body_chars_budget": int(visual_contract.get("body_chars_budget", 120)),
-            "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 42)),
+            "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 56)),
+            "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 72)),
+            "body_chars_budget": int(visual_contract.get("body_chars_budget", 90)),
+            "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 32)),
             "headline_max_lines": int(visual_contract.get("headline_max_lines", 3)),
             "hook_max_lines": int(visual_contract.get("hook_max_lines", 2)),
             "body_max_lines": int(visual_contract.get("body_max_lines", 3)),
@@ -64,10 +64,10 @@ def _default_visual_contract(
             "mobile_first": bool(visual_contract.get("mobile_first", True)),
             "safe_zone_top": int(visual_contract.get("safe_zone_top", 56)),
             "safe_zone_bottom": int(visual_contract.get("safe_zone_bottom", 56)),
-            "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 72)),
-            "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 100)),
-            "body_chars_budget": int(visual_contract.get("body_chars_budget", 160)),
-            "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 44)),
+            "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 56)),
+            "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 72)),
+            "body_chars_budget": int(visual_contract.get("body_chars_budget", 90)),
+            "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 36)),
             "headline_max_lines": int(visual_contract.get("headline_max_lines", 3)),
             "hook_max_lines": int(visual_contract.get("hook_max_lines", 2)),
             "body_max_lines": int(visual_contract.get("body_max_lines", 3)),
@@ -80,10 +80,10 @@ def _default_visual_contract(
         "mobile_first": bool(visual_contract.get("mobile_first", True)),
         "safe_zone_top": int(visual_contract.get("safe_zone_top", 56)),
         "safe_zone_bottom": int(visual_contract.get("safe_zone_bottom", 56)),
-        "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 84)),
-        "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 120)),
-        "body_chars_budget": int(visual_contract.get("body_chars_budget", 210)),
-        "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 48)),
+        "headline_chars_budget": int(visual_contract.get("headline_chars_budget", 62)),
+        "hook_chars_budget": int(visual_contract.get("hook_chars_budget", 90)),
+        "body_chars_budget": int(visual_contract.get("body_chars_budget", 120)),
+        "cta_chars_budget": int(visual_contract.get("cta_chars_budget", 42)),
         "headline_max_lines": int(visual_contract.get("headline_max_lines", 3)),
         "hook_max_lines": int(visual_contract.get("hook_max_lines", 2)),
         "body_max_lines": int(visual_contract.get("body_max_lines", 3)),
@@ -103,6 +103,13 @@ def _merge_reasons(*items: Any) -> list[str]:
     return merged
 
 
+def _enabled(strategic_format: str) -> bool:
+    raw = os.environ.get("ACE_ENABLE_PREMIUM_VISUAL_BRIDGE")
+    if raw is None:
+        return strategic_format in {"image", "carousel", "story"}
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _disabled_bundle(strategic_format: str) -> dict[str, Any]:
     return {
         "ok": True,
@@ -116,8 +123,9 @@ def _disabled_bundle(strategic_format: str) -> dict[str, Any]:
         "approved_for_premium_visual": False,
         "selected_template_id": None,
         "premium_render_state": None,
-        "compacted_payload": {},
-        "compaction_report": {},
+        "hardening_applied": False,
+        "hardened_template_candidate": None,
+        "hardened_visible_payload": {},
         "reasons": ["premium_visual_bridge_disabled"],
     }
 
@@ -135,23 +143,11 @@ def _failure_bundle(strategic_format: str, reasons: list[str]) -> dict[str, Any]
         "approved_for_premium_visual": False,
         "selected_template_id": None,
         "premium_render_state": None,
-        "compacted_payload": {},
-        "compaction_report": {},
+        "hardening_applied": False,
+        "hardened_template_candidate": None,
+        "hardened_visible_payload": {},
         "reasons": _merge_reasons(reasons),
     }
-
-
-def _enabled(strategic_format: str) -> bool:
-    raw = os.environ.get("ACE_ENABLE_PREMIUM_VISUAL_BRIDGE")
-    if raw is None:
-        return strategic_format in {"image", "carousel", "story"}
-
-    normalized = str(raw).strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return strategic_format in {"image", "carousel", "story"}
 
 
 def _line_estimate(text: Any, chars_per_line: int) -> int:
@@ -169,10 +165,9 @@ def _infer_use_case(plan: dict[str, Any]) -> str | None:
             str(plan.get("hook") or ""),
         ]
     ).lower()
-
     if any(token in joined for token in {"erro", "equívoco", "equivoco", "contraste", "correção", "correcao"}):
         return "contrast"
-    if len(str(plan.get("headline") or "")) >= 60:
+    if len(str(plan.get("headline") or "")) >= 48:
         return "hero"
     return "insight"
 
@@ -180,9 +175,9 @@ def _infer_use_case(plan: dict[str, Any]) -> str | None:
 def _infer_density(plan: dict[str, Any]) -> str | None:
     body_len = len(str(plan.get("body") or ""))
     support_count = len(plan.get("support_points") or []) if isinstance(plan.get("support_points"), list) else 0
-    if body_len <= 120 and support_count <= 1:
+    if body_len <= 90 and support_count <= 1:
         return "light"
-    if body_len >= 220 or support_count >= 3:
+    if body_len >= 140 or support_count >= 3:
         return "dense"
     return "balanced"
 
@@ -213,7 +208,10 @@ def _hierarchy_contract(
                 ]
             },
         },
-        "template_spec": template_meta,
+        "template_spec": {
+            **template_meta,
+            "strategic_format": strategic_format,
+        },
         "layout_payload": {
             "display_payload": {
                 "headline": headline,
@@ -229,8 +227,8 @@ def _hierarchy_contract(
             "computed_line_estimates": {
                 "headline_lines": _line_estimate(headline, 28),
                 "hook_lines": _line_estimate(hook, 36),
-                "body_lines": _line_estimate(body, 46),
-                "cta_lines": _line_estimate(cta, 34),
+                "body_lines": _line_estimate(body, 42),
+                "cta_lines": _line_estimate(cta, 28),
             },
             "line_expectations": {
                 "headline_lines": int(visual_contract.get("headline_max_lines", 3)),
@@ -274,9 +272,9 @@ def build_visual_premium_bridge(
 
     try:
         from .brand_dignity_score import evaluate_brand_dignity_score
+        from .editorial_staging_hardener import harden_winner_for_staging
         from .render_visual_premium import render_visual_premium
         from .visual_hierarchy_gate import evaluate_visual_hierarchy_gate
-        from .visual_payload_compactor import compact_visual_payload
         from .visual_templates_premium import resolve_premium_visual_template
     except Exception as exc:
         return _failure_bundle(
@@ -287,25 +285,26 @@ def build_visual_premium_bridge(
     try:
         identity = _default_visual_identity(visual_identity)
         contract = _default_visual_contract(visual_contract, strategic_format)
-        compacted = compact_visual_payload(plan, strategic_format=strategic_format)
+        hardener = harden_winner_for_staging(plan, strategic_format=strategic_format)
+        visible_plan = _safe_dict(hardener.get("hardened_payload")) or plan
 
         template = resolve_premium_visual_template(
             template_id=template_id,
-            use_case=_infer_use_case(compacted),
-            density=_infer_density(compacted),
+            use_case=_infer_use_case(visible_plan),
+            density=_infer_density(visible_plan),
             strategic_format=strategic_format,
         )
 
         selected_template_id = template.get("template_id")
         render = render_visual_premium(
-            creative_plan=compacted,
+            creative_plan=visible_plan,
             visual_identity=identity,
             visual_contract=contract,
             template_id=selected_template_id,
             capture_mode=capture_mode,
         )
 
-        render_payload = _safe_dict(render.get("payload")) or compacted
+        render_payload = _safe_dict(render.get("payload")) or visible_plan
         hierarchy_gate = evaluate_visual_hierarchy_gate(
             _hierarchy_contract(
                 render_payload=render_payload,
@@ -316,7 +315,7 @@ def build_visual_premium_bridge(
         )
 
         brand_dignity_score = evaluate_brand_dignity_score(
-            creative_plan={**compacted, **render_payload},
+            creative_plan=render_payload,
             visual_qa={"final_score": hierarchy_gate.get("final_score")},
             hierarchy_gate=hierarchy_gate,
             template_meta=template,
@@ -350,8 +349,11 @@ def build_visual_premium_bridge(
             "approved_for_premium_visual": approved,
             "selected_template_id": selected_template_id,
             "premium_render_state": render.get("render_state"),
-            "compacted_payload": compacted,
-            "compaction_report": compacted.get("compaction_report", {}),
+            "hardening_applied": True,
+            "hardened_template_candidate": selected_template_id,
+            "hardened_visible_payload": render_payload,
+            "hardening_report": _safe_dict(hardener.get("hardening_report")),
+            "hidden_overflow_for_caption": hardener.get("hidden_overflow_for_caption", []),
             "reasons": reasons,
         }
     except Exception as exc:
