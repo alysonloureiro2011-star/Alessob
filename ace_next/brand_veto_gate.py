@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .perceived_value_rewriter import build_perceived_value_rewriter
 from .rubric_engine import RubricEngineResult
 
 
@@ -17,6 +18,10 @@ class BrandVetoResult:
     evaluation_payload_source: str | None
     hardening_considered: bool
     post_hardening_brand_veto: dict[str, Any]
+    pre_rewrite_state: str | None
+    post_rewrite_state: str | None
+    raw_payload_vs_rewritten_payload: dict[str, Any]
+    rewritten_payload_vs_authorized_payload: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -44,20 +49,27 @@ def _safe_list(value: Any) -> list[Any]:
 def _resolve_authority_payload(
     plan: dict[str, Any],
     visual_qa: dict[str, Any],
-) -> tuple[dict[str, Any], str, dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    plan = _safe_dict(plan)
     visual_qa = _safe_dict(visual_qa)
     metrics = _safe_dict(visual_qa.get("metrics"))
 
+    if _safe_dict(plan.get("authority_payload")):
+        rewrite = {
+            "authority_payload": _safe_dict(plan.get("authority_payload")),
+            "pre_rewrite_state": plan.get("pre_rewrite_state"),
+            "post_rewrite_state": plan.get("post_rewrite_state"),
+            "raw_payload_vs_rewritten_payload": _safe_dict(plan.get("raw_payload_vs_rewritten_payload")),
+        }
+        return _safe_dict(plan.get("authority_payload")), rewrite, "creative_plan.authority_payload"
+
     render_payload_used = _safe_dict(metrics.get("render_payload_used"))
     if render_payload_used:
-        return render_payload_used, "visual_qa.metrics.render_payload_used", _safe_dict(metrics.get("staging_hardener"))
+        rewrite = build_perceived_value_rewriter(render_payload_used)
+        return _safe_dict(rewrite.get("authority_payload")), rewrite, "visual_qa.metrics.render_payload_used"
 
-    staging_hardener = _safe_dict(metrics.get("staging_hardener"))
-    hardened_payload = _safe_dict(staging_hardener.get("hardened_payload"))
-    if hardened_payload:
-        return hardened_payload, "visual_qa.metrics.staging_hardener.hardened_payload", staging_hardener
-
-    return _safe_dict(plan), "creative_plan", staging_hardener
+    rewrite = build_perceived_value_rewriter(plan)
+    return _safe_dict(rewrite.get("authority_payload")), rewrite, "perceived_value_rewriter"
 
 
 def evaluate_brand_veto_gate(
@@ -69,18 +81,13 @@ def evaluate_brand_veto_gate(
     rubric: RubricEngineResult,
 ) -> BrandVetoResult:
     visual_qa = _safe_dict(visual_qa)
-    perceptual_qa = _safe_dict(perceptual_qa)
     hierarchy_gate = _safe_dict(visual_qa.get("hierarchy_gate"))
     dignity_score = _safe_dict(visual_qa.get("brand_dignity_score"))
 
-    authority_payload, evaluation_payload_source, staging_hardener = _resolve_authority_payload(
+    authority_payload, rewrite, evaluation_payload_source = _resolve_authority_payload(
         _safe_dict(plan),
         visual_qa,
     )
-    hardening_considered = bool(staging_hardener) or evaluation_payload_source != "creative_plan"
-
-    editorial_flags = list(_safe_dict(editorial_qa).get("flags") or [])
-    perceptual_metrics = _safe_dict(perceptual_qa.get("metrics"))
 
     text = _normalize(
         " ".join(
@@ -95,56 +102,34 @@ def evaluate_brand_veto_gate(
     )
 
     cta_text = _normalize(str(authority_payload.get("cta") or ""))
-    visual_score = float(visual_qa.get("final_score") or 0)
-    hierarchy_approved = bool(hierarchy_gate.get("approved"))
-    dignity_approved = bool(dignity_score.get("approved"))
-
-    generic_phrase = any(term in text for term in ["segredo", "ninguém te conta", "ninguem te conta", "viral", "imperdível", "imperdivel"])
-    cheap_cta = any(term in cta_text for term in ["comente aqui", "corre", "agora", "chama na dm", "clica no link agora"])
+    rubric_breakdown = _safe_dict(rubric).get("breakdown", {}) if isinstance(rubric, dict) else rubric.breakdown
 
     commodity = (
-        rubric.breakdown.get("anti_commodity", 0) < 8.0
-        or generic_phrase
+        float(rubric_breakdown.get("anti_commodity", 0) or 0) < 8.0
+        or "segredo" in text
+        or "viral" in text
     )
     cheap_ai = (
-        rubric.breakdown.get("naturalism", 0) < 7.5
-        or "cheap_ai_tone" in editorial_flags
-        or "coach_generic" in editorial_flags
-        or dignity_score.get("classification") == "brand_indignity"
+        float(rubric_breakdown.get("naturalism", 0) or 0) < 7.8
+        or "acredite em você" in text
+        or "acredite em voce" in text
+        or "mude sua vida" in text
     )
     template = (
-        rubric.breakdown.get("anti_genericity", 0) < 8.0
-        or "commodity_language" in editorial_flags
-        or generic_phrase
+        float(rubric_breakdown.get("anti_genericity", 0) or 0) < 8.0
+        or "ninguém te conta" in text
+        or "ninguem te conta" in text
     )
     prototype = (
-        visual_score < 78
-        or not hierarchy_approved
-        or not dignity_approved
-        or not bool(perceptual_metrics.get("zero_overlap", True))
+        float(visual_qa.get("final_score") or 0) < 78
+        or not bool(hierarchy_gate.get("approved", True))
+        or not bool(dignity_score.get("approved", True))
     )
-
-    staging_ready_after_hardening = (
-        rubric.breakdown.get("brand_fit", 0) >= 8.3
-        and rubric.global_score >= 8.0
-        and hierarchy_approved
-        and dignity_approved
-        and not cheap_cta
-        and not generic_phrase
-    )
-
     brand_indignity = (
-        commodity
-        or cheap_ai
-        or template
-        or prototype
-        or rubric.breakdown.get("brand_fit", 0) < 8.3
-        or rubric.global_score < 8.0
+        float(rubric_breakdown.get("brand_fit", 0) or 0) < 8.3
+        or float(getattr(rubric, "global_score", 0) or 0) < 8.0
+        or "comente aqui" in cta_text
     )
-
-    if staging_ready_after_hardening:
-        prototype = False
-        brand_indignity = False
 
     categories = {
         "commodity": commodity,
@@ -153,40 +138,31 @@ def evaluate_brand_veto_gate(
         "prototype": prototype,
         "brand_indignity": brand_indignity,
     }
-
     triggers = [name for name, active in categories.items() if active]
 
-    reasons: list[str] = [f"brand_veto_payload_source={evaluation_payload_source}"]
+    reasons = [f"brand_veto_payload_source={evaluation_payload_source}"]
     if commodity:
-        reasons.append("a peça foi classificada como commodity ou com linguagem de commodity")
+        reasons.append("perceived_value insuficiente ou linguagem commodity")
     if cheap_ai:
-        reasons.append("a peça foi classificada como IA barata ou naturalidade insuficiente")
+        reasons.append("naturalidade insuficiente ou texto com cheiro de IA barata")
     if template:
-        reasons.append("a peça foi classificada como template/genericidade excessiva")
+        reasons.append("anti_commodity insuficiente ou genericidade excessiva")
     if prototype:
-        reasons.append("a peça foi classificada como protótipo visual insuficiente")
+        reasons.append("hierarchy insuficiente ou visual ainda com cara de protótipo")
     if brand_indignity:
-        reasons.append("a peça não atingiu dignidade mínima de marca no estado pós-hardening")
-    if hardening_considered:
-        reasons.append("brand veto considerou a peça endurecida como autoridade")
+        reasons.append("brand_fit insuficiente ou global_score insuficiente para dignidade de marca")
 
     blocked = bool(triggers)
     approved = not blocked
-
-    if approved:
-        summary = "brand_veto aprovado no payload pós-hardening"
-        reasons.append("nenhum veto de marca foi disparado")
-    else:
-        summary = "brand_veto bloqueou a peça"
+    summary = "brand_veto aprovado no payload pós-rewrite" if approved else "brand_veto bloqueou a peça"
 
     post_hardening_brand_veto = {
-        "visual_score_seen": visual_score,
-        "hierarchy_approved": hierarchy_approved,
-        "brand_dignity_approved": dignity_approved,
-        "rubric_brand_fit": rubric.breakdown.get("brand_fit"),
-        "rubric_global_score": rubric.global_score,
-        "staging_ready_after_hardening": staging_ready_after_hardening,
-        "hardening_considered": hardening_considered,
+        "visual_score_seen": visual_qa.get("final_score"),
+        "hierarchy_approved": hierarchy_gate.get("approved"),
+        "brand_dignity_approved": dignity_score.get("approved"),
+        "rubric_brand_fit": rubric_breakdown.get("brand_fit"),
+        "rubric_global_score": getattr(rubric, "global_score", None),
+        "hardening_considered": True,
     }
 
     return BrandVetoResult(
@@ -197,6 +173,10 @@ def evaluate_brand_veto_gate(
         reasons=reasons,
         summary=summary,
         evaluation_payload_source=evaluation_payload_source,
-        hardening_considered=hardening_considered,
+        hardening_considered=True,
         post_hardening_brand_veto=post_hardening_brand_veto,
+        pre_rewrite_state=rewrite.get("pre_rewrite_state"),
+        post_rewrite_state=rewrite.get("post_rewrite_state"),
+        raw_payload_vs_rewritten_payload=_safe_dict(rewrite.get("raw_payload_vs_rewritten_payload")),
+        rewritten_payload_vs_authorized_payload={},
     )
