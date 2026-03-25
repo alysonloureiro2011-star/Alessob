@@ -69,6 +69,18 @@ class CreativePlan:
     sequel_potential: str | None = None
     risk_flags: list[str] | None = None
     editorial_critic: dict[str, Any] | None = None
+    caption_gate: dict[str, Any] | None = None
+    continuation_candidate: bool | None = None
+    planner_version: str | None = None
+    planner_mode: str | None = None
+    deterministic: bool | None = None
+    deterministic_path: bool | None = None
+    perceived_value_hypothesis: str | None = None
+    timing_hypothesis: str | None = None
+    serial_continuity: dict[str, Any] | None = None
+    distribution_context: dict[str, Any] | None = None
+    fallback_flags: list[str] | None = None
+    official_path_quality_state: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -141,120 +153,6 @@ def _choose_color_profile(keywords: list[str]) -> str:
     return "editorial_violet"
 
 
-def _core_words(keywords: list[str]) -> tuple[str, str, str]:
-    primary = keywords[0] if len(keywords) > 0 else "clareza"
-    secondary = keywords[1] if len(keywords) > 1 else "disciplina"
-    tertiary = keywords[2] if len(keywords) > 2 else "direção"
-    return primary, secondary, tertiary
-
-
-def _editorial_blocks(topic: str, keywords: list[str]) -> dict[str, str | list[str]]:
-    family = _family(keywords)
-    primary, secondary, tertiary = _core_words(keywords)
-
-    if family == "faith":
-        objective = "transformar tema espiritual em mensagem clara, firme e aplicável"
-        angle = f"{topic} fica mais forte quando sai do impulso emocional e entra em convicção com prática diária."
-        hook = (
-            f"Muita gente deseja viver {primary}, mas continua no automático porque tenta sustentar isso sem {secondary}. "
-            f"A intenção existe, só que ainda falta estrutura para virar postura real."
-        )
-        headline = f"Sem {secondary}, até {primary} perde força no cotidiano."
-        body = (
-            f"Quando {primary} fica solta, ela vira emoção passageira. Quando {secondary} entra, a decisão ganha continuidade. "
-            f"E quando {tertiary} passa a conduzir a rotina, o tema deixa de ser discurso bonito e começa a organizar vida real."
-        )
-        support_points = [
-            f"{primary.capitalize()} sem prática vira só impulso.",
-            f"{secondary.capitalize()} sustenta convicção nos dias comuns.",
-            f"{tertiary.capitalize()} protege a decisão quando a emoção oscila.",
-        ]
-        cta = "Salve para reler depois e envie para alguém que precisa alinhar convicção com prática diária."
-    elif family == "emotion":
-        objective = "dar clareza emocional sem cair em linguagem terapêutica genérica"
-        angle = f"{topic} melhora quando a pessoa para de reagir no impulso e volta a organizar leitura, ritmo e resposta."
-        hook = (
-            f"Nem sempre o peso de {primary} é o problema principal. Muitas vezes o que piora tudo é atravessar isso sem {secondary}, "
-            f"como se toda pressão tivesse a mesma urgência."
-        )
-        headline = f"Sem {secondary}, {primary} toma conta do dia inteiro."
-        body = (
-            f"Sem {secondary}, qualquer ruído parece ameaça. Com {tertiary}, a mente volta a enxergar prioridade antes da resposta. "
-            f"O efeito não é perfeição instantânea. É menos desgaste, mais domínio interno e uma leitura muito mais lúcida do que realmente importa."
-        )
-        support_points = [
-            f"{secondary.capitalize()} reduz reação automática.",
-            f"{tertiary.capitalize()} devolve leitura antes da resposta.",
-            f"{primary.capitalize()} perde força quando o eixo interno volta ao lugar.",
-        ]
-        cta = "Salve para usar como lembrete de eixo e mande para quem precisa recuperar clareza hoje."
-    elif family == "prosperity":
-        objective = "elevar valor percebido com linguagem de construção, processo e maturidade"
-        angle = f"{topic} não cresce bem com ansiedade desorganizada. Cresce melhor com leitura, consistência e execução repetível."
-        hook = (
-            f"O travamento quase nunca está na falta de vontade. Na maioria das vezes ele nasce de buscar {primary} sem construir {secondary}, "
-            f"como se desejo já fosse base suficiente para sustentar resultado."
-        )
-        headline = f"Sem {secondary}, {primary} vira só expectativa."
-        body = (
-            f"Resultado responde melhor a processo do que a pressa. Quando {secondary} sustenta a base e {tertiary} organiza prioridade, "
-            f"o tema deixa de soar abstrato e começa a entrar no território da execução concreta."
-        )
-        support_points = [
-            f"{secondary.capitalize()} reduz desperdício de energia e recurso.",
-            f"{tertiary.capitalize()} protege foco contra distração e ansiedade.",
-            f"{primary.capitalize()} fica mais concreto quando a base é previsível.",
-        ]
-        cta = "Salve isso como régua de execução e compartilhe com quem precisa trocar pressa por construção."
-    elif family == "branding":
-        objective = "transformar o tema em posicionamento forte, legível e menos commodity"
-        angle = f"{topic} fica mais forte quando abandona volume vazio e assume identidade, recorte e utilidade real."
-        hook = (
-            f"O problema raramente é falta de conteúdo. O problema é produzir {primary} sem critério, sem {secondary} "
-            f"e sem uma leitura clara de {tertiary}."
-        )
-        headline = f"Sem {secondary}, {primary} parece só mais do mesmo."
-        body = (
-            f"Marca não cresce com excesso de postagem sem eixo. Ela cresce quando a mensagem tem direção, quando a forma reforça a ideia "
-            f"e quando o público percebe valor rápido. É assim que o conteúdo deixa de parecer commodity e começa a carregar identidade."
-        )
-        support_points = [
-            f"{secondary.capitalize()} separa posicionamento de volume vazio.",
-            f"{tertiary.capitalize()} aumenta nitidez de mensagem e de público.",
-            f"{primary.capitalize()} só ganha força quando carrega utilidade e identidade.",
-        ]
-        cta = "Salve para usar como régua editorial e envie para quem precisa subir o padrão da comunicação."
-    else:
-        objective = "entregar uma peça editorial mais clara, forte e útil, sem cara de template"
-        angle = f"{topic} melhora quando sai da frase bonita e entra em critério, prática e decisão repetível."
-        hook = (
-            f"O que mais trava resultado normalmente não é falta de esforço. É tentar sustentar {primary} sem {secondary}, "
-            f"como se intenção sozinha conseguisse segurar consistência ao longo do tempo."
-        )
-        headline = f"Sem {secondary}, {primary} perde força antes de virar resultado."
-        body = (
-            f"Ideia boa sozinha não sustenta mudança. Ela precisa de {secondary} para ganhar forma e de {tertiary} para não se perder no meio do caminho. "
-            f"Quando isso acontece, o tema deixa de soar abstrato e começa a servir para decisões reais."
-        )
-        support_points = [
-            f"{primary.capitalize()} sem base vira intenção solta.",
-            f"{secondary.capitalize()} sustenta execução quando o entusiasmo cai.",
-            f"{tertiary.capitalize()} organiza prioridade e protege consistência.",
-        ]
-        cta = "Salve para revisar na próxima decisão e envie para alguém que precisa de mais direção e menos ruído."
-
-    return {
-        "family": family,
-        "objective": objective,
-        "angle": angle,
-        "hook": hook,
-        "headline": headline,
-        "body": body,
-        "support_points": support_points,
-        "cta": cta,
-    }
-
-
 def _hashtags(keywords: list[str], family: str) -> list[str]:
     tags = [f"#{_slug(word)}" for word in keywords if _slug(word)]
     family_tags = {
@@ -305,13 +203,14 @@ def _map_soberano_to_creative_plan(trend: str, sovereign: dict[str, Any]) -> Cre
     caption = _compose_caption(hook, headline, body, support_points, cta, hashtags)
     first_comment = _first_comment(topic_seed, support_points, hashtags)
 
-    critic = dict(sovereign.get("critic") or {})
+    critic = dict(sovereign.get("critic") or sovereign.get("editorial_critic") or {})
+    caption_gate = dict(sovereign.get("caption_gate") or critic.get("caption_gate") or {})
     notes = list(sovereign.get("notes") or [])
     notes.append("planner_selected=creative_planner_soberano_v1")
 
     logger.info("planner_selected=creative_planner_soberano_v1")
     logger.info("planner_generation_ok=true")
-    logger.info("caption_gate_result=%s", (critic.get("caption_gate") or {}).get("approved"))
+    logger.info("caption_gate_result=%s", caption_gate.get("approved"))
     logger.info("editorial_critic_result=%s", critic.get("approved"))
 
     return CreativePlan(
@@ -338,12 +237,12 @@ def _map_soberano_to_creative_plan(trend: str, sovereign: dict[str, Any]) -> Cre
         policy_version=str(get_editorial_policy().get("version") or POLICY_VERSION),
         brand_persona=BRAND_PERSONA,
         tone_of_voice=list(TONE_OF_VOICE),
-        brand_lexicon_hits=list(sovereign.get("brand_fit_signals") or lexicon_hits(caption)),
+        brand_lexicon_hits=list(sovereign.get("brand_lexicon_hits") or sovereign.get("brand_fit_signals") or lexicon_hits(caption)),
         approved_example_ids=list(examples_context(topic_seed)["approved_ids"]),
         rejected_example_ids=list(examples_context(topic_seed)["rejected_ids"]),
         editorial_score_breakdown=dict(critic.get("breakdown") or {}),
         editorial_reasons=list(critic.get("rejection_reasons") or ["critic_aprovou_sem_restrições"]),
-        editorial_flags=list((critic.get("caption_gate") or {}).get("flags") or []),
+        editorial_flags=list(caption_gate.get("flags") or []),
         planner_selected="creative_planner_soberano_v1",
         problem=str(sovereign.get("problem") or ""),
         insight=str(sovereign.get("insight") or ""),
@@ -352,8 +251,20 @@ def _map_soberano_to_creative_plan(trend: str, sovereign: dict[str, Any]) -> Cre
         narrative_tension=str(sovereign.get("narrative_tension") or ""),
         payoff=str(sovereign.get("payoff") or ""),
         sequel_potential=str(sovereign.get("sequel_potential") or "medium"),
-        risk_flags=list((critic.get("caption_gate") or {}).get("flags") or []),
+        risk_flags=list(sovereign.get("fallback_flags") or []),
         editorial_critic=critic,
+        caption_gate=caption_gate,
+        continuation_candidate=bool(sovereign.get("continuation_candidate")),
+        planner_version=str(sovereign.get("planner_version") or "editorial_soberano_v1"),
+        planner_mode=str(sovereign.get("planner_mode") or "deterministic"),
+        deterministic=bool(sovereign.get("deterministic")),
+        deterministic_path=bool(sovereign.get("deterministic_path")),
+        perceived_value_hypothesis=str(sovereign.get("perceived_value_hypothesis") or ""),
+        timing_hypothesis=str(sovereign.get("timing_hypothesis") or ""),
+        serial_continuity=dict(sovereign.get("serial_continuity") or {}),
+        distribution_context=dict(sovereign.get("distribution_context") or {}),
+        fallback_flags=list(sovereign.get("fallback_flags") or []),
+        official_path_quality_state=str(sovereign.get("official_path_quality_state") or "conservative_fallback"),
     )
 
 
@@ -362,37 +273,35 @@ def _build_creative_plan_legacy(trend: str) -> CreativePlan:
     clean_input = _clean_text(trend)
     topic = _topic_seed(clean_input)
     keywords = _keywords(topic)
-    blocks = _editorial_blocks(topic, keywords)
-    examples = examples_context(topic)
+    hashtags = _hashtags(keywords, _family(keywords))
 
-    family = str(blocks["family"])
-    objective = str(blocks["objective"])
-    angle = str(blocks["angle"])
-    hook = str(blocks["hook"])
-    headline = str(blocks["headline"])
-    body = str(blocks["body"])
-    support_points = [str(item) for item in blocks["support_points"]]
-    cta = str(blocks["cta"])
-    hashtags = _hashtags(keywords, family)
+    headline = "Sem disciplina, clareza perde força antes de virar resultado."
+    hook = "O problema raramente é falta de esforço. Quase sempre é mover muito sem critério suficiente."
+    body = "Quando estrutura entra, intenção deixa de depender do humor do dia. E quando o eixo volta ao lugar, o resultado começa a responder a processo, não a impulso."
+    support_points = [
+        "Clareza sem estrutura não sustenta consistência.",
+        "Disciplina organiza prioridade antes da pressa.",
+        "Direção reduz ruído e melhora execução.",
+    ]
+    cta = "Salve para revisar antes da próxima decisão e envie para alguém que precisa de mais critério."
+    caption = _compose_caption(hook, headline, body, support_points, cta, hashtags)
     first_comment = _first_comment(topic, support_points, hashtags)
 
-    draft_plan = {
-        "trend_input": clean_input,
-        "topic_seed": topic,
-        "headline": headline,
-        "hook": hook,
-        "body": body,
-        "support_points": support_points,
-        "cta": cta,
-        "hashtags": hashtags,
-    }
-    editorial_qa = evaluate_editorial_quality(draft_plan)
-    caption = _compose_caption(hook, headline, body, support_points, cta, hashtags)
+    editorial_qa = evaluate_editorial_quality(
+        {
+            "trend_input": clean_input,
+            "topic_seed": topic,
+            "headline": headline,
+            "hook": hook,
+            "body": body,
+            "support_points": support_points,
+            "cta": cta,
+            "hashtags": hashtags,
+        }
+    )
 
     notes = [
         f"policy={POLICY_VERSION}",
-        f"editorial_family={family}",
-        "foundation_editorial_model_v1_active",
         "planner_mode=legacy_fallback",
         "planner_selected=creative_planner_legacy",
     ]
@@ -404,10 +313,10 @@ def _build_creative_plan_legacy(trend: str) -> CreativePlan:
         trend_input=clean_input,
         topic_seed=topic,
         series_name=SERIES_NAME,
-        objective=objective,
+        objective="entregar uma peça editorial clara e útil",
         strategic_target_format=STRATEGIC_TARGET_FORMAT,
         publish_format_now=PUBLISH_FORMAT_NOW,
-        angle=angle,
+        angle="transformar intenção em critério e direção",
         hook=hook,
         headline=headline,
         body=body,
@@ -425,12 +334,21 @@ def _build_creative_plan_legacy(trend: str) -> CreativePlan:
         brand_persona=BRAND_PERSONA,
         tone_of_voice=list(TONE_OF_VOICE),
         brand_lexicon_hits=lexicon_hits(" ".join([headline, hook, body, cta] + support_points)),
-        approved_example_ids=list(examples["approved_ids"]),
-        rejected_example_ids=list(examples["rejected_ids"]),
+        approved_example_ids=list(examples_context(topic)["approved_ids"]),
+        rejected_example_ids=list(examples_context(topic)["rejected_ids"]),
         editorial_score_breakdown=dict(editorial_qa.breakdown),
         editorial_reasons=list(editorial_qa.reasons),
         editorial_flags=list(editorial_qa.flags),
         planner_selected="creative_planner_legacy",
+        planner_version="legacy_fallback",
+        planner_mode="legacy_fallback",
+        deterministic=True,
+        deterministic_path=True,
+        continuation_candidate=False,
+        serial_continuity={},
+        distribution_context={"source_mode": "conservative_fallback"},
+        fallback_flags=["legacy_fallback"],
+        official_path_quality_state="conservative_fallback",
     )
 
 
