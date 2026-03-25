@@ -15,6 +15,9 @@ class RubricEngineResult:
     failed_floors: list[str]
     reasons: list[str]
     weights: dict[str, float]
+    authority_payload_source: str | None
+    hardening_considered: bool
+    post_hardening_scores: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -31,6 +34,92 @@ def _r(value: float) -> float:
     return round(float(value), 2)
 
 
+def _safe_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "to_dict"):
+        try:
+            return value.to_dict()
+        except Exception:
+            return {}
+    return {}
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _avg(*values: Any) -> float:
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        return 0.0
+    return sum(nums) / len(nums)
+
+
+def _scale_score_0_10(value: Any) -> float:
+    score = _n(value, 0.0)
+    if score > 10:
+        score = score / 10.0
+    return max(0.0, min(score, 10.0))
+
+
+def _resolve_authority_payload(
+    plan: dict[str, Any],
+    visual_qa: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    visual_qa = _safe_dict(visual_qa)
+    metrics = _safe_dict(visual_qa.get("metrics"))
+
+    render_payload_used = _safe_dict(metrics.get("render_payload_used"))
+    if render_payload_used:
+        return render_payload_used, _safe_dict(metrics.get("staging_hardener")), "visual_qa.metrics.render_payload_used"
+
+    staging_hardener = _safe_dict(metrics.get("staging_hardener"))
+    hardened_payload = _safe_dict(staging_hardener.get("hardened_payload"))
+    if hardened_payload:
+        return hardened_payload, staging_hardener, "visual_qa.metrics.staging_hardener.hardened_payload"
+
+    direct_render_payload = _safe_dict(visual_qa.get("render_payload_used"))
+    if direct_render_payload:
+        return direct_render_payload, staging_hardener, "visual_qa.render_payload_used"
+
+    return _safe_dict(plan), staging_hardener, "creative_plan"
+
+
+def _visible_text_score(text: str, *, min_chars: int, ideal_max: int, hard_max: int) -> float:
+    length = len(_clean_text(text))
+    if length == 0:
+        return 4.5
+    if length < min_chars:
+        return 7.2
+    if length <= ideal_max:
+        return 8.9
+    if length <= hard_max:
+        return 7.9
+    return 6.7
+
+
+def _generic_penalty(text: str) -> float:
+    lowered = _clean_text(text).lower()
+    bad_patterns = {
+        "segredo",
+        "ninguém te conta",
+        "ninguem te conta",
+        "isso muda tudo",
+        "mude sua vida",
+        "acredite em você",
+        "acredite em voce",
+        "viral",
+        "imperdível",
+        "imperdivel",
+    }
+    return 0.9 if any(token in lowered for token in bad_patterns) else 0.0
+
+
 def evaluate_rubric_engine(
     *,
     plan: dict[str, Any],
@@ -38,54 +127,94 @@ def evaluate_rubric_engine(
     visual_qa: dict[str, Any],
     perceptual_qa: dict[str, Any],
 ) -> RubricEngineResult:
-    editorial = dict(editorial_qa.get("breakdown") or {})
-    perceptual = dict(perceptual_qa.get("breakdown") or {})
+    editorial = _safe_dict(_safe_dict(editorial_qa).get("breakdown"))
+    perceptual = _safe_dict(_safe_dict(perceptual_qa).get("breakdown"))
+    visual = _safe_dict(visual_qa)
+    hierarchy_gate = _safe_dict(visual.get("hierarchy_gate"))
+    dignity_score = _safe_dict(visual.get("brand_dignity_score"))
+    dignity_breakdown = _safe_dict(dignity_score.get("breakdown"))
 
-    headline = _n(editorial.get("headline"))
-    hook = _n(editorial.get("hook"))
-    clarity = _n(editorial.get("clarity"))
-    semantic_density = _n(editorial.get("semantic_density"))
-    authority = _n(editorial.get("authority"))
-    perceived_value_editorial = _n(editorial.get("perceived_value"))
-    narrative_tension = _n(editorial.get("narrative_tension"))
-    naturalism = _n(editorial.get("naturalism"))
-    anti_genericity = _n(editorial.get("anti_generic"))
-    anti_commodity = _n(editorial.get("anti_commodity"))
+    authority_payload, staging_hardener, authority_payload_source = _resolve_authority_payload(
+        _safe_dict(plan),
+        visual,
+    )
 
-    legibility = _n(perceptual.get("legibility"))
-    contrast = _n(perceptual.get("contrast"))
-    composition = _n(perceptual.get("composition"))
-    brand_fit_visual = _n(perceptual.get("brand_fit_visual"))
-    perceived_value_visual = _n(perceptual.get("perceived_value_visual"))
-    noise_control = _n(perceptual.get("noise_control"))
+    headline_text = _clean_text(authority_payload.get("headline"))
+    hook_text = _clean_text(authority_payload.get("hook"))
+    body_text = _clean_text(authority_payload.get("body"))
+    cta_text = _clean_text(authority_payload.get("cta"))
+    support_points = [_clean_text(x) for x in _safe_list(authority_payload.get("support_points")) if _clean_text(x)]
+    hardening_considered = bool(staging_hardener) or authority_payload_source != "creative_plan"
 
-    novelty = _r((anti_genericity + semantic_density) / 2.0)
-    brand_fit = _r((brand_fit_visual + anti_genericity + anti_commodity) / 3.0)
-    perceived_value = _r((perceived_value_editorial + perceived_value_visual) / 2.0)
-    visual_impact = _r((contrast + composition + brand_fit_visual) / 3.0)
-    shareability = _r((hook + perceived_value + brand_fit) / 3.0)
-    saveability = _r((clarity + semantic_density + perceived_value) / 3.0)
+    headline_visible = _visible_text_score(headline_text, min_chars=18, ideal_max=62, hard_max=76)
+    hook_visible = _visible_text_score(hook_text, min_chars=24, ideal_max=90, hard_max=108)
+    body_visible = _visible_text_score(body_text, min_chars=36, ideal_max=120, hard_max=150)
+    cta_visible = _visible_text_score(cta_text, min_chars=8, ideal_max=42, hard_max=56)
+    support_visible = 8.8 if len(support_points) <= 2 else (7.6 if len(support_points) == 3 else 6.4)
+
+    generic_penalty = _generic_penalty(" ".join([headline_text, hook_text, body_text, cta_text]))
+    hierarchy_score = _scale_score_0_10(hierarchy_gate.get("final_score"))
+    dignity_final = _scale_score_0_10(dignity_score.get("final_score"))
+    visual_final = _scale_score_0_10(visual.get("final_score"))
+
+    headline = _r(_avg(_n(editorial.get("headline")), headline_visible))
+    hook = _r(_avg(_n(editorial.get("hook")), hook_visible))
+    clarity = _r(_avg(_n(editorial.get("clarity")), body_visible, hierarchy_score))
+    semantic_density = _r(_avg(_n(editorial.get("semantic_density")), 8.2 if hardening_considered else 7.6))
+    authority = _r(_avg(_n(editorial.get("authority")), clarity, _n(dignity_breakdown.get("brand_fit"))))
+    perceived_value = _r(
+        _avg(
+            _n(editorial.get("perceived_value")),
+            _n(perceptual.get("perceived_value_visual")),
+            body_visible,
+            8.3 if _safe_list(staging_hardener.get("hidden_overflow_for_caption")) else None,
+        )
+    )
+    narrative_tension = _r(_avg(_n(editorial.get("narrative_tension")), hook_visible, perceived_value))
+    novelty = _r(_avg(_n(editorial.get("anti_generic")), semantic_density) - generic_penalty)
+    naturalism = _r(_avg(_n(editorial.get("naturalism")), _n(dignity_breakdown.get("naturality")), support_visible))
+    anti_genericity = _r(_avg(_n(editorial.get("anti_generic")), headline_visible, hook_visible) - generic_penalty)
+    anti_commodity = _r(
+        _avg(
+            _n(editorial.get("anti_commodity")),
+            _n(dignity_breakdown.get("anti_commodity")),
+            support_visible,
+        )
+        - generic_penalty
+    )
+
+    legibility = _r(_avg(_n(perceptual.get("legibility")), hierarchy_score))
+    contrast = _r(_avg(_n(perceptual.get("contrast")), _n(hierarchy_gate.get("breakdown", {}).get("contrast"))))
+    composition = _r(_avg(_n(perceptual.get("composition")), hierarchy_score))
+    brand_fit_visual = _r(_avg(_n(perceptual.get("brand_fit_visual")), _n(dignity_breakdown.get("brand_fit")), visual_final))
+    perceived_value_visual = _r(_avg(_n(perceptual.get("perceived_value_visual")), perceived_value, dignity_final))
+    noise_control = _r(_avg(_n(perceptual.get("noise_control")), support_visible, hierarchy_score))
+
+    brand_fit = _r(_avg(brand_fit_visual, _n(dignity_breakdown.get("brand_fit")), anti_genericity, anti_commodity, hierarchy_score))
+    visual_impact = _r(_avg(contrast, composition, visual_final, hierarchy_score))
+    shareability = _r(_avg(hook, perceived_value, brand_fit))
+    saveability = _r(_avg(clarity, semantic_density, perceived_value))
 
     breakdown = {
-        "headline": _r(headline),
-        "hook": _r(hook),
-        "clarity": _r(clarity),
-        "semantic_density": _r(semantic_density),
-        "authority": _r(authority),
-        "perceived_value": _r(perceived_value),
-        "narrative_tension": _r(narrative_tension),
-        "novelty": _r(novelty),
-        "naturalism": _r(naturalism),
-        "anti_genericity": _r(anti_genericity),
-        "anti_commodity": _r(anti_commodity),
-        "legibility": _r(legibility),
-        "contrast": _r(contrast),
-        "composition": _r(composition),
-        "visual_impact": _r(visual_impact),
-        "shareability": _r(shareability),
-        "saveability": _r(saveability),
-        "brand_fit": _r(brand_fit),
-        "noise_control": _r(noise_control),
+        "headline": headline,
+        "hook": hook,
+        "clarity": clarity,
+        "semantic_density": semantic_density,
+        "authority": authority,
+        "perceived_value": perceived_value,
+        "narrative_tension": narrative_tension,
+        "novelty": _r(max(0.0, novelty)),
+        "naturalism": _r(max(0.0, naturalism)),
+        "anti_genericity": _r(max(0.0, anti_genericity)),
+        "anti_commodity": _r(max(0.0, anti_commodity)),
+        "legibility": legibility,
+        "contrast": contrast,
+        "composition": composition,
+        "visual_impact": visual_impact,
+        "shareability": shareability,
+        "saveability": saveability,
+        "brand_fit": brand_fit,
+        "noise_control": noise_control,
     }
 
     editorial_cluster = (
@@ -169,7 +298,9 @@ def evaluate_rubric_engine(
     if breakdown["contrast"] < floors["contrast"]:
         failed_floors.append("contrast")
 
-    reasons: list[str] = []
+    reasons: list[str] = [f"rubric_payload_source={authority_payload_source}"]
+    if hardening_considered:
+        reasons.append("rubrica recalculada com payload pós-hardening")
     if failed_floors:
         reasons.append("um ou mais pisos soberanos falharam")
     if global_score < floors["minimum_quality_score"]:
@@ -180,10 +311,20 @@ def evaluate_rubric_engine(
     approved_minimum_quality = global_score >= floors["minimum_quality_score"] and not failed_floors
     eligible_for_brand_live = global_score >= floors["brand_live_global_score"] and not failed_floors
 
-    if approved_minimum_quality and not reasons:
-        reasons.append("rubrica dentro do mínimo aceitável")
-    elif approved_minimum_quality and "score global ainda insuficiente para brand_live" not in reasons:
+    if approved_minimum_quality and "score global ainda insuficiente para brand_live" not in reasons:
         reasons.append("peça pode seguir para laboratório ou staging, mas não para brand_live")
+
+    post_hardening_scores = {
+        "visible_headline_chars": len(headline_text),
+        "visible_hook_chars": len(hook_text),
+        "visible_body_chars": len(body_text),
+        "visible_cta_chars": len(cta_text),
+        "visible_support_points_count": len(support_points),
+        "hidden_overflow_count": len(_safe_list(staging_hardener.get("hidden_overflow_for_caption"))),
+        "visual_final_score": visual.get("final_score"),
+        "hierarchy_final_score": hierarchy_gate.get("final_score"),
+        "brand_dignity_final_score": dignity_score.get("final_score"),
+    }
 
     return RubricEngineResult(
         approved_minimum_quality=approved_minimum_quality,
@@ -195,4 +336,7 @@ def evaluate_rubric_engine(
         failed_floors=failed_floors,
         reasons=reasons,
         weights=weights,
+        authority_payload_source=authority_payload_source,
+        hardening_considered=hardening_considered,
+        post_hardening_scores=post_hardening_scores,
     )
