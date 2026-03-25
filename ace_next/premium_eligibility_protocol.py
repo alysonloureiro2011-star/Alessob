@@ -186,6 +186,18 @@ def _infer_authorization_state(publication_authorization_gate: dict[str, Any]) -
     }
 
 
+def _minimum_keys(field: str) -> tuple[str, str]:
+    if field == "global_score":
+        return (
+            "minimum_rubric_global_for_staging",
+            "minimum_rubric_global_for_brand_live",
+        )
+    return (
+        f"minimum_{field}_for_staging",
+        f"minimum_{field}_for_brand_live",
+    )
+
+
 def _mean(values: list[float | None]) -> float:
     valid = [float(v) for v in values if v is not None]
     if not valid:
@@ -280,8 +292,7 @@ def evaluate_premium_eligibility_protocol(
     passed_brand_live = True
 
     for field, value in staging_checks.items():
-        staging_key = f"minimum_{field}_for_staging"
-        brand_key = f"minimum_{field}_for_brand_live"
+        staging_key, brand_key = _minimum_keys(field)
 
         if value is None:
             failed_checks.append(f"missing_{field}")
