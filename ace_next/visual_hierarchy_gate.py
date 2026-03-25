@@ -53,13 +53,6 @@ def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
@@ -84,16 +77,16 @@ def _chars_per_line_estimate(format_name: str, field: str) -> int:
     if format_name == "story":
         return {"headline": 24, "hook": 34, "body": 40, "cta": 26}.get(field, 34)
     if format_name == "carousel":
-        return {"headline": 28, "hook": 36, "body": 42, "cta": 28}.get(field, 36)
-    return {"headline": 28, "hook": 36, "body": 46, "cta": 34}.get(field, 36)
+        return {"headline": 28, "hook": 34, "body": 40, "cta": 28}.get(field, 34)
+    return {"headline": 28, "hook": 36, "body": 42, "cta": 28}.get(field, 34)
 
 
 def _redundancy_ratio(parts: list[str]) -> float:
     cleaned = [_clean_text(part).lower() for part in parts if _clean_text(part)]
     if len(cleaned) < 2:
         return 0.0
-    unique_words = set()
     total_words = 0
+    unique_words: set[str] = set()
     for part in cleaned:
         words = [word for word in part.split() if word]
         total_words += len(words)
@@ -106,15 +99,15 @@ def _redundancy_ratio(parts: list[str]) -> float:
 def _score_hierarchy(metrics: dict[str, Any], limits: dict[str, Any], has_block_order: bool) -> float:
     score = 8.8
     if not has_block_order:
-        score -= 0.7
+        score -= 0.6
     if metrics["headline_lines"] > limits["headline_lines"]:
-        score -= 1.2
+        score -= 1.1
     if metrics["hook_lines"] > limits["hook_lines"]:
-        score -= 0.9
+        score -= 0.8
     if metrics["cta_lines"] > limits["cta_lines"]:
         score -= 0.8
     if metrics["support_points_count"] > limits["support_points_max"]:
-        score -= 0.7
+        score -= 0.8
     return max(0.0, min(10.0, round(score, 2)))
 
 
@@ -123,11 +116,9 @@ def _score_legibility(metrics: dict[str, Any], limits: dict[str, Any]) -> float:
     if metrics["headline_lines"] > limits["headline_lines"]:
         score -= 1.0
     if metrics["body_lines"] > limits["body_lines"]:
-        score -= 1.1
+        score -= 1.0
     if metrics["cta_lines"] > limits["cta_lines"]:
         score -= 0.7
-    if metrics["headline_chars"] > 92:
-        score -= 0.4
     return max(0.0, min(10.0, round(score, 2)))
 
 
@@ -145,7 +136,7 @@ def _score_contrast(template_meta: dict[str, Any], brand_system: dict[str, Any])
 def _score_spacing(metrics: dict[str, Any], limits: dict[str, Any]) -> float:
     score = 8.6
     if metrics["support_points_count"] > limits["support_points_max"]:
-        score -= 1.1
+        score -= 1.0
     if metrics["body_lines"] > limits["body_lines"]:
         score -= 0.9
     if metrics["headline_lines"] + metrics["hook_lines"] + metrics["body_lines"] > 8:
@@ -201,18 +192,7 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         or display_payload.get("format")
         or template_spec.get("strategic_format")
     )
-    base_limits = dict(FORMAT_LIMITS[format_name])
-    custom_mins = _safe_dict(gate_payload.get("minimum_scores"))
-    limits = {
-        **base_limits,
-        "minimum_score": int(custom_mins.get("minimum_score", base_limits["minimum_score"])),
-        "minimum_hierarchy": float(custom_mins.get("hierarchy", base_limits["minimum_hierarchy"])),
-        "minimum_legibility": float(custom_mins.get("legibility", base_limits["minimum_legibility"])),
-        "minimum_contrast": float(custom_mins.get("contrast", base_limits["minimum_contrast"])),
-        "minimum_spacing": float(custom_mins.get("spacing", base_limits["minimum_spacing"])),
-        "minimum_cognitive_load": float(custom_mins.get("cognitive_load", base_limits["minimum_cognitive_load"])),
-        "minimum_premium_feel": float(custom_mins.get("premium_feel", base_limits["minimum_premium_feel"])),
-    }
+    limits = dict(FORMAT_LIMITS[format_name])
 
     support_points = display_payload.get("support_points")
     if not isinstance(support_points, list):
@@ -224,10 +204,10 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         "body_chars": len(_clean_text(display_payload.get("body"))),
         "cta_chars": len(_clean_text(display_payload.get("cta"))),
         "support_points_count": len([x for x in support_points if _clean_text(x)]),
-        "estimated_headline_lines": _line_estimate(display_payload.get("headline"), _chars_per_line_estimate(format_name, "headline")),
-        "estimated_hook_lines": _line_estimate(display_payload.get("hook"), _chars_per_line_estimate(format_name, "hook")),
-        "estimated_body_lines": _line_estimate(display_payload.get("body"), _chars_per_line_estimate(format_name, "body")),
-        "estimated_cta_lines": _line_estimate(display_payload.get("cta"), _chars_per_line_estimate(format_name, "cta")),
+        "headline_lines": _line_estimate(display_payload.get("headline"), _chars_per_line_estimate(format_name, "headline")),
+        "hook_lines": _line_estimate(display_payload.get("hook"), _chars_per_line_estimate(format_name, "hook")),
+        "body_lines": _line_estimate(display_payload.get("body"), _chars_per_line_estimate(format_name, "body")),
+        "cta_lines": _line_estimate(display_payload.get("cta"), _chars_per_line_estimate(format_name, "cta")),
         "redundancy_ratio": _redundancy_ratio(
             [
                 display_payload.get("headline"),
@@ -242,11 +222,6 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         "template_id": template_spec.get("template_id"),
     }
 
-    metrics["headline_lines"] = metrics["estimated_headline_lines"]
-    metrics["hook_lines"] = metrics["estimated_hook_lines"]
-    metrics["body_lines"] = metrics["estimated_body_lines"]
-    metrics["cta_lines"] = metrics["estimated_cta_lines"]
-
     total_lines = metrics["headline_lines"] + metrics["hook_lines"] + metrics["body_lines"] + metrics["cta_lines"]
     if total_lines >= 10 or metrics["support_points_count"] > limits["support_points_max"]:
         metrics["density_signal"] = "high"
@@ -254,7 +229,6 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         metrics["density_signal"] = "medium"
 
     has_block_order = bool(template_spec.get("block_order"))
-
     hierarchy = _score_hierarchy(metrics, limits, has_block_order)
     legibility = _score_legibility(metrics, limits)
     contrast = _score_contrast(template_spec, brand_system)
@@ -314,16 +288,16 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
     recommendations: list[str] = []
 
     if metrics["headline_lines"] > limits["headline_lines"]:
-        rejection_reasons.append("headline excedeu o line budget")
+        rejection_reasons.append("headline excedeu line budget")
         recommendations.append("reduzir headline")
     if metrics["hook_lines"] > limits["hook_lines"]:
-        rejection_reasons.append("hook excedeu o line budget")
+        rejection_reasons.append("hook excedeu line budget")
         recommendations.append("encurtar hook")
     if metrics["body_lines"] > limits["body_lines"]:
-        rejection_reasons.append("body excedeu o line budget")
-        recommendations.append("baixar densidade do body")
+        rejection_reasons.append("body excedeu line budget")
+        recommendations.append("cortar body")
     if metrics["cta_lines"] > limits["cta_lines"]:
-        rejection_reasons.append("CTA longo demais para peça premium")
+        rejection_reasons.append("CTA longa demais")
         recommendations.append("encurtar CTA")
     if metrics["support_points_count"] > limits["support_points_max"]:
         rejection_reasons.append("support points em excesso")
@@ -357,42 +331,4 @@ def evaluate_visual_hierarchy_gate(contract: dict[str, Any]) -> dict[str, Any]:
         "noise_control_score": noise_control_score,
         "metrics": metrics,
         "contract": limits,
-    }
-
-
-def visual_hierarchy_gate_examples() -> dict[str, Any]:
-    approved_payload = {
-        "brand_system": {"text_contrast_policy": "premium_high_contrast"},
-        "template_spec": {"template_id": "hero_card_v1", "premium_tier": "premium_core", "block_order": ["eyebrow", "headline", "hook", "body", "support_points", "cta"]},
-        "layout_payload": {
-            "display_payload": {
-                "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
-                "hook": "O problema raramente é falta de esforço.",
-                "body": "Quando estrutura entra, intenção deixa de depender do humor do dia.",
-                "cta": "Salve para revisar.",
-                "support_points": ["Clareza sem base vira intenção solta.", "Disciplina protege consistência."],
-                "format": "image",
-            }
-        },
-        "gate_payload": {"format": "image"},
-    }
-    blocked_payload = {
-        "brand_system": {"text_contrast_policy": "premium_high_contrast"},
-        "template_spec": {"template_id": "hero_card_v1", "premium_tier": "premium_core", "block_order": ["eyebrow", "headline", "hook", "body", "support_points", "cta"]},
-        "layout_payload": {
-            "display_payload": {
-                "headline": "Descubra o segredo que ninguém te conta sobre como mudar tudo agora mesmo",
-                "hook": "Você precisa ver isso antes que seja tarde demais porque realmente muda tudo",
-                "body": "Esse texto está denso demais e tenta carregar explicação, tensão, promessa e CTA ao mesmo tempo, o que derruba a legibilidade.",
-                "cta": "Comente aqui agora para eu te mandar mais",
-                "support_points": ["Mais foco.", "Mais energia.", "Mais resultado."],
-                "format": "image",
-            }
-        },
-        "gate_payload": {"format": "image"},
-    }
-    return {
-        "ok": True,
-        "approved_example": evaluate_visual_hierarchy_gate(approved_payload),
-        "blocked_example": evaluate_visual_hierarchy_gate(blocked_payload),
     }
