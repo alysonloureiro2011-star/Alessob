@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .episodic_serial_contract import classify_continuity
+
 DEFAULT_SERIES_NAME = "Liberta a Verdade"
 
 
@@ -70,7 +72,9 @@ def _extract_recent_candidates(memory_context: dict[str, Any]) -> list[dict[str,
     seen: set[str] = set()
     for item in candidates:
         identity = _clean(
-            item.get("content_hash")
+            item.get("episode_id")
+            or item.get("record_id")
+            or item.get("content_hash")
             or item.get("id")
             or item.get("title")
             or item.get("headline")
@@ -79,7 +83,7 @@ def _extract_recent_candidates(memory_context: dict[str, Any]) -> list[dict[str,
         if identity and identity not in seen:
             seen.add(identity)
             deduped.append(item)
-    return deduped[:20]
+    return deduped[:30]
 
 
 def _keyword_overlap(a: list[str], b: list[str]) -> int:
@@ -100,6 +104,7 @@ def _best_recent_match(topic_seed: str, candidates: list[dict[str, Any]]) -> tup
                 _clean(item.get("hook")),
                 _clean(item.get("problem")),
                 _clean(item.get("angle")),
+                _clean(item.get("series_name")),
             ]
         )
         score = _keyword_overlap(topic_keys, _keywords(joined))
@@ -130,7 +135,7 @@ def _next_episode_seed(topic_seed: str, best_item: dict[str, Any], sequel_candid
 
     carry_problem = _clean(best_item.get("problem"))
     if sequel_candidate and carry_problem:
-        return f"O custo que aparece depois de buscar {primary} sem {secondary}"
+        return f"O custo seguinte que aparece quando {primary} continua sem {secondary}"
     if sequel_candidate:
         return f"O próximo erro comum em {primary} quando {secondary} ainda falta"
     return f"A continuação natural de {primary} com mais {secondary}"
@@ -149,7 +154,16 @@ def build_serial_continuity_engine_v1(
     candidates = _extract_recent_candidates(memory_context)
     best_item, overlap_score = _best_recent_match(topic_seed, candidates)
 
-    sequel_candidate = sequel_potential in {"medium", "high"} or overlap_score >= 2 or bool(best_item)
+    matched_episode_id = _clean(
+        best_item.get("episode_id")
+        or best_item.get("record_id")
+        or best_item.get("id")
+    ) or None
+
+    recent_match_found = bool(best_item)
+    sequel_candidate = sequel_potential in {"medium", "high"} or overlap_score >= 2 or recent_match_found
+    linked_series_candidate = bool(recent_match_found and overlap_score >= 2)
+
     resolved_series_name = (
         _clean(series_name)
         or _clean(best_item.get("series_name"))
@@ -161,36 +175,52 @@ def build_serial_continuity_engine_v1(
     carryover_problem = _clean(best_item.get("problem") or best_item.get("angle"))
     carryover_payoff = _clean(best_item.get("payoff"))
 
-    if best_item:
-        continuity_reason = "há continuidade plausível com peça recente já registrada"
-        source_mode = "memory_informed"
+    if linked_series_candidate:
+        continuity_reason = "há continuidade real suficiente com episódio anterior"
+        source_mode = "memory_confirmed"
+        continuity_confidence = "high" if overlap_score >= 3 else "moderate"
     elif sequel_candidate:
-        continuity_reason = "o tema tem potencial serial mesmo sem memória forte ainda"
-        source_mode = "conservative_fallback"
+        continuity_reason = "há apenas hipótese conservadora de continuidade"
+        source_mode = "conservative_hypothesis"
+        continuity_confidence = "medium"
     else:
-        continuity_reason = "o tema atual pode viver sozinho sem exigir continuação imediata"
+        continuity_reason = "não existe continuidade suficiente confirmada"
         source_mode = "conservative_fallback"
+        continuity_confidence = "low"
 
-    return {
+    previous_episode_id = matched_episode_id if linked_series_candidate else None
+    parent_episode_id = _clean(best_item.get("parent_episode_id") or previous_episode_id) or None
+
+    payload = {
         "ok": True,
         "series_name": resolved_series_name,
         "episode_index_hint": episode_index_hint,
         "sequel_candidate": bool(sequel_candidate),
+        "linked_series_candidate": linked_series_candidate,
         "next_episode_seed": _next_episode_seed(topic_seed, best_item, sequel_candidate),
         "continuity_reason": continuity_reason,
         "carryover_hook": carryover_hook,
         "carryover_problem": carryover_problem,
         "carryover_payoff": carryover_payoff,
-        "continuity_confidence": "high" if overlap_score >= 3 else "medium" if sequel_candidate else "low",
+        "continuity_confidence": continuity_confidence,
+        "continuity_source_mode": source_mode,
         "source_mode": source_mode,
+        "previous_episode_id": previous_episode_id,
+        "parent_episode_id": parent_episode_id,
+        "matched_episode_id": matched_episode_id,
+        "recent_match_found": recent_match_found,
         "continuity_signals": {
-            "recent_match_found": bool(best_item),
+            "recent_match_found": recent_match_found,
             "keyword_overlap": overlap_score,
             "sequel_potential": sequel_potential,
             "recent_series_name": _clean(best_item.get("series_name")),
             "recent_title": _clean(best_item.get("headline") or best_item.get("title")),
+            "recent_episode_id": matched_episode_id,
         },
     }
+
+    payload.update(classify_continuity(payload))
+    return payload
 
 
 def serial_continuity_examples() -> dict[str, Any]:
@@ -204,6 +234,7 @@ def serial_continuity_examples() -> dict[str, Any]:
             memory_context={
                 "ace_content_history": [
                     {
+                        "episode_id": "ep_001",
                         "series_name": "Liberta a Verdade",
                         "headline": "Sem disciplina, clareza perde força antes de virar resultado.",
                         "hook": "O travamento quase sempre nasce da falta de eixo.",
