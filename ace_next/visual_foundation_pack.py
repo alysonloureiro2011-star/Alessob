@@ -223,6 +223,11 @@ def _safe_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _resolve_support_block(template: Any):
+    blocks = getattr(template, "blocks", {}) or {}
+    return blocks.get("support_points") or blocks.get("support")
+
+
 def _bridge_bundle(
     *,
     plan: dict[str, Any],
@@ -524,7 +529,7 @@ def render_visual_foundation_card(
     headline = template.blocks["headline"]
     hook = template.blocks["hook"]
     body = template.blocks["body"]
-    support = template.blocks["support"]
+    support = _resolve_support_block(template)
     cta = template.blocks["cta"]
 
     eyebrow_text = "VISUAL SIGNAL"
@@ -570,17 +575,20 @@ def render_visual_foundation_card(
         line_gap=10,
     )
 
-    chip_y = max(current_y + safe.body_gap, support.y)
-    chip_width = support.width
+    support_x = support.x if support is not None else body.x
+    support_y = support.y if support is not None else max(current_y + safe.body_gap, body.y)
+    support_width = support.width if support is not None else body.width
+
+    chip_y = max(current_y + safe.body_gap, support_y)
     for point in display["support_points"][: contract.max_support_points]:
         chip_height = _draw_support_chip(
             draw,
-            x=support.x,
+            x=support_x,
             y=chip_y,
             text=point,
             font=support_font,
             identity=identity,
-            width=chip_width,
+            width=support_width,
         )
         chip_y += chip_height + safe.support_gap
 
