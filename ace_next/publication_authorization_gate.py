@@ -60,6 +60,31 @@ def _state_from_premium_protocol(classification: str) -> str:
     return INTERNAL_LAB
 
 
+def _resolve_staging_hardener(
+    visual_qa: dict[str, Any],
+    explicit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    explicit_dict = _safe_dict(explicit)
+    if explicit_dict:
+        return explicit_dict
+    metrics = _safe_dict(_safe_dict(visual_qa).get("metrics"))
+    return _safe_dict(metrics.get("staging_hardener"))
+
+
+def _resolve_authority_payload_source(
+    visual_qa: dict[str, Any],
+    explicit: str | None = None,
+) -> str:
+    if explicit:
+        return str(explicit)
+    metrics = _safe_dict(_safe_dict(visual_qa).get("metrics"))
+    if _safe_dict(metrics.get("render_payload_used")):
+        return "visual_qa.metrics.render_payload_used"
+    if _safe_dict(_safe_dict(metrics.get("staging_hardener")).get("hardened_payload")):
+        return "visual_qa.metrics.staging_hardener.hardened_payload"
+    return "creative_plan"
+
+
 @dataclass
 class PublicationAuthorizationResult:
     selected_state: str
@@ -82,6 +107,7 @@ class PublicationAuthorizationResult:
     staging_hardening_report: dict[str, Any]
     pre_hardening_state: str | None
     post_hardening_state: str | None
+    authority_payload_source: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,6 +126,7 @@ def _default_gate_payload(
     staging_hardening_report: dict[str, Any],
     pre_hardening_state: str | None,
     post_hardening_state: str | None,
+    authority_payload_source: str | None,
 ) -> PublicationAuthorizationResult:
     blocked_state = selected_state in {BLOCKED_BRAND, BLOCKED_QUALITY}
     brand_live_candidate = bool(premium_protocol.get("eligible_for_brand_live_candidate"))
@@ -124,6 +151,7 @@ def _default_gate_payload(
         staging_hardening_report=staging_hardening_report,
         pre_hardening_state=pre_hardening_state,
         post_hardening_state=post_hardening_state,
+        authority_payload_source=authority_payload_source,
     )
 
 
@@ -138,16 +166,11 @@ def authorize_publication(
     env_flags: dict[str, Any] | None = None,
     request_flags: dict[str, Any] | None = None,
     staging_hardener: dict[str, Any] | None = None,
+    authority_payload_source: str | None = None,
 ) -> PublicationAuthorizationResult:
     env_flags = dict(env_flags or {})
     request_flags = dict(request_flags or {})
-
-    visual_qa_dict = _safe_dict(visual_qa)
-    hardener = _safe_dict(staging_hardener) or _safe_dict(visual_qa_dict.get("staging_hardener"))
-    hardening_report = _safe_dict(hardener.get("hardening_report"))
-    staging_hardening_applied = bool(hardener.get("ok")) or bool(hardening_report)
-    pre_hardening_state = "blocked_brand" if staging_hardening_applied else None
-    post_hardening_state = None
+    visual_qa = _safe_dict(visual_qa)
 
     supported_states = [
         TECHNICAL_TEST,
@@ -159,12 +182,18 @@ def authorize_publication(
     ]
 
     require_human_review = _as_bool(env_flags.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"), True)
+    resolved_hardener = _resolve_staging_hardener(visual_qa, staging_hardener)
+    resolved_source = _resolve_authority_payload_source(visual_qa, authority_payload_source)
+
+    staging_hardening_report = _safe_dict(resolved_hardener.get("hardening_report"))
+    staging_hardening_applied = bool(resolved_hardener.get("ok")) or bool(staging_hardening_report)
+    pre_hardening_state = "blocked_brand_candidate" if staging_hardening_applied else None
 
     try:
         premium_protocol = evaluate_premium_eligibility_protocol(
             creative_plan=None,
             editorial_qa=_safe_dict(editorial_qa),
-            visual_qa=visual_qa_dict,
+            visual_qa=visual_qa,
             perceptual_qa=_safe_dict(perceptual_qa),
             rubric_engine=_safe_dict(rubric),
             brand_veto_gate=_safe_dict(brand_veto),
@@ -200,6 +229,8 @@ def authorize_publication(
     if force_placeholder:
         reasons = _merge_reasons(
             "placeholder solicitado: rota técnica autorizada apenas para teste",
+            f"authority_payload_source={resolved_source}",
+            "staging hardening considerado na autorização" if staging_hardening_applied else None,
             premium_protocol.get("reasons") or [],
         )
         return _default_gate_payload(
@@ -211,17 +242,19 @@ def authorize_publication(
             summary="teste técnico permitido; publish principal continua bloqueado",
             premium_protocol=premium_protocol,
             staging_hardening_applied=staging_hardening_applied,
-            staging_hardening_report=hardening_report,
+            staging_hardening_report=staging_hardening_report,
             pre_hardening_state=pre_hardening_state,
             post_hardening_state=TECHNICAL_TEST,
+            authority_payload_source=resolved_source,
         )
 
     selected_state = _state_from_premium_protocol(premium_classification)
-    post_hardening_state = selected_state
 
     if premium_classification == BLOCKED_BRAND:
         reasons = _merge_reasons(
             "peça bloqueada por risco de marca",
+            f"authority_payload_source={resolved_source}",
+            "staging hardening considerado na autorização" if staging_hardening_applied else None,
             premium_protocol.get("reasons") or [],
             _safe_dict(brand_veto).get("reasons") or [],
         )
@@ -234,14 +267,17 @@ def authorize_publication(
             summary="peça bloqueada por risco de marca",
             premium_protocol=premium_protocol,
             staging_hardening_applied=staging_hardening_applied,
-            staging_hardening_report=hardening_report,
+            staging_hardening_report=staging_hardening_report,
             pre_hardening_state=pre_hardening_state,
             post_hardening_state=BLOCKED_BRAND,
+            authority_payload_source=resolved_source,
         )
 
     if premium_classification == BLOCKED_QUALITY:
         reasons = _merge_reasons(
             "peça bloqueada por qualidade premium insuficiente",
+            f"authority_payload_source={resolved_source}",
+            "staging hardening considerado na autorização" if staging_hardening_applied else None,
             premium_protocol.get("reasons") or [],
             _safe_dict(rubric).get("reasons") or [],
         )
@@ -254,14 +290,17 @@ def authorize_publication(
             summary="peça bloqueada por qualidade premium insuficiente",
             premium_protocol=premium_protocol,
             staging_hardening_applied=staging_hardening_applied,
-            staging_hardening_report=hardening_report,
+            staging_hardening_report=staging_hardening_report,
             pre_hardening_state=pre_hardening_state,
             post_hardening_state=BLOCKED_QUALITY,
+            authority_payload_source=resolved_source,
         )
 
     if premium_classification == "editorial_staging":
         reasons = _merge_reasons(
             "peça aprovada apenas para editorial_staging",
+            f"authority_payload_source={resolved_source}",
+            "staging hardening considerado na autorização" if staging_hardening_applied else None,
             premium_protocol.get("reasons") or [],
         )
         return _default_gate_payload(
@@ -273,15 +312,18 @@ def authorize_publication(
             summary="peça aprovada apenas para editorial_staging",
             premium_protocol=premium_protocol,
             staging_hardening_applied=staging_hardening_applied,
-            staging_hardening_report=hardening_report,
+            staging_hardening_report=staging_hardening_report,
             pre_hardening_state=pre_hardening_state,
             post_hardening_state=EDITORIAL_STAGING,
+            authority_payload_source=resolved_source,
         )
 
     if premium_classification == "brand_live_candidate":
         reasons = _merge_reasons(
             "peça candidata a brand_live, mas ainda sob revisão humana obrigatória",
             "brand_live automático continua proibido",
+            f"authority_payload_source={resolved_source}",
+            "staging hardening considerado na autorização" if staging_hardening_applied else None,
             premium_protocol.get("reasons") or [],
         )
         return _default_gate_payload(
@@ -293,12 +335,15 @@ def authorize_publication(
             summary="peça candidata a brand_live, mas ainda sob revisão humana obrigatória",
             premium_protocol=premium_protocol,
             staging_hardening_applied=staging_hardening_applied,
-            staging_hardening_report=hardening_report,
+            staging_hardening_report=staging_hardening_report,
             pre_hardening_state=pre_hardening_state,
             post_hardening_state=EDITORIAL_STAGING,
+            authority_payload_source=resolved_source,
         )
 
     reasons = _merge_reasons(
+        f"authority_payload_source={resolved_source}",
+        "staging hardening considerado na autorização" if staging_hardening_applied else None,
         premium_protocol.get("reasons") or [],
         _safe_dict(rubric).get("reasons") or [],
     )
@@ -318,7 +363,8 @@ def authorize_publication(
         summary=summary,
         premium_protocol=premium_protocol,
         staging_hardening_applied=staging_hardening_applied,
-        staging_hardening_report=hardening_report,
+        staging_hardening_report=staging_hardening_report,
         pre_hardening_state=pre_hardening_state,
-        post_hardening_state=post_hardening_state,
+        post_hardening_state=selected_state,
+        authority_payload_source=resolved_source,
     )
