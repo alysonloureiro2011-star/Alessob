@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .episodic_serial_contract import build_episode_memory_contract
+
 
 @dataclass
 class EpisodicPerformanceMemorySummary:
@@ -18,12 +20,16 @@ class EpisodicPerformanceMemorySummary:
     latest_evidence_state: str | None
     latest_resolution_state: str | None
     latest_recommendation_state: str | None
+    latest_series_name: str | None
+    latest_continuity_state: str | None
     memory_reuse_rate: float
     learning_validity_score: float
     episodes_with_real_metrics: int
     episodes_with_receipt: int
     episodes_with_media_id: int
     episodes_with_permalink: int
+    continuity_confirmed_count: int
+    continuity_hypothesis_count: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,7 +42,7 @@ class EpisodicPerformanceMemory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def _empty_payload(self) -> dict[str, Any]:
-        return {"ok": True, "version": "measurement_core_v1", "episodes": []}
+        return {"ok": True, "version": "measurement_core_v2", "episodes": []}
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -48,7 +54,7 @@ class EpisodicPerformanceMemory:
             if not isinstance(payload.get("episodes"), list):
                 payload["episodes"] = []
             payload.setdefault("ok", True)
-            payload.setdefault("version", "measurement_core_v1")
+            payload.setdefault("version", "measurement_core_v2")
             return payload
         except Exception:
             return self._empty_payload()
@@ -71,7 +77,7 @@ class EpisodicPerformanceMemory:
                     break
         if not replaced:
             episodes.append(dict(episode))
-        payload["episodes"] = episodes[-300:]
+        payload["episodes"] = episodes[-400:]
         self._save(payload)
         return self.summary().to_dict()
 
@@ -94,6 +100,8 @@ class EpisodicPerformanceMemory:
         with_media_id = sum(1 for item in episodes if bool(item.get("has_media_id")))
         with_permalink = sum(1 for item in episodes if bool(item.get("has_permalink")))
         evidence_ready = sum(1 for item in episodes if bool(item.get("evidence_ready_for_resolution")))
+        continuity_confirmed = sum(1 for item in episodes if str(item.get("continuity_state")) == "continuity_confirmed")
+        continuity_hypothesis = sum(1 for item in episodes if str(item.get("continuity_state")) == "continuity_hypothesis")
 
         seen_pairs: set[tuple[str, str]] = set()
         reused = 0
@@ -114,11 +122,12 @@ class EpisodicPerformanceMemory:
 
         learning_validity_score = round(
             (
-                (receipt_ratio * 0.25)
-                + (media_ratio * 0.20)
+                (receipt_ratio * 0.22)
+                + (media_ratio * 0.18)
                 + (permalink_ratio * 0.10)
                 + (real_ratio * 0.25)
-                + (evidence_ready_ratio * 0.20)
+                + (evidence_ready_ratio * 0.15)
+                + ((continuity_confirmed / len(episodes)) * 0.10 if episodes else 0.0)
             )
             * 100.0,
             2,
@@ -135,12 +144,16 @@ class EpisodicPerformanceMemory:
             latest_evidence_state=latest.get("evidence_state"),
             latest_resolution_state=latest.get("resolution_state"),
             latest_recommendation_state=latest.get("recommendation_state"),
+            latest_series_name=latest.get("series_name"),
+            latest_continuity_state=latest.get("continuity_state"),
             memory_reuse_rate=memory_reuse_rate,
             learning_validity_score=learning_validity_score,
             episodes_with_real_metrics=with_real,
             episodes_with_receipt=with_receipt,
             episodes_with_media_id=with_media_id,
             episodes_with_permalink=with_permalink,
+            continuity_confirmed_count=continuity_confirmed,
+            continuity_hypothesis_count=continuity_hypothesis,
         )
 
 
@@ -154,12 +167,22 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
     evidence_interpreter = dict(record.get("evidence_interpreter") or {})
     experiment_resolution = dict(record.get("experiment_resolution") or {})
     recommendation_engine = dict(record.get("recommendation_engine") or {})
+    serial_continuity = dict(
+        creative_plan.get("serial_continuity")
+        or record.get("serial_continuity")
+        or {}
+    )
 
     media_id = receipt.get("media_id")
     permalink = receipt.get("permalink")
 
+    serial_contract = build_episode_memory_contract(
+        record=record,
+        serial_continuity=serial_continuity,
+    )
+
     return {
-        "episode_id": record.get("record_id"),
+        "episode_id": serial_contract.get("episode_id") or record.get("record_id"),
         "record_id": record.get("record_id"),
         "created_at": record.get("created_at"),
         "topic_seed": creative_plan.get("topic_seed"),
@@ -182,4 +205,18 @@ def build_episode_record(*, record: dict[str, Any]) -> dict[str, Any]:
         "evidence_ready_for_resolution": evidence_interpreter.get("evidence_ready_for_resolution"),
         "resolution_state": experiment_resolution.get("resolution_state"),
         "recommendation_state": recommendation_engine.get("recommended_action"),
+        "series_name": serial_contract.get("series_name"),
+        "episode_index_hint": serial_contract.get("episode_index_hint"),
+        "previous_episode_id": serial_contract.get("previous_episode_id"),
+        "parent_episode_id": serial_contract.get("parent_episode_id"),
+        "linked_series_candidate": serial_contract.get("linked_series_candidate"),
+        "sequel_candidate": serial_contract.get("sequel_candidate"),
+        "next_episode_seed": serial_contract.get("next_episode_seed"),
+        "carryover_problem": serial_contract.get("carryover_problem"),
+        "carryover_hook": serial_contract.get("carryover_hook"),
+        "carryover_payoff": serial_contract.get("carryover_payoff"),
+        "continuity_state": serial_contract.get("continuity_state"),
+        "continuity_confidence": serial_contract.get("continuity_confidence"),
+        "continuity_reason": serial_contract.get("continuity_reason"),
+        "continuity_source_mode": serial_contract.get("continuity_source_mode"),
     }
