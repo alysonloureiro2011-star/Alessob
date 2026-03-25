@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import textwrap
 import uuid
 from dataclasses import asdict, dataclass
@@ -7,7 +8,7 @@ from typing import Any
 
 from .config import AceNextConfig
 from .perceptual_qa import evaluate_perceptual_quality
-from .visual_contract import VisualContract, build_visual_contract, prepare_display_copy
+from .visual_contract import build_visual_contract, prepare_display_copy
 from .visual_templates import VisualTemplate, resolve_visual_template
 
 try:
@@ -138,50 +139,9 @@ class StoryFrame:
         return asdict(self)
 
 
-def build_visual_identity(plan: dict[str, Any]) -> VisualIdentity:
-    palette_name = str(plan.get("color_profile") or "editorial_violet")
-    palette = PALETTES.get(palette_name, PALETTES["editorial_violet"])
-    return VisualIdentity(
-        palette_name=palette_name,
-        series_name=str(plan.get("series_name") or "Liberta a Verdade"),
-        watermark_text="Liberta a Verdade",
-        background_color=palette["background"],
-        header_band_color=palette["header_band"],
-        panel_color=palette["panel"],
-        panel_border_color=palette["panel_border"],
-        accent_color=palette["accent"],
-        accent_soft_color=palette["accent_soft"],
-        text_primary=palette["text_primary"],
-        text_secondary=palette["text_secondary"],
-        text_on_dark=palette["text_on_dark"],
-        watermark_color=palette["watermark"],
-        safe_margin=78,
-        panel_radius=34,
-    )
-
-
-def build_typography_spec(plan: dict[str, Any]) -> TypographySpec:
-    headline = str(plan.get("headline") or "")
-    hook = str(plan.get("hook") or "")
-    body = str(plan.get("body") or "")
-
-    headline_size = 70 if len(headline) <= 66 else 64
-    hook_size = 28 if len(hook) <= 108 else 26
-    body_size = 30 if len(body) <= 158 else 28
-
-    return TypographySpec(
-        headline_size=headline_size,
-        hook_size=hook_size,
-        body_size=body_size,
-        support_size=24,
-        brand_size=26,
-        cta_size=26,
-        eyebrow_size=22,
-        headline_wrap=23,
-        hook_wrap=36,
-        body_wrap=43,
-        support_wrap=32,
-    )
+def _bridge_enabled() -> bool:
+    raw = os.environ.get("ACE_ENABLE_PREMIUM_VISUAL_BRIDGE", "0")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -252,7 +212,103 @@ def _draw_support_chip(draw, *, x: int, y: int, text: str, font, identity: Visua
     return chip_height
 
 
-def evaluate_visual_quality(*, plan: dict[str, Any], identity: VisualIdentity, typography: TypographySpec) -> VisualQAResult:
+def _safe_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "to_dict"):
+        try:
+            return value.to_dict()
+        except Exception:
+            return {}
+    return {}
+
+
+def _bridge_bundle(
+    *,
+    plan: dict[str, Any],
+    strategic_format: str,
+    visual_identity: dict[str, Any] | None = None,
+    visual_contract: dict[str, Any] | None = None,
+    capture_mode: str = "safe",
+) -> dict[str, Any]:
+    if not _bridge_enabled():
+        return {
+            "ok": True,
+            "enabled": False,
+            "approved_for_premium_visual": False,
+            "selected_template_id": None,
+            "premium_render_state": None,
+            "reasons": ["premium_visual_bridge_disabled"],
+        }
+
+    try:
+        from .visual_premium_bridge import build_visual_premium_bridge
+
+        return build_visual_premium_bridge(
+            creative_plan=plan,
+            visual_identity=visual_identity,
+            visual_contract=visual_contract,
+            strategic_format=strategic_format,
+            capture_mode=capture_mode,
+        )
+    except Exception as exc:
+        return {
+            "ok": True,
+            "enabled": True,
+            "approved_for_premium_visual": False,
+            "selected_template_id": None,
+            "premium_render_state": None,
+            "reasons": [f"premium_visual_bridge_error: {type(exc).__name__}: {exc}"],
+        }
+
+
+def build_visual_identity(plan: dict[str, Any]) -> VisualIdentity:
+    palette_name = str(plan.get("color_profile") or "editorial_violet")
+    palette = PALETTES.get(palette_name, PALETTES["editorial_violet"])
+    return VisualIdentity(
+        palette_name=palette_name,
+        series_name=str(plan.get("series_name") or "Liberta a Verdade"),
+        watermark_text="Liberta a Verdade",
+        background_color=palette["background"],
+        header_band_color=palette["header_band"],
+        panel_color=palette["panel"],
+        panel_border_color=palette["panel_border"],
+        accent_color=palette["accent"],
+        accent_soft_color=palette["accent_soft"],
+        text_primary=palette["text_primary"],
+        text_secondary=palette["text_secondary"],
+        text_on_dark=palette["text_on_dark"],
+        watermark_color=palette["watermark"],
+        safe_margin=78,
+        panel_radius=34,
+    )
+
+
+def build_typography_spec(plan: dict[str, Any]) -> TypographySpec:
+    headline = str(plan.get("headline") or "")
+    hook = str(plan.get("hook") or "")
+    body = str(plan.get("body") or "")
+
+    headline_size = 70 if len(headline) <= 66 else 64
+    hook_size = 28 if len(hook) <= 108 else 26
+    body_size = 30 if len(body) <= 158 else 28
+
+    return TypographySpec(
+        headline_size=headline_size,
+        hook_size=hook_size,
+        body_size=body_size,
+        support_size=24,
+        brand_size=26,
+        cta_size=26,
+        eyebrow_size=22,
+        headline_wrap=23,
+        hook_wrap=36,
+        body_wrap=43,
+        support_wrap=32,
+    )
+
+
+def _evaluate_visual_quality_fallback(*, plan: dict[str, Any], identity: VisualIdentity, typography: TypographySpec) -> VisualQAResult:
     contract = build_visual_contract(plan)
     template = resolve_visual_template(plan)
     perceptual = evaluate_perceptual_quality(
@@ -285,7 +341,38 @@ def evaluate_visual_quality(*, plan: dict[str, Any], identity: VisualIdentity, t
     )
 
 
+def evaluate_visual_quality(*, plan: dict[str, Any], identity: VisualIdentity, typography: TypographySpec):
+    try:
+        from .visual_qa import evaluate_visual_quality as external_visual_qa
+
+        return external_visual_qa(plan, identity, typography)
+    except Exception:
+        return _evaluate_visual_quality_fallback(plan=plan, identity=identity, typography=typography)
+
+
 def build_carousel_sequence(plan: dict[str, Any]) -> dict[str, Any]:
+    bridge = _bridge_bundle(plan=plan, strategic_format="carousel", capture_mode="safe")
+
+    if _bridge_enabled():
+        try:
+            from .carousel_premium_composer import compose_premium_carousel
+
+            premium = compose_premium_carousel(
+                creative_plan=plan,
+                visual_identity=None,
+                visual_contract=None,
+                capture_mode="safe",
+            )
+            if premium.get("ok"):
+                premium["premium_visual_bridge"] = bridge
+                premium["premium_visual_enabled"] = bridge.get("enabled", False)
+                premium["premium_visual_selected"] = premium.get("approved_for_staging", False)
+                premium["premium_template_id"] = premium.get("template_ids", [None])[0] if premium.get("template_ids") else None
+                premium["premium_render_state"] = (premium.get("render_outputs") or [{}])[0].get("premium_render_state") if premium.get("render_outputs") else None
+                return premium
+        except Exception:
+            pass
+
     contract = build_visual_contract(plan)
     display = prepare_display_copy(plan, contract)
     support = display["support_points"]
@@ -300,10 +387,37 @@ def build_carousel_sequence(plan: dict[str, Any]) -> dict[str, Any]:
         "strategic_format": "carousel",
         "template_id": resolve_visual_template(plan).template_id,
         "slides": [slide.to_dict() for slide in slides],
+        "premium_visual_bridge": bridge,
+        "premium_visual_enabled": bridge.get("enabled", False),
+        "premium_visual_selected": False,
+        "premium_template_id": bridge.get("selected_template_id"),
+        "premium_render_state": bridge.get("premium_render_state"),
     }
 
 
 def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
+    bridge = _bridge_bundle(plan=plan, strategic_format="story", capture_mode="safe")
+
+    if _bridge_enabled():
+        try:
+            from .story_premium_composer import compose_premium_stories
+
+            premium = compose_premium_stories(
+                creative_plan=plan,
+                visual_identity=None,
+                visual_contract=None,
+                capture_mode="safe",
+            )
+            if premium.get("ok"):
+                premium["premium_visual_bridge"] = bridge
+                premium["premium_visual_enabled"] = bridge.get("enabled", False)
+                premium["premium_visual_selected"] = premium.get("approved_for_staging", False)
+                premium["premium_template_id"] = premium.get("template_ids", [None])[0] if premium.get("template_ids") else None
+                premium["premium_render_state"] = (premium.get("render_outputs") or [{}])[0].get("premium_render_state") if premium.get("render_outputs") else None
+                return premium
+        except Exception:
+            pass
+
     contract = build_visual_contract(plan)
     display = prepare_display_copy(plan, contract)
     frames = [
@@ -317,6 +431,11 @@ def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
         "strategic_format": "stories",
         "template_id": resolve_visual_template(plan).template_id,
         "frames": [frame.to_dict() for frame in frames],
+        "premium_visual_bridge": bridge,
+        "premium_visual_enabled": bridge.get("enabled", False),
+        "premium_visual_selected": False,
+        "premium_template_id": bridge.get("selected_template_id"),
+        "premium_render_state": bridge.get("premium_render_state"),
     }
 
 
@@ -327,6 +446,20 @@ def render_visual_foundation_card(
     identity: VisualIdentity,
     typography: TypographySpec,
 ) -> str:
+    bridge = _bridge_bundle(
+        plan=plan,
+        strategic_format="image",
+        visual_identity=identity.to_dict(),
+        visual_contract=None,
+        capture_mode="safe",
+    )
+
+    if bridge.get("enabled") and bridge.get("approved_for_premium_visual"):
+        render = _safe_dict(bridge.get("render"))
+        premium_path = render.get("screenshot_path") or render.get("html_path")
+        if isinstance(premium_path, str) and premium_path.strip():
+            return premium_path
+
     contract = build_visual_contract(plan)
     template = resolve_visual_template(plan)
     display = prepare_display_copy(plan, contract)
