@@ -24,6 +24,7 @@ from .visual_foundation_pack import (
     evaluate_visual_quality,
     render_visual_foundation_card,
 )
+from .visual_premium_bridge import build_visual_premium_bridge
 from .visual_templates import resolve_visual_template
 
 AUTH_STACK_IMPORT_ERROR: str | None = None
@@ -123,6 +124,7 @@ class OfficialRuntime:
     def __init__(self, config: AceNextConfig):
         self.config = config
         self.publish = PublishService(config)
+        self._last_run_summary: dict[str, Any] = {}
         self._boot_sync()
 
     def _brand_env_flags(self) -> dict[str, Any]:
@@ -153,6 +155,14 @@ class OfficialRuntime:
 
     def _runtime_queue_state(self) -> dict[str, int]:
         return {"active_jobs": 0, "pending_jobs": 0}
+
+    def _recent_episodic_memory_for_planner(self, limit: int = 5) -> list[dict[str, Any]]:
+        if MEASUREMENT_STACK_IMPORT_ERROR or EpisodicPerformanceMemory is None:
+            return []
+        try:
+            return EpisodicPerformanceMemory(self.config).list_episodes(limit=limit)
+        except Exception:
+            return []
 
     def _auth_state(self) -> dict[str, Any]:
         stored = load_instagram_auth(self.config)
@@ -300,6 +310,7 @@ class OfficialRuntime:
             "brand_live_allowed": False,
             "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
             "brand_surface_flags": env_flags,
+            "last_run_summary": self._last_run_summary,
         }
 
     def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -350,6 +361,12 @@ class OfficialRuntime:
             "reasons": [reason],
             "summary": "authorization stack em fallback seguro",
             "stack_ok": False,
+            "premium_classification": "internal_lab" if not force_placeholder else "technical_test",
+            "eligible_for_editorial_staging": False,
+            "eligible_for_brand_live_candidate": False,
+            "missing_for_brand_live": [],
+            "score_gap_to_brand_live": 0.0,
+            "next_quality_lift_targets": [],
         }
         return rubric_engine, brand_veto_gate, publication_authorization_gate
 
@@ -363,6 +380,7 @@ class OfficialRuntime:
         perceptual_qa: dict[str, Any],
         env_flags: dict[str, Any],
         request_flags: dict[str, Any],
+        staging_hardener: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         if AUTH_STACK_IMPORT_ERROR or not evaluate_rubric_engine or not evaluate_brand_veto_gate or not authorize_publication:
             return self._authorization_fallback(
@@ -393,6 +411,7 @@ class OfficialRuntime:
                 brand_veto=brand_veto,
                 env_flags=env_flags,
                 request_flags=request_flags,
+                staging_hardener=staging_hardener,
             )
 
             rubric_dict = rubric.to_dict()
@@ -669,7 +688,7 @@ class OfficialRuntime:
                 "topic_seed": creative_plan.get("topic_seed"),
                 "series_name": serial_continuity.get("series_name"),
                 "linked_series_candidate": serial_continuity.get("linked_series_candidate"),
-                "continuity_state": serial_continuity.get("continuity_state"),
+                "continuity_state": serial_continuity.get("continuation_type"),
                 "next_episode_seed": serial_continuity.get("next_episode_seed"),
                 "latest_episode_id": self._episodic_memory_summary().get("latest_episode_id"),
             }
@@ -916,11 +935,13 @@ class OfficialRuntime:
             }
 
         try:
+            recent_memory = self._recent_episodic_memory_for_planner(limit=5)
             planner_overrides = _planner_overrides_from_mission_decision(mission_decision)
             plan = build_creative_plan(
                 trend,
                 overrides=planner_overrides,
                 mission_decision=mission_decision,
+                recent_memory=recent_memory,
             )
             plan_dict = plan.to_dict()
         except Exception as exc:
@@ -1017,6 +1038,15 @@ class OfficialRuntime:
                 "recommendations": [],
             }
 
+        premium_visual = build_visual_premium_bridge(
+            creative_plan=plan_dict,
+            visual_identity=visual_identity_dict,
+            visual_contract=visual_contract_dict,
+            strategic_format=plan_dict.get("publish_format_now"),
+            template_id=None,
+            capture_mode="safe",
+        )
+
         rubric_engine, brand_veto_gate, publication_authorization_gate = self._run_authorization_stack(
             force_placeholder=force_placeholder,
             plan_dict=plan_dict,
@@ -1025,6 +1055,7 @@ class OfficialRuntime:
             perceptual_qa=perceptual_qa,
             env_flags=env_flags,
             request_flags=request_flags,
+            staging_hardener=dict(premium_visual.get("hardening_report") or {}),
         )
 
         try:
@@ -1226,6 +1257,26 @@ class OfficialRuntime:
             probe_context=probe_context,
         )
 
+        self._last_run_summary = {
+            "timestamp": datetime.now().isoformat(),
+            "premium_classification": publication_authorization_gate.get("premium_classification"),
+            "eligible_for_editorial_staging": publication_authorization_gate.get("eligible_for_editorial_staging"),
+            "eligible_for_brand_live_candidate": publication_authorization_gate.get("eligible_for_brand_live_candidate"),
+            "missing_for_brand_live": publication_authorization_gate.get("missing_for_brand_live"),
+            "score_gap_to_brand_live": publication_authorization_gate.get("score_gap_to_brand_live"),
+            "next_quality_lift_targets": publication_authorization_gate.get("next_quality_lift_targets"),
+            "caption_gate_result": plan_dict.get("caption_gate_result"),
+            "caption_gate_score": plan_dict.get("caption_gate_score"),
+            "caption_gate_flags": plan_dict.get("caption_gate_flags"),
+            "premium_visual_result": bool(premium_visual.get("approved_for_premium_visual")),
+            "premium_visual_reasons": premium_visual.get("reasons"),
+            "publication_authorization_summary": publication_authorization_gate.get("summary"),
+            "selected_template_id": premium_visual.get("selected_template_id"),
+            "premium_render_state": premium_visual.get("premium_render_state"),
+            "hardening_applied": premium_visual.get("hardening_applied"),
+            "hardening_report": premium_visual.get("hardening_report"),
+        }
+
         return {
             "ok": True,
             "mode": operational_state,
@@ -1254,6 +1305,13 @@ class OfficialRuntime:
             "visual_identity": visual_identity_dict,
             "typography": typography_dict,
             "visual_qa": visual_qa,
+            "premium_visual": premium_visual,
+            "approved_for_premium_visual": premium_visual.get("approved_for_premium_visual"),
+            "selected_template_id": premium_visual.get("selected_template_id"),
+            "premium_render_state": premium_visual.get("premium_render_state"),
+            "hardening_applied": premium_visual.get("hardening_applied"),
+            "hardening_report": premium_visual.get("hardening_report"),
+            "premium_visual_reasons": premium_visual.get("reasons"),
             "rubric_engine": rubric_engine,
             "brand_veto_gate": brand_veto_gate,
             "publication_authorization_gate": publication_authorization_gate,
