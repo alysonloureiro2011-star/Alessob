@@ -1030,9 +1030,23 @@ class OfficialRuntime:
             },
         )
 
+        explicit_probe_execution_allowed = bool(
+            request_flags.get("probe_requested")
+            and request_flags.get("explicit_probe_arm")
+            and not force_placeholder
+            and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
+        )
+
+        if explicit_probe_execution_allowed:
+            lab_probe_policy["probe_eligible"] = True
+            lab_probe_policy["probe_block_reason"] = None
+            lab_probe_policy["requested_real_publish"] = True
+            lab_probe_policy["render_only_mode"] = False
+
         if lab_probe_policy.get("probe_block_reason"):
             block_reasons.append(str(lab_probe_policy.get("probe_block_reason")))
-        if brand_surface_policy.get("block_reason"):
+
+        if brand_surface_policy.get("block_reason") and not explicit_probe_execution_allowed:
             block_reasons.append(str(brand_surface_policy.get("block_reason")))
 
         render_path = None
@@ -1075,9 +1089,8 @@ class OfficialRuntime:
                     lab_probe_policy["render_path"] = None
 
             effective_real_publish = bool(
-                lab_probe_policy.get("probe_eligible")
-                and brand_surface_policy.get("main_surface_allowed")
-                and render_path
+                explicit_probe_execution_allowed
+                and lab_probe_policy.get("probe_eligible")
             )
 
             if effective_real_publish:
@@ -1089,10 +1102,12 @@ class OfficialRuntime:
                     "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
                     "publish_executed": False,
                     "render_path": render_path,
+                    "render_error": render_error,
                     "allow_real_publish": True,
                     "probe_block_reason": None,
                     "surface_mode": brand_surface_policy.get("surface_mode"),
                 }
+
                 publish_result = self.publish.publish_real(
                     trend=trend,
                     style=str(plan.publish_style),
@@ -1101,6 +1116,7 @@ class OfficialRuntime:
                     media_path=render_path,
                     linkage_context=linkage_context,
                 )
+
                 publish_status = str((publish_result or {}).get("publish_status") or "")
                 lab_probe_policy["probe_publish_executed"] = publish_status == "published_real_probe"
             else:
@@ -1125,16 +1141,14 @@ class OfficialRuntime:
             "requested": bool(lab_probe_policy.get("probe_requested")),
             "requested_state": lab_probe_policy.get("probe_state_requested"),
             "effective_state": lab_probe_policy.get("probe_state_effective"),
-            "eligible": bool(
-                lab_probe_policy.get("probe_eligible")
-                and brand_surface_policy.get("main_surface_allowed")
-            ),
+            "eligible": bool(lab_probe_policy.get("probe_eligible")),
             "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
             "publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
             "render_path": render_path,
+            "render_error": render_error,
             "allow_real_publish": bool(
-                lab_probe_policy.get("probe_eligible")
-                and brand_surface_policy.get("main_surface_allowed")
+                explicit_probe_execution_allowed
+                and lab_probe_policy.get("probe_eligible")
             ),
             "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
             "surface_mode": brand_surface_policy.get("surface_mode"),
