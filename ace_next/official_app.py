@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -48,121 +47,11 @@ def _is_compact_request() -> bool:
     return str(request.args.get("compact", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _compact_last_publish_payload(last_publish: dict[str, Any] | None) -> dict[str, Any]:
-    payload = dict(last_publish or {})
-    receipt = dict(payload.get("last_publish_receipt") or {})
-    error = dict(payload.get("last_publish_error") or {})
-    episode = dict(payload.get("last_episode") or {})
-
-    return {
-        "source_of_truth": payload.get("source_of_truth"),
-        "publish_status": receipt.get("publish_status") or error.get("publish_status"),
-        "receipt_id": receipt.get("receipt_id") or error.get("receipt_id"),
-        "media_id": payload.get("latest_media_id") or receipt.get("media_id") or episode.get("media_id"),
-        "permalink": payload.get("latest_permalink") or receipt.get("permalink") or episode.get("permalink"),
-        "latest_evidence_state": payload.get("latest_evidence_state") or episode.get("evidence_state"),
-        "latest_resolution_state": payload.get("latest_resolution_state") or episode.get("resolution_state"),
-        "total_records": payload.get("total_records"),
-        "total_episodes": payload.get("total_episodes") or payload.get("episodes_count"),
-        "updated_at": payload.get("updated_at"),
-    }
-
-
-def _compact_runtime_payload(runtime_snapshot: dict[str, Any], last_publish: dict[str, Any]) -> dict[str, Any]:
-    runtime_snapshot = dict(runtime_snapshot or {})
-    performance_store = dict(runtime_snapshot.get("performance_store") or {})
-    experiment_registry = dict(runtime_snapshot.get("experiment_registry") or {})
-    episodic_memory = dict(runtime_snapshot.get("episodic_performance_memory") or {})
-    last_run_summary = dict(runtime_snapshot.get("last_run_summary") or {})
-
-    return {
-        "token_present": runtime_snapshot.get("token_present"),
-        "ig_id_present": runtime_snapshot.get("ig_id_present"),
-        "enable_real_publish": runtime_snapshot.get("enable_real_publish"),
-        "brand_surface_mode": runtime_snapshot.get("brand_surface_mode"),
-        "real_probe_allowed_states": runtime_snapshot.get("real_probe_allowed_states"),
-        "performance_store": {
-            "total_records": performance_store.get("total_records"),
-            "latest_receipt_id": performance_store.get("latest_receipt_id"),
-            "latest_media_id": performance_store.get("latest_media_id"),
-            "latest_permalink": performance_store.get("latest_permalink"),
-            "latest_probe_requested": performance_store.get("latest_probe_requested"),
-            "latest_probe_publish_executed": performance_store.get("latest_probe_publish_executed"),
-            "latest_evidence_bridge_state": performance_store.get("latest_evidence_bridge_state"),
-        },
-        "experiment_registry": {
-            "total_experiments": experiment_registry.get("total_experiments"),
-            "latest_experiment_state": experiment_registry.get("latest_experiment_state"),
-            "latest_resolution_state": experiment_registry.get("latest_resolution_state"),
-        },
-        "episodic_performance_memory": {
-            "total_episodes": episodic_memory.get("total_episodes"),
-            "latest_episode_id": episodic_memory.get("latest_episode_id"),
-            "latest_continuity_state": episodic_memory.get("latest_continuity_state"),
-            "latest_series_name": episodic_memory.get("latest_series_name"),
-        },
-        "premium_classification": last_run_summary.get("premium_classification"),
-        "eligible_for_editorial_staging": last_run_summary.get("eligible_for_editorial_staging"),
-        "eligible_for_brand_live_candidate": last_run_summary.get("eligible_for_brand_live_candidate"),
-        "missing_for_brand_live": last_run_summary.get("missing_for_brand_live"),
-        "score_gap_to_brand_live": last_run_summary.get("score_gap_to_brand_live"),
-        "next_quality_lift_targets": last_run_summary.get("next_quality_lift_targets"),
-        "caption_gate_result": last_run_summary.get("caption_gate_result"),
-        "caption_gate_score": last_run_summary.get("caption_gate_score"),
-        "premium_visual_result": last_run_summary.get("premium_visual_result"),
-        "publication_authorization_summary": last_run_summary.get("publication_authorization_summary"),
-        "selected_template_id": last_run_summary.get("selected_template_id"),
-        "premium_render_state": last_run_summary.get("premium_render_state"),
-        "hardening_applied": last_run_summary.get("hardening_applied"),
-        "last_publish": _compact_last_publish_payload(last_publish),
-    }
-
-
-def _compact_publish_test_payload(result: dict[str, Any] | None) -> dict[str, Any]:
-    result = dict(result or {})
-    publish_result = dict(result.get("publish_result") or {})
-    evidence_interpreter = dict(result.get("evidence_interpreter") or {})
-    experiment_resolution = dict(result.get("experiment_resolution") or {})
-    recommendation_engine = dict(result.get("recommendation_engine") or {})
-    performance_summary = dict(result.get("performance_summary") or {})
-    publish_state = dict(performance_summary.get("publish_state") or {})
-    plan = dict(result.get("creative_plan") or {})
-    authz = dict(result.get("publication_authorization_gate") or {})
-
-    return {
-        "ok": result.get("ok"),
-        "authorization_state": result.get("authorization_state"),
-        "operational_state": result.get("operational_state"),
-        "probe_requested": result.get("probe_requested"),
-        "probe_eligible": result.get("probe_eligible"),
-        "probe_publish_executed": result.get("probe_publish_executed"),
-        "probe_block_reason": result.get("probe_block_reason"),
-        "publish_status": publish_result.get("publish_status") or publish_state.get("publish_status"),
-        "receipt_id": publish_result.get("receipt_id") or publish_state.get("receipt_id"),
-        "media_id": publish_result.get("media_id") or publish_state.get("media_id"),
-        "permalink": publish_result.get("permalink") or publish_state.get("permalink"),
-        "latest_evidence_state": evidence_interpreter.get("evidence_state"),
-        "latest_resolution_state": experiment_resolution.get("resolution_state"),
-        "recommended_action": recommendation_engine.get("recommended_action"),
-        "next_best_step": recommendation_engine.get("next_best_step"),
-        "premium_classification": authz.get("premium_classification"),
-        "eligible_for_editorial_staging": authz.get("eligible_for_editorial_staging"),
-        "eligible_for_brand_live_candidate": authz.get("eligible_for_brand_live_candidate"),
-        "missing_for_brand_live": authz.get("missing_for_brand_live"),
-        "score_gap_to_brand_live": authz.get("score_gap_to_brand_live"),
-        "next_quality_lift_targets": authz.get("next_quality_lift_targets"),
-        "caption_gate_result": plan.get("caption_gate_result"),
-        "caption_gate_score": plan.get("caption_gate_score"),
-        "premium_visual_result": result.get("approved_for_premium_visual"),
-        "publication_authorization_summary": authz.get("summary"),
-    }
-
-
 def create_official_app() -> Flask:
     config = load_config()
     app = Flask(__name__)
 
-    runtime_holder: dict[str, Any] = {}
+    runtime_holder: dict[str, object] = {}
 
     def get_runtime():
         runtime = runtime_holder.get("runtime")
@@ -172,7 +61,7 @@ def create_official_app() -> Flask:
             runtime_holder["runtime"] = runtime
         return runtime
 
-    def _build_runtime_probe_payload(runtime, trend: str | None) -> dict[str, Any]:
+    def _build_runtime_probe_payload(runtime, trend: str | None) -> dict:
         trend = (trend or "").strip()
         if not trend:
             return {
@@ -230,23 +119,42 @@ def create_official_app() -> Flask:
     @app.get("/ext/runtime")
     def ext_runtime() -> object:
         runtime = get_runtime()
-        runtime_snapshot = runtime.snapshot()
-        last_publish = runtime.publish.last_publish()
         if _is_compact_request():
             return jsonify(
                 {
                     "ok": True,
                     "route": "/ext/runtime",
-                    "compact": True,
-                    "runtime": _compact_runtime_payload(runtime_snapshot, last_publish),
+                    **runtime.compact_runtime_summary(),
                 }
             )
         return jsonify(
             {
                 "ok": True,
                 "route": "/ext/runtime",
-                "runtime": runtime_snapshot,
-                "last_publish": last_publish,
+                "runtime": runtime.snapshot(),
+                "last_publish": runtime.publish.last_publish(),
+            }
+        )
+
+    @app.get("/ext/probe/readiness")
+    def ext_probe_readiness() -> object:
+        runtime = get_runtime()
+        return jsonify(
+            {
+                "ok": True,
+                "route": "/ext/probe/readiness",
+                **runtime.probe_readiness_summary(),
+            }
+        )
+
+    @app.get("/ext/quality/gap")
+    def ext_quality_gap() -> object:
+        runtime = get_runtime()
+        return jsonify(
+            {
+                "ok": True,
+                "route": "/ext/quality/gap",
+                **runtime.quality_gap_summary(),
             }
         )
 
@@ -271,21 +179,19 @@ def create_official_app() -> Flask:
     @app.get("/ext/publish/last")
     def ext_publish_last() -> object:
         runtime = get_runtime()
-        last_publish = runtime.publish.last_publish()
         if _is_compact_request():
             return jsonify(
                 {
                     "ok": True,
                     "route": "/ext/publish/last",
-                    "compact": True,
-                    "last_publish": _compact_last_publish_payload(last_publish),
+                    **runtime.last_publish_compact_summary(),
                 }
             )
         return jsonify(
             {
                 "ok": True,
                 "route": "/ext/publish/last",
-                "last_publish": last_publish,
+                "last_publish": runtime.publish.last_publish(),
             }
         )
 
@@ -589,12 +495,40 @@ def create_official_app() -> Flask:
         )
 
         if _is_compact_request():
+            publish_result = dict(result.get("publish_result") or {})
+            evidence_interpreter = dict(result.get("evidence_interpreter") or {})
+            experiment_resolution = dict(result.get("experiment_resolution") or {})
+            recommendation_engine = dict(result.get("recommendation_engine") or {})
+            performance_summary = dict(result.get("performance_summary") or {})
+            publish_state = dict(performance_summary.get("publish_state") or {})
+            plan = dict(result.get("creative_plan") or {})
+            authz = dict(result.get("publication_authorization_gate") or {})
+
             return jsonify(
                 {
                     "ok": True,
                     "route": "/publish/test",
-                    "compact": True,
-                    "result": _compact_publish_test_payload(result),
+                    "authorization_state": result.get("authorization_state"),
+                    "operational_state": result.get("operational_state"),
+                    "probe_requested": result.get("probe_requested"),
+                    "probe_eligible": result.get("probe_eligible"),
+                    "probe_publish_executed": result.get("probe_publish_executed"),
+                    "probe_block_reason": result.get("probe_block_reason"),
+                    "publish_status": publish_result.get("publish_status") or publish_state.get("publish_status"),
+                    "receipt_id": publish_result.get("receipt_id") or publish_state.get("receipt_id"),
+                    "media_id": publish_result.get("media_id") or publish_state.get("media_id"),
+                    "permalink": publish_result.get("permalink") or publish_state.get("permalink"),
+                    "latest_evidence_state": evidence_interpreter.get("evidence_state"),
+                    "latest_resolution_state": experiment_resolution.get("resolution_state"),
+                    "recommended_action": recommendation_engine.get("recommended_action"),
+                    "next_best_step": recommendation_engine.get("next_best_step"),
+                    "premium_classification": authz.get("premium_classification"),
+                    "eligible_for_editorial_staging": authz.get("eligible_for_editorial_staging"),
+                    "eligible_for_brand_live_candidate": authz.get("eligible_for_brand_live_candidate"),
+                    "score_gap_to_brand_live": authz.get("score_gap_to_brand_live"),
+                    "missing_for_brand_live": authz.get("missing_for_brand_live"),
+                    "caption_gate_result": plan.get("caption_gate_result"),
+                    "caption_gate_score": plan.get("caption_gate_score"),
                 }
             )
 
