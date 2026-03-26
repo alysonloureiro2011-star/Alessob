@@ -6,10 +6,12 @@ import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .caption_comprehension_gate import evaluate_caption_comprehension
 from .creative_planner_soberano_v1 import build_creative_plan_soberano_v1
 from .editorial_examples import examples_context
 from .editorial_policy import BRAND_PERSONA, POLICY_VERSION, TONE_OF_VOICE, get_editorial_policy, lexicon_hits
 from .editorial_rubric import evaluate_editorial_quality
+from .serial_continuity_engine import build_serial_continuity
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,10 @@ class CreativePlan:
     risk_flags: list[str] | None = None
     editorial_critic: dict[str, Any] | None = None
     caption_gate: dict[str, Any] | None = None
+    caption_gate_result: bool | None = None
+    caption_gate_score: float | None = None
+    caption_gate_flags: list[str] | None = None
+    caption_gate_reasons: list[str] | None = None
     continuation_candidate: bool | None = None
     planner_version: str | None = None
     planner_mode: str | None = None
@@ -207,6 +213,15 @@ def _normalize_text_override(value: Any) -> str | None:
     return cleaned or None
 
 
+def _recommended_next_series_action(serial_continuity: dict[str, Any], recent_memory: list[dict[str, Any]] | None) -> str:
+    role = str(serial_continuity.get("episode_role") or "")
+    if role == "follow_up":
+        return "continuar a série com aprofundamento disciplinado"
+    if recent_memory:
+        return "ligar o próximo episódio ao contexto recente sem fingir continuidade forte"
+    return "abrir continuidade conservadora sem forçar série"
+
+
 def _apply_overrides_to_plan(
     plan: CreativePlan,
     *,
@@ -280,12 +295,90 @@ def _apply_overrides_to_plan(
     return plan
 
 
+def _apply_caption_and_continuity(
+    plan: CreativePlan,
+    *,
+    recent_memory: list[dict[str, Any]] | None = None,
+) -> CreativePlan:
+    recent_memory = list(recent_memory or [])
+
+    caption_gate = evaluate_caption_comprehension(
+        headline=plan.headline,
+        hook=plan.hook,
+        body=plan.body,
+        cta=plan.cta,
+    )
+    plan.caption_gate = caption_gate
+    plan.caption_gate_result = bool(caption_gate.get("approved"))
+    plan.caption_gate_score = float(caption_gate.get("score") or 0.0)
+    plan.caption_gate_flags = list(caption_gate.get("flags") or [])
+    plan.caption_gate_reasons = list(caption_gate.get("reasons") or [])
+
+    plan.notes.append(f"caption_gate_result={str(plan.caption_gate_result).lower()}")
+    plan.notes.append(f"caption_gate_score={plan.caption_gate_score}")
+    if plan.caption_gate_flags:
+        plan.notes.append(f"caption_gate_flags={','.join(plan.caption_gate_flags)}")
+
+    fallback_flags = list(plan.fallback_flags or [])
+    if not plan.caption_gate_result:
+        if "caption_gate_soft_fail" not in fallback_flags:
+            fallback_flags.append("caption_gate_soft_fail")
+        plan.official_path_quality_state = "caption_gate_soft_fail"
+    else:
+        if not plan.official_path_quality_state or plan.official_path_quality_state == "conservative_fallback":
+            plan.official_path_quality_state = "caption_gate_passed"
+
+    plan.fallback_flags = fallback_flags
+
+    serial_continuity = build_serial_continuity(
+        creative_plan=plan.to_dict(),
+        recent_memory=recent_memory,
+    )
+    plan.serial_continuity = serial_continuity
+    plan.continuation_candidate = bool(serial_continuity.get("next_episode_seed"))
+
+    existing_distribution = dict(plan.distribution_context or {})
+    recommended_next_format = (
+        existing_distribution.get("recommended_next_format")
+        or serial_continuity.get("linked_format_suggestion")
+        or plan.publish_format_now
+    )
+    recommended_next_angle = (
+        existing_distribution.get("recommended_next_angle")
+        or serial_continuity.get("next_episode_seed")
+        or plan.angle
+    )
+    recommended_next_series_action = (
+        existing_distribution.get("recommended_next_series_action")
+        or _recommended_next_series_action(serial_continuity, recent_memory)
+    )
+    recommended_timing_hypothesis = (
+        existing_distribution.get("recommended_timing_hypothesis")
+        or plan.timing_hypothesis
+        or "24-48h com leitura conservadora do sinal"
+    )
+
+    plan.distribution_context = {
+        "recommended_next_format": recommended_next_format,
+        "recommended_next_angle": recommended_next_angle,
+        "recommended_next_series_action": recommended_next_series_action,
+        "recommended_timing_hypothesis": recommended_timing_hypothesis,
+        "source_mode": "memory_informed" if recent_memory else "conservative_fallback",
+    }
+
+    plan.notes.append(f"planner_mode={plan.planner_mode}")
+    plan.notes.append(f"deterministic_path={str(bool(plan.deterministic_path)).lower()}")
+
+    return plan
+
+
 def _map_soberano_to_creative_plan(
     trend: str,
     sovereign: dict[str, Any],
     *,
     overrides: dict[str, Any] | None = None,
     mission_decision: dict[str, Any] | None = None,
+    recent_memory: list[dict[str, Any]] | None = None,
 ) -> CreativePlan:
     topic_seed = _topic_seed(str(sovereign.get("topic_seed") or trend))
     keywords = _keywords(topic_seed)
@@ -369,7 +462,8 @@ def _map_soberano_to_creative_plan(
         mission_context={},
         override_summary={},
     )
-    return _apply_overrides_to_plan(plan, overrides=overrides, mission_decision=mission_decision)
+    plan = _apply_overrides_to_plan(plan, overrides=overrides, mission_decision=mission_decision)
+    return _apply_caption_and_continuity(plan, recent_memory=recent_memory)
 
 
 def _build_creative_plan_legacy(
@@ -377,6 +471,7 @@ def _build_creative_plan_legacy(
     *,
     overrides: dict[str, Any] | None = None,
     mission_decision: dict[str, Any] | None = None,
+    recent_memory: list[dict[str, Any]] | None = None,
 ) -> CreativePlan:
     policy = get_editorial_policy()
     clean_input = _clean_text(trend)
@@ -455,7 +550,7 @@ def _build_creative_plan_legacy(
         deterministic_path=True,
         continuation_candidate=False,
         serial_continuity={},
-        distribution_context={"source_mode": "conservative_fallback"},
+        distribution_context={},
         fallback_flags=["legacy_fallback"],
         official_path_quality_state="conservative_fallback",
         goal=None,
@@ -463,13 +558,15 @@ def _build_creative_plan_legacy(
         mission_context={},
         override_summary={},
     )
-    return _apply_overrides_to_plan(plan, overrides=overrides, mission_decision=mission_decision)
+    plan = _apply_overrides_to_plan(plan, overrides=overrides, mission_decision=mission_decision)
+    return _apply_caption_and_continuity(plan, recent_memory=recent_memory)
 
 
 def build_creative_plan(
     trend: str,
     overrides: dict[str, Any] | None = None,
     mission_decision: dict[str, Any] | None = None,
+    recent_memory: list[dict[str, Any]] | None = None,
 ) -> CreativePlan:
     overrides = dict(overrides or {})
     mission_decision = dict(mission_decision or {})
@@ -491,6 +588,7 @@ def build_creative_plan(
             sovereign,
             overrides=overrides,
             mission_decision=mission_decision,
+            recent_memory=recent_memory,
         )
     except Exception as exc:
         logger.exception("planner_generation_fail")
@@ -498,6 +596,7 @@ def build_creative_plan(
             trend,
             overrides=overrides,
             mission_decision=mission_decision,
+            recent_memory=recent_memory,
         )
         legacy.notes.append(f"planner_generation_fail=creative_planner_soberano_v1:{type(exc).__name__}")
         legacy.notes.append("planner_selected=creative_planner_legacy_after_soberano_fail")
