@@ -113,6 +113,47 @@ def create_official_app() -> Flask:
             }
         )
 
+    @app.get("/ext/runtime")
+    def ext_runtime() -> object:
+        runtime = get_runtime()
+        return jsonify(
+            {
+                "ok": True,
+                "route": "/ext/runtime",
+                "runtime": runtime.snapshot(),
+                "last_publish": runtime.publish.last_publish(),
+            }
+        )
+
+    @app.get("/ext/instagram/status")
+    def ext_instagram_status() -> object:
+        runtime = get_runtime()
+        sync = runtime.sync_instagram_auth()
+        return jsonify(
+            {
+                "ok": True,
+                "route": "/ext/instagram/status",
+                "token_present": sync.get("token_present"),
+                "ig_id_present": sync.get("ig_id_present"),
+                "token_source": sync.get("token_source"),
+                "user_id_source": sync.get("user_id_source"),
+                "auth_path": sync.get("auth_path"),
+                "runtime": runtime.snapshot(),
+                "last_publish": runtime.publish.last_publish(),
+            }
+        )
+
+    @app.get("/ext/publish/last")
+    def ext_publish_last() -> object:
+        runtime = get_runtime()
+        return jsonify(
+            {
+                "ok": True,
+                "route": "/ext/publish/last",
+                "last_publish": runtime.publish.last_publish(),
+            }
+        )
+
     @app.get("/mission/test")
     def mission_test() -> object:
         try:
