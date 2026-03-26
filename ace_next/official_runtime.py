@@ -120,6 +120,19 @@ def _planner_overrides_from_mission_decision(mission_decision: dict[str, Any] | 
     }
 
 
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _short_error_summary(value: Any, limit: int = 180) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit - 3]}..."
+
+
 class OfficialRuntime:
     def __init__(self, config: AceNextConfig):
         self.config = config
@@ -282,6 +295,216 @@ class OfficialRuntime:
             return EpisodicPerformanceMemory(self.config).summary().to_dict()
         except Exception as exc:
             return {"ok": False, "error": f"episodic_memory_summary_error: {type(exc).__name__}: {exc}"}
+
+    def _state_sources(self) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        last_publish = self.publish.last_publish()
+        performance_store = _safe_dict(snapshot.get("performance_store"))
+        episodic_memory = _safe_dict(snapshot.get("episodic_performance_memory"))
+        last_run_summary = _safe_dict(snapshot.get("last_run_summary"))
+        receipt = _safe_dict(last_publish.get("last_publish_receipt"))
+        error = _safe_dict(last_publish.get("last_publish_error"))
+        last_episode = _safe_dict(last_publish.get("last_episode"))
+
+        latest_receipt_id = (
+            performance_store.get("latest_receipt_id")
+            or receipt.get("receipt_id")
+            or error.get("receipt_id")
+        )
+        latest_media_id = (
+            performance_store.get("latest_media_id")
+            or last_publish.get("latest_media_id")
+            or receipt.get("media_id")
+            or last_episode.get("media_id")
+        )
+        latest_permalink = (
+            performance_store.get("latest_permalink")
+            or last_publish.get("latest_permalink")
+            or receipt.get("permalink")
+            or last_episode.get("permalink")
+        )
+        latest_evidence_bridge_state = (
+            performance_store.get("latest_evidence_bridge_state")
+            or last_publish.get("latest_evidence_state")
+            or last_episode.get("evidence_state")
+        )
+
+        return {
+            "snapshot": snapshot,
+            "last_publish": last_publish,
+            "performance_store": performance_store,
+            "episodic_memory": episodic_memory,
+            "last_run_summary": last_run_summary,
+            "receipt": receipt,
+            "error": error,
+            "last_episode": last_episode,
+            "latest_receipt_id": latest_receipt_id,
+            "latest_media_id": latest_media_id,
+            "latest_permalink": latest_permalink,
+            "latest_evidence_bridge_state": latest_evidence_bridge_state,
+        }
+
+    def compact_runtime_summary(self) -> dict[str, Any]:
+        state = self._state_sources()
+        snapshot = state["snapshot"]
+        performance_store = state["performance_store"]
+        episodic_memory = state["episodic_memory"]
+        last_run_summary = state["last_run_summary"]
+
+        return {
+            "brand_surface_mode": snapshot.get("brand_surface_mode"),
+            "token_present": snapshot.get("token_present"),
+            "ig_id_present": snapshot.get("ig_id_present"),
+            "enable_real_publish": snapshot.get("enable_real_publish"),
+            "premium_classification": last_run_summary.get("premium_classification"),
+            "eligible_for_editorial_staging": last_run_summary.get("eligible_for_editorial_staging"),
+            "eligible_for_brand_live_candidate": last_run_summary.get("eligible_for_brand_live_candidate"),
+            "score_gap_to_brand_live": last_run_summary.get("score_gap_to_brand_live"),
+            "missing_for_brand_live": last_run_summary.get("missing_for_brand_live"),
+            "latest_episode_id": episodic_memory.get("latest_episode_id"),
+            "latest_continuity_state": episodic_memory.get("latest_continuity_state"),
+            "latest_series_name": episodic_memory.get("latest_series_name"),
+            "latest_probe_requested": performance_store.get("latest_probe_requested"),
+            "latest_probe_publish_executed": performance_store.get("latest_probe_publish_executed"),
+            "latest_receipt_id": state["latest_receipt_id"],
+            "latest_media_id": state["latest_media_id"],
+            "latest_permalink": state["latest_permalink"],
+            "latest_evidence_bridge_state": state["latest_evidence_bridge_state"],
+        }
+
+    def probe_readiness_summary(self) -> dict[str, Any]:
+        state = self._state_sources()
+        snapshot = state["snapshot"]
+        performance_store = state["performance_store"]
+
+        operational_state = performance_store.get("last_operational_state")
+        surface_mode = snapshot.get("brand_surface_mode")
+        latest_probe_requested = performance_store.get("latest_probe_requested")
+        latest_probe_publish_executed = performance_store.get("latest_probe_publish_executed")
+        latest_receipt_id = state["latest_receipt_id"]
+        latest_media_id = state["latest_media_id"]
+        latest_permalink = state["latest_permalink"]
+
+        probe_eligible = operational_state in REAL_PROBE_ALLOWED_STATES if operational_state else False
+        render_only_mode = None
+        if operational_state:
+            render_only_mode = False if probe_eligible else None
+
+        if not operational_state:
+            block_reason = "no_operational_state_yet"
+            next_best_step = "rodar uma peça no caminho oficial antes de avaliar probe"
+        elif not probe_eligible:
+            block_reason = "operational_state_not_allowed_for_real_probe"
+            next_best_step = "manter internal_lab ou editorial_staging antes de probe explícito"
+        elif latest_probe_requested and not latest_receipt_id:
+            block_reason = "probe_requested_without_receipt"
+            next_best_step = "inspecionar a última tentativa explícita de probe"
+        elif latest_receipt_id and not latest_media_id:
+            block_reason = "receipt_without_media_id"
+            next_best_step = "verificar retorno do publish e persistência do media_id"
+        elif latest_media_id and not latest_permalink:
+            block_reason = "media_id_without_permalink"
+            next_best_step = "aguardar ou inspecionar leitura de permalink"
+        else:
+            block_reason = None
+            next_best_step = "readiness ok para leitura e novo probe explícito quando necessário"
+
+        env_flags = _safe_dict(snapshot.get("brand_surface_flags"))
+        env_flags_visible = {
+            "ACE_BRAND_SURFACE_MODE": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": env_flags.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"),
+            "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": env_flags.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"),
+            "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": env_flags.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"),
+        }
+
+        return {
+            "operational_state": operational_state,
+            "surface_mode": surface_mode,
+            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
+            "probe_eligible": probe_eligible,
+            "probe_requested": latest_probe_requested,
+            "probe_publish_executed": latest_probe_publish_executed,
+            "render_only_mode": render_only_mode,
+            "latest_receipt_id": latest_receipt_id,
+            "latest_media_id": latest_media_id,
+            "latest_permalink": latest_permalink,
+            "next_best_step": next_best_step,
+            "block_reason": block_reason,
+            "env_flags_visible": env_flags_visible,
+        }
+
+    def quality_gap_summary(self) -> dict[str, Any]:
+        state = self._state_sources()
+        last_run_summary = state["last_run_summary"]
+
+        premium_classification = last_run_summary.get("premium_classification")
+        eligible_for_editorial_staging = last_run_summary.get("eligible_for_editorial_staging")
+        eligible_for_brand_live_candidate = last_run_summary.get("eligible_for_brand_live_candidate")
+        missing_for_brand_live = last_run_summary.get("missing_for_brand_live")
+        score_gap_to_brand_live = last_run_summary.get("score_gap_to_brand_live")
+        next_quality_lift_targets = last_run_summary.get("next_quality_lift_targets")
+        caption_gate_result = last_run_summary.get("caption_gate_result")
+        caption_gate_score = last_run_summary.get("caption_gate_score")
+
+        if eligible_for_brand_live_candidate:
+            recommended_action = "hold_for_human_review"
+            next_best_step = "manter candidatura e revisar elegibilidade premium"
+        elif eligible_for_editorial_staging:
+            recommended_action = "quality_lift"
+            next_best_step = "elevar o gap restante antes de brand_live_candidate"
+        elif premium_classification in {"blocked_brand", "blocked_quality"}:
+            recommended_action = "fix_quality_gap"
+            next_best_step = "corrigir o gap mínimo antes de nova leitura oficial"
+        else:
+            recommended_action = "collect_quality_signal"
+            next_best_step = "gerar peça mais forte antes de buscar staging"
+
+        return {
+            "premium_classification": premium_classification,
+            "caption_gate_result": caption_gate_result,
+            "caption_gate_score": caption_gate_score,
+            "eligible_for_editorial_staging": eligible_for_editorial_staging,
+            "eligible_for_brand_live_candidate": eligible_for_brand_live_candidate,
+            "score_gap_to_brand_live": score_gap_to_brand_live,
+            "missing_for_brand_live": missing_for_brand_live,
+            "next_quality_lift_targets": next_quality_lift_targets,
+            "recommended_action": recommended_action,
+            "next_best_step": next_best_step,
+        }
+
+    def last_publish_compact_summary(self) -> dict[str, Any]:
+        state = self._state_sources()
+        performance_store = state["performance_store"]
+        last_publish = state["last_publish"]
+        receipt = state["receipt"]
+        error = state["error"]
+        last_episode = state["last_episode"]
+        last_run_summary = state["last_run_summary"]
+
+        publish_status = receipt.get("publish_status") or error.get("publish_status")
+        receipt_id = receipt.get("receipt_id") or error.get("receipt_id")
+        render_path = receipt.get("media_path") or error.get("media_path")
+        error_summary = _short_error_summary(
+            error.get("error")
+            or ((error.get("raw_publish_result") or {}).get("error"))
+            or last_publish.get("last_publish_error")
+        )
+
+        return {
+            "latest_episode_id": last_episode.get("episode_id") or state["episodic_memory"].get("latest_episode_id"),
+            "publish_status": publish_status,
+            "receipt_id": receipt_id,
+            "media_id": state["latest_media_id"],
+            "permalink": state["latest_permalink"],
+            "latest_evidence_state": last_publish.get("latest_evidence_state") or last_episode.get("evidence_state"),
+            "latest_resolution_state": last_publish.get("latest_resolution_state") or last_episode.get("resolution_state"),
+            "premium_classification": last_run_summary.get("premium_classification"),
+            "operational_state": last_episode.get("operational_state") or performance_store.get("last_operational_state"),
+            "probe_requested": receipt.get("real_probe_requested") or performance_store.get("latest_probe_requested"),
+            "probe_publish_executed": receipt.get("real_probe_executed") or performance_store.get("latest_probe_publish_executed"),
+            "render_path": render_path,
+            "error_summary": error_summary,
+        }
 
     def snapshot(self) -> dict:
         sync = self.sync_instagram_auth()
