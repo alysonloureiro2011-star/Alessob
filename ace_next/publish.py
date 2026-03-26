@@ -147,19 +147,107 @@ class PublishService:
         except Exception:
             return None
 
+    def _read_json_file(self, path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
+    def _ace_next_last_publish_summary(self) -> dict[str, Any]:
+        receipt = self.get_last_receipt()
+        error = self.get_last_error()
+
+        episodic_payload = self._read_json_file(self.config.data_dir / "ace_next_episodic_performance_memory.json") or {}
+        performance_payload = self._read_json_file(self.config.data_dir / "ace_next_performance_store.json") or {}
+
+        episodes = episodic_payload.get("episodes") if isinstance(episodic_payload.get("episodes"), list) else []
+        records = performance_payload.get("records") if isinstance(performance_payload.get("records"), list) else []
+
+        last_episode = episodes[-1] if episodes else None
+        last_record = records[-1] if records else {}
+
+        last_record_receipt = dict(last_record.get("receipt") or last_record.get("publish_result") or {})
+        latest_media_id = (
+            (receipt or {}).get("media_id")
+            or last_record_receipt.get("media_id")
+            or ((last_episode or {}).get("media_id") if isinstance(last_episode, dict) else None)
+        )
+        latest_permalink = (
+            (receipt or {}).get("permalink")
+            or last_record_receipt.get("permalink")
+            or ((last_episode or {}).get("permalink") if isinstance(last_episode, dict) else None)
+        )
+        latest_evidence_state = (
+            ((last_episode or {}).get("evidence_state") if isinstance(last_episode, dict) else None)
+            or ((last_record.get("evidence_interpreter") or {}).get("evidence_state") if isinstance(last_record, dict) else None)
+        )
+        latest_resolution_state = (
+            ((last_episode or {}).get("resolution_state") if isinstance(last_episode, dict) else None)
+            or ((last_record.get("experiment_resolution") or {}).get("resolution_state") if isinstance(last_record, dict) else None)
+        )
+        updated_at = (
+            (receipt or {}).get("created_at")
+            or (error or {}).get("created_at")
+            or ((last_episode or {}).get("created_at") if isinstance(last_episode, dict) else None)
+            or (last_record.get("created_at") if isinstance(last_record, dict) else None)
+        )
+
+        return {
+            "ok": True,
+            "source_of_truth": "ace_next",
+            "last_publish_receipt": receipt,
+            "last_publish_error": error,
+            "last_episode": last_episode,
+            "latest_media_id": latest_media_id,
+            "latest_permalink": latest_permalink,
+            "latest_evidence_state": latest_evidence_state,
+            "latest_resolution_state": latest_resolution_state,
+            "total_records": len(records),
+            "total_episodes": len(episodes),
+            "episodes_count": len(episodes),
+            "recent_episodes": episodes[-3:] if episodes else [],
+            "updated_at": updated_at,
+        }
+
     def last_publish(self) -> dict[str, Any]:
+        ace_next_summary = self._ace_next_last_publish_summary()
+        has_ace_next_signal = bool(
+            ace_next_summary.get("last_publish_receipt")
+            or ace_next_summary.get("last_publish_error")
+            or ace_next_summary.get("last_episode")
+            or ace_next_summary.get("total_records")
+            or ace_next_summary.get("total_episodes")
+        )
+        if has_ace_next_signal:
+            return ace_next_summary
+
         if callable(episodic_build_memory_summary):
             try:
                 summary = episodic_build_memory_summary()
                 if isinstance(summary, dict):
+                    summary.setdefault("source_of_truth", "legacy_fallback")
                     return summary
             except Exception:
                 pass
+
         return {
             "ok": True,
+            "source_of_truth": "ace_next",
             "last_publish_receipt": self.get_last_receipt(),
             "last_publish_error": self.get_last_error(),
             "last_episode": None,
+            "latest_media_id": None,
+            "latest_permalink": None,
+            "latest_evidence_state": None,
+            "latest_resolution_state": None,
+            "total_records": 0,
+            "total_episodes": 0,
+            "episodes_count": 0,
+            "recent_episodes": [],
+            "updated_at": None,
         }
 
     def _graph_request(
