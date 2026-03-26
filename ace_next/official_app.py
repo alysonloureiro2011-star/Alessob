@@ -73,6 +73,7 @@ def _compact_runtime_payload(runtime_snapshot: dict[str, Any], last_publish: dic
     performance_store = dict(runtime_snapshot.get("performance_store") or {})
     experiment_registry = dict(runtime_snapshot.get("experiment_registry") or {})
     episodic_memory = dict(runtime_snapshot.get("episodic_performance_memory") or {})
+    last_run_summary = dict(runtime_snapshot.get("last_run_summary") or {})
 
     return {
         "token_present": runtime_snapshot.get("token_present"),
@@ -100,6 +101,19 @@ def _compact_runtime_payload(runtime_snapshot: dict[str, Any], last_publish: dic
             "latest_continuity_state": episodic_memory.get("latest_continuity_state"),
             "latest_series_name": episodic_memory.get("latest_series_name"),
         },
+        "premium_classification": last_run_summary.get("premium_classification"),
+        "eligible_for_editorial_staging": last_run_summary.get("eligible_for_editorial_staging"),
+        "eligible_for_brand_live_candidate": last_run_summary.get("eligible_for_brand_live_candidate"),
+        "missing_for_brand_live": last_run_summary.get("missing_for_brand_live"),
+        "score_gap_to_brand_live": last_run_summary.get("score_gap_to_brand_live"),
+        "next_quality_lift_targets": last_run_summary.get("next_quality_lift_targets"),
+        "caption_gate_result": last_run_summary.get("caption_gate_result"),
+        "caption_gate_score": last_run_summary.get("caption_gate_score"),
+        "premium_visual_result": last_run_summary.get("premium_visual_result"),
+        "publication_authorization_summary": last_run_summary.get("publication_authorization_summary"),
+        "selected_template_id": last_run_summary.get("selected_template_id"),
+        "premium_render_state": last_run_summary.get("premium_render_state"),
+        "hardening_applied": last_run_summary.get("hardening_applied"),
         "last_publish": _compact_last_publish_payload(last_publish),
     }
 
@@ -112,6 +126,8 @@ def _compact_publish_test_payload(result: dict[str, Any] | None) -> dict[str, An
     recommendation_engine = dict(result.get("recommendation_engine") or {})
     performance_summary = dict(result.get("performance_summary") or {})
     publish_state = dict(performance_summary.get("publish_state") or {})
+    plan = dict(result.get("creative_plan") or {})
+    authz = dict(result.get("publication_authorization_gate") or {})
 
     return {
         "ok": result.get("ok"),
@@ -129,6 +145,16 @@ def _compact_publish_test_payload(result: dict[str, Any] | None) -> dict[str, An
         "latest_resolution_state": experiment_resolution.get("resolution_state"),
         "recommended_action": recommendation_engine.get("recommended_action"),
         "next_best_step": recommendation_engine.get("next_best_step"),
+        "premium_classification": authz.get("premium_classification"),
+        "eligible_for_editorial_staging": authz.get("eligible_for_editorial_staging"),
+        "eligible_for_brand_live_candidate": authz.get("eligible_for_brand_live_candidate"),
+        "missing_for_brand_live": authz.get("missing_for_brand_live"),
+        "score_gap_to_brand_live": authz.get("score_gap_to_brand_live"),
+        "next_quality_lift_targets": authz.get("next_quality_lift_targets"),
+        "caption_gate_result": plan.get("caption_gate_result"),
+        "caption_gate_score": plan.get("caption_gate_score"),
+        "premium_visual_result": result.get("approved_for_premium_visual"),
+        "publication_authorization_summary": authz.get("summary"),
     }
 
 
