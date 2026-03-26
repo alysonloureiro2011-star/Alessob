@@ -56,8 +56,8 @@ def create_official_app() -> Flask:
     def get_runtime():
         runtime = runtime_holder.get("runtime")
         if runtime is None:
-            from .official_runtime import OfficialRuntime
-            runtime = OfficialRuntime(config)
+            from .official_runtime_surface import OfficialRuntimeSurface
+            runtime = OfficialRuntimeSurface(config)
             runtime_holder["runtime"] = runtime
         return runtime
 
@@ -66,7 +66,7 @@ def create_official_app() -> Flask:
         if not trend:
             return {
                 "runtime": runtime.snapshot(),
-                "last_publish": runtime.publish.last_publish(),
+                "last_publish": runtime.runtime.publish.last_publish() if hasattr(runtime, "runtime") else runtime.publish.last_publish(),
             }
         return runtime.run(
             trend=trend,
@@ -108,11 +108,12 @@ def create_official_app() -> Flask:
     @app.get("/status")
     def status() -> object:
         runtime = get_runtime()
+        publish_service = runtime.runtime.publish if hasattr(runtime, "runtime") else runtime.publish
         return jsonify(
             {
                 "ok": True,
                 "runtime": runtime.snapshot(),
-                "last_publish": runtime.publish.last_publish(),
+                "last_publish": publish_service.last_publish(),
             }
         )
 
@@ -127,12 +128,13 @@ def create_official_app() -> Flask:
                     **runtime.compact_runtime_summary(),
                 }
             )
+        publish_service = runtime.runtime.publish if hasattr(runtime, "runtime") else runtime.publish
         return jsonify(
             {
                 "ok": True,
                 "route": "/ext/runtime",
                 "runtime": runtime.snapshot(),
-                "last_publish": runtime.publish.last_publish(),
+                "last_publish": publish_service.last_publish(),
             }
         )
 
@@ -162,6 +164,7 @@ def create_official_app() -> Flask:
     def ext_instagram_status() -> object:
         runtime = get_runtime()
         sync = runtime.sync_instagram_auth()
+        publish_service = runtime.runtime.publish if hasattr(runtime, "runtime") else runtime.publish
         return jsonify(
             {
                 "ok": True,
@@ -172,7 +175,7 @@ def create_official_app() -> Flask:
                 "user_id_source": sync.get("user_id_source"),
                 "auth_path": sync.get("auth_path"),
                 "runtime": runtime.snapshot(),
-                "last_publish": runtime.publish.last_publish(),
+                "last_publish": publish_service.last_publish(),
             }
         )
 
@@ -187,11 +190,12 @@ def create_official_app() -> Flask:
                     **runtime.last_publish_compact_summary(),
                 }
             )
+        publish_service = runtime.runtime.publish if hasattr(runtime, "runtime") else runtime.publish
         return jsonify(
             {
                 "ok": True,
                 "route": "/ext/publish/last",
-                "last_publish": runtime.publish.last_publish(),
+                "last_publish": publish_service.last_publish(),
             }
         )
 
@@ -374,7 +378,7 @@ def create_official_app() -> Flask:
     def debug_token_refresh() -> object:
         runtime = get_runtime()
         force = str(request.args.get("force", "0")).strip().lower() in ("1", "true", "yes", "on")
-        result = runtime.ensure_fresh_instagram_token(force=force)
+        result = runtime.runtime.ensure_fresh_instagram_token(force=force) if hasattr(runtime, "runtime") else runtime.ensure_fresh_instagram_token(force=force)
         status = 200 if result.get("ok") else 400
         return jsonify(
             {
