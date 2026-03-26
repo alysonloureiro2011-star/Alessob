@@ -104,6 +104,21 @@ def _mission_approval_required() -> bool:
     return _as_bool_env("ACE_REQUIRE_MISSION_APPROVAL", False)
 
 
+def _planner_overrides_from_mission_decision(mission_decision: dict[str, Any] | None) -> dict[str, Any]:
+    mission_decision = dict(mission_decision or {})
+    content_type = str(mission_decision.get("content_type") or "").strip().lower()
+    publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None
+
+    return {
+        "strategic_target_format": content_type or None,
+        "publish_format_now": publish_format_now,
+        "publish_style": None,
+        "goal": mission_decision.get("goal"),
+        "hypothesis": mission_decision.get("hypothesis"),
+        "planner_selected": mission_decision.get("planner_selected"),
+    }
+
+
 class OfficialRuntime:
     def __init__(self, config: AceNextConfig):
         self.config = config
@@ -647,6 +662,18 @@ class OfficialRuntime:
                 evidence_interpreter=evidence_interpreter,
             )
 
+            serial_continuity = dict(creative_plan.get("serial_continuity") or {})
+            distribution_context = dict(creative_plan.get("distribution_context") or {})
+            episodic_memory_preview = {
+                "episode_id": record.get("record_id"),
+                "topic_seed": creative_plan.get("topic_seed"),
+                "series_name": serial_continuity.get("series_name"),
+                "linked_series_candidate": serial_continuity.get("linked_series_candidate"),
+                "continuity_state": serial_continuity.get("continuity_state"),
+                "next_episode_seed": serial_continuity.get("next_episode_seed"),
+                "latest_episode_id": self._episodic_memory_summary().get("latest_episode_id"),
+            }
+
             recommendation_engine = build_recommendation_engine(
                 evidence_interpreter=evidence_interpreter,
                 experiment_resolution=experiment_resolution,
@@ -654,6 +681,11 @@ class OfficialRuntime:
                 reward_prediction=reward_prediction,
                 attention_metrics=attention_metrics,
                 operational_state=operational_state,
+                episodic_memory=episodic_memory_preview,
+                serial_continuity=serial_continuity,
+                distribution_context=distribution_context,
+                publish_result=publish_result or {},
+                real_metrics=real_metrics,
             )
 
             wave10_summary = {
@@ -884,7 +916,12 @@ class OfficialRuntime:
             }
 
         try:
-            plan = build_creative_plan(trend)
+            planner_overrides = _planner_overrides_from_mission_decision(mission_decision)
+            plan = build_creative_plan(
+                trend,
+                overrides=planner_overrides,
+                mission_decision=mission_decision,
+            )
             plan_dict = plan.to_dict()
         except Exception as exc:
             return {
