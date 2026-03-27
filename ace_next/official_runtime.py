@@ -126,7 +126,8 @@ class OfficialRuntime:
 
         publish_cls = self._symbol("PublishService")
         self.publish = publish_cls(config) if publish_cls else None
-
+        self.trend_radar = TrendRadar()
+       
         self._boot_sync()
 
     # ---------------------------------------------------------
