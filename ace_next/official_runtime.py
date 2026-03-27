@@ -854,7 +854,22 @@ def run(
         publication_authorization_gate=publication_authorization_gate,
         operational_state=operational_state,
         publish_truth_state="publish_truth_absent",
-    )
+    ) 
+
+    # HARD GATE SOBERANO (B2)
+
+release_authority = (prepublish_reel_stack or {}).get("release_authority") or {}
+publish_guard = (prepublish_reel_stack or {}).get("publish_guard") or {}
+
+if not publish_guard.get("can_publish"):
+    return {
+        "ok": False,
+        "state": "HALT_BLOCKED_BY_GATE",
+        "reason": "publish_guard_blocked",
+        "release_authority": release_authority,
+        "publish_guard": publish_guard,
+        "prepublish_reel_stack": prepublish_reel_stack,
+    }
 
     if prepublish_reel_stack.get("ok"):
         release_authority = _safe_dict(prepublish_reel_stack.get("release_authority"))
