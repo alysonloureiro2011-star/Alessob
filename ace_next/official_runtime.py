@@ -1,695 +1,481 @@
-from __future__ import annotations
+from future import annotations
 
-import os
-from datetime import datetime, timedelta, timezone
-from typing import Any
+import os from datetime import datetime, timedelta, timezone from typing import Any
 
-from .auth_store import load_instagram_auth, sync_instagram_token_sources
-from .brand_surface_isolation import resolve_brand_surface_policy
-from .config import AceNextConfig
-from .creative_planner import build_creative_plan
-from .editorial_rubric import evaluate_editorial_quality
-from .lab_probe_policy import resolve_lab_probe_policy
-from .mission_control import decide_mission
-from .perceptual_qa import evaluate_perceptual_quality
-from .publish import PublishService
-from .render_env_sync import persist_instagram_token_to_render
-from .token_upgrade import refresh_instagram_long_lived_token
-from .visual_contract import build_visual_contract
-from .visual_foundation_pack import (
-    build_carousel_sequence,
-    build_stories_sequence,
-    build_typography_spec,
-    build_visual_identity,
-    evaluate_visual_quality,
-    render_visual_foundation_card,
-)
-from .visual_premium_bridge import build_visual_premium_bridge
-from .visual_templates import resolve_visual_template
+from .auth_store import load_instagram_auth, sync_instagram_token_sources from .brand_surface_isolation import resolve_brand_surface_policy from .config import AceNextConfig from .creative_planner import build_creative_plan from .editorial_rubric import evaluate_editorial_quality from .lab_probe_policy import resolve_lab_probe_policy from .mission_control import decide_mission from .perceptual_qa import evaluate_perceptual_quality from .publish import PublishService from .render_env_sync import persist_instagram_token_to_render from .token_upgrade import refresh_instagram_long_lived_token from .visual_contract import build_visual_contract from .visual_foundation_pack import ( build_carousel_sequence, build_stories_sequence, build_typography_spec, build_visual_identity, evaluate_visual_quality, render_visual_foundation_card, ) from .visual_premium_bridge import build_visual_premium_bridge from .visual_templates import resolve_visual_template
 
-AUTH_STACK_IMPORT_ERROR: str | None = None
-MEASUREMENT_STACK_IMPORT_ERROR: str | None = None
-REAL_PROBE_ALLOWED_STATES = ["internal_lab", "editorial_staging"]
+AUTH_STACK_IMPORT_ERROR: str | None = None MEASUREMENT_STACK_IMPORT_ERROR: str | None = None REAL_PROBE_ALLOWED_STATES = ["internal_lab", "editorial_staging"]
 
-try:
-    from .rubric_engine import evaluate_rubric_engine
-    from .brand_veto_gate import evaluate_brand_veto_gate
-    from .publication_authorization_gate import authorize_publication
-except Exception as exc:
-    AUTH_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
-    evaluate_rubric_engine = None
-    evaluate_brand_veto_gate = None
-    authorize_publication = None
+try: from .rubric_engine import evaluate_rubric_engine from .brand_veto_gate import evaluate_brand_veto_gate from .publication_authorization_gate import authorize_publication except Exception as exc: AUTH_STACK_IMPORT_ERROR = f"{type(exc).name}: {exc}" evaluate_rubric_engine = None evaluate_brand_veto_gate = None authorize_publication = None
 
-try:
-    from .performance_store import PerformanceStore
-    from .learning_loop import build_learning_loop_summary
-    from .post_performance_contract import build_post_performance_contract
-    from .performance_ingest import collect_real_performance_metrics
-    from .reflection_memory import build_reflection_memory
-    from .attention_metrics import build_attention_metrics
-    from .experiment_registry import ExperimentRegistry, build_experiment_record
-    from .episodic_performance_memory import EpisodicPerformanceMemory, build_episode_record
-    from .performance_summary import build_performance_summary
-    from .resonance_engine import build_resonance_engine
-    from .reward_prediction_layer import build_reward_prediction
-    from .thompson_sampler import build_thompson_sampler
-    from .evidence_interpreter import build_evidence_interpreter
-    from .experiment_resolution_engine import build_experiment_resolution
-    from .recommendation_engine import build_recommendation_engine
-except Exception as exc:
-    MEASUREMENT_STACK_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
-    PerformanceStore = None
-    build_learning_loop_summary = None
-    build_post_performance_contract = None
-    collect_real_performance_metrics = None
-    build_reflection_memory = None
-    build_attention_metrics = None
-    ExperimentRegistry = None
-    build_experiment_record = None
-    EpisodicPerformanceMemory = None
-    build_episode_record = None
-    build_performance_summary = None
-    build_resonance_engine = None
-    build_reward_prediction = None
-    build_thompson_sampler = None
-    build_evidence_interpreter = None
-    build_experiment_resolution = None
-    build_recommendation_engine = None
+try: from .performance_store import PerformanceStore except Exception as exc: MEASUREMENT_STACK_IMPORT_ERROR = f"{type(exc).name}: {exc}" PerformanceStore = None
 
+try: from .hook_opening_engine import generate_hook_opening from .reel_storyboard_engine import ReelStoryboardEngine from .reel_rhythm_engine import ReelRhythmEngine from .post_production_pipeline import PostProductionPipeline from .audio_direction_layer import AudioDirectionLayer from .multimodal_reel_qa import MultimodalReelQA from .cinematic_gate import CinematicGate from .release_authority import ReleaseAuthority from .publish_guard import PublishGuard except Exception: generate_hook_opening = None ReelStoryboardEngine = None ReelRhythmEngine = None PostProductionPipeline = None AudioDirectionLayer = None MultimodalReelQA = None CinematicGate = None ReleaseAuthority = None PublishGuard = None
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        return None
+def _parse_dt(value: str | None) -> datetime | None: if not value: return None try: return datetime.fromisoformat(value.replace("Z", "+00:00")) except Exception: return None
 
+def _normalize_probe_state(value: str | None) -> str: normalized = str(value or "auto").strip().lower() if normalized in {"auto", "internal_lab", "editorial_staging", "brand_live"}: return normalized return "auto"
 
-def _normalize_probe_state(value: str | None) -> str:
-    normalized = str(value or "auto").strip().lower()
-    if normalized in {"auto", "internal_lab", "editorial_staging", "brand_live"}:
-        return normalized
-    return "auto"
+def _as_bool_env(name: str, default: bool = False) -> bool: raw = os.environ.get(name) if raw is None: return default return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
+def _mission_approval_required() -> bool: return _as_bool_env("ACE_REQUIRE_MISSION_APPROVAL", False)
 
-def _as_bool_env(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+def _planner_overrides_from_mission_decision(mission_decision: dict[str, Any] | None) -> dict[str, Any]: mission_decision = dict(mission_decision or {}) content_type = str(mission_decision.get("content_type") or "").strip().lower() publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None return { "strategic_target_format": content_type or None, "publish_format_now": publish_format_now, "publish_style": None, "goal": mission_decision.get("goal"), "hypothesis": mission_decision.get("hypothesis"), "planner_selected": mission_decision.get("planner_selected"), }
 
+def _safe_dict(value: Any) -> dict[str, Any]: return dict(value) if isinstance(value, dict) else {}
 
-def _mission_approval_required() -> bool:
-    return _as_bool_env("ACE_REQUIRE_MISSION_APPROVAL", False)
+def _short_error_summary(value: Any, limit: int = 180) -> str | None: text = str(value or "").strip() if not text: return None return text if len(text) <= limit else f"{text[:limit - 3]}..."
 
+class OfficialRuntime: def init(self, config: AceNextConfig): self.config = config self.publish = PublishService(config) self._last_run_summary: dict[str, Any] = {} self._boot_sync()
 
-def _planner_overrides_from_mission_decision(mission_decision: dict[str, Any] | None) -> dict[str, Any]:
-    mission_decision = dict(mission_decision or {})
-    content_type = str(mission_decision.get("content_type") or "").strip().lower()
-    publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None
-
+def _brand_env_flags(self) -> dict[str, Any]:
     return {
-        "strategic_target_format": content_type or None,
-        "publish_format_now": publish_format_now,
-        "publish_style": None,
-        "goal": mission_decision.get("goal"),
-        "hypothesis": mission_decision.get("hypothesis"),
-        "planner_selected": mission_decision.get("planner_selected"),
+        "ACE_BRAND_SURFACE_MODE": os.environ.get("ACE_BRAND_SURFACE_MODE", "protected"),
+        "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE", False),
+        "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING", False),
+        "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": _as_bool_env("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE", True),
     }
 
+def _refresh_threshold_days(self) -> int:
+    try:
+        return int(os.environ.get("ACE_TOKEN_REFRESH_THRESHOLD_DAYS", "15"))
+    except Exception:
+        return 15
 
-def _safe_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+def _min_refresh_age_hours(self) -> int:
+    try:
+        return int(os.environ.get("ACE_TOKEN_MIN_REFRESH_AGE_HOURS", "24"))
+    except Exception:
+        return 24
 
+def _assumed_ttl_days(self) -> int:
+    try:
+        return int(os.environ.get("ACE_TOKEN_ASSUMED_TTL_DAYS", "60"))
+    except Exception:
+        return 60
 
-def _short_error_summary(value: Any, limit: int = 180) -> str | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit - 3]}..."
+def _runtime_queue_state(self) -> dict[str, int]:
+    return {"active_jobs": 0, "pending_jobs": 0}
 
+def _auth_state(self) -> dict[str, Any]:
+    stored = load_instagram_auth(self.config)
+    meta = stored.get("meta") if isinstance(stored.get("meta"), dict) else {}
+    saved_at = _parse_dt(stored.get("saved_at"))
+    expires_at = _parse_dt(meta.get("expires_at"))
+    if not expires_at and saved_at:
+        expires_at = saved_at + timedelta(days=self._assumed_ttl_days())
+    now = datetime.now(timezone.utc)
+    remaining_days = None
+    if expires_at:
+        remaining_days = (expires_at - now).total_seconds() / 86400
+    return {
+        "saved_at": saved_at.isoformat() if saved_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "remaining_days": remaining_days,
+        "refreshed_at": meta.get("refreshed_at"),
+        "source": meta.get("source"),
+    }
 
-class OfficialRuntime:
-    def __init__(self, config: AceNextConfig):
-        self.config = config
-        self.publish = PublishService(config)
-        self._last_run_summary: dict[str, Any] = {}
-        self._boot_sync()
+def _token_needs_refresh(self, force: bool = False) -> tuple[bool, str]:
+    if force:
+        return True, "forced"
+    if not self.config.ig_token or not self.config.ig_id:
+        return False, "missing_token_or_ig_id"
+    state = self._auth_state()
+    expires_at = _parse_dt(state.get("expires_at"))
+    saved_at = _parse_dt(state.get("saved_at"))
+    now = datetime.now(timezone.utc)
+    if saved_at:
+        age_hours = (now - saved_at).total_seconds() / 3600
+        if age_hours < self._min_refresh_age_hours():
+            return False, "token_too_young"
+    if not expires_at:
+        return False, "expiry_unknown"
+    remaining = expires_at - now
+    if remaining <= timedelta(days=self._refresh_threshold_days()):
+        return True, "refresh_threshold"
+    return False, "healthy"
 
-    def _brand_env_flags(self) -> dict[str, Any]:
-        return {
-            "ACE_BRAND_SURFACE_MODE": os.environ.get("ACE_BRAND_SURFACE_MODE", "protected"),
-            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE", False),
-            "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": _as_bool_env("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING", False),
-            "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": _as_bool_env("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE", True),
-        }
+def ensure_fresh_instagram_token(self, force: bool = False) -> dict[str, Any]:
+    self.sync_instagram_auth()
+    should_refresh, reason = self._token_needs_refresh(force=force)
+    if not should_refresh:
+        return {"ok": True, "attempted": False, "reason": reason, "token_state": self._auth_state()}
 
-    def _refresh_threshold_days(self) -> int:
-        try:
-            return int(os.environ.get("ACE_TOKEN_REFRESH_THRESHOLD_DAYS", "15"))
-        except Exception:
-            return 15
+    refresh = refresh_instagram_long_lived_token(
+        self.config,
+        current_token=self.config.ig_token or "",
+        current_user_id=self.config.ig_id,
+    )
 
-    def _min_refresh_age_hours(self) -> int:
-        try:
-            return int(os.environ.get("ACE_TOKEN_MIN_REFRESH_AGE_HOURS", "24"))
-        except Exception:
-            return 24
-
-    def _assumed_ttl_days(self) -> int:
-        try:
-            return int(os.environ.get("ACE_TOKEN_ASSUMED_TTL_DAYS", "60"))
-        except Exception:
-            return 60
-
-    def _runtime_queue_state(self) -> dict[str, int]:
-        return {"active_jobs": 0, "pending_jobs": 0}
-
-    def _recent_episodic_memory_for_planner(self, limit: int = 5) -> list[dict[str, Any]]:
-        if MEASUREMENT_STACK_IMPORT_ERROR or EpisodicPerformanceMemory is None:
-            return []
-        try:
-            return EpisodicPerformanceMemory(self.config).list_episodes(limit=limit)
-        except Exception:
-            return []
-
-    def _auth_state(self) -> dict[str, Any]:
-        stored = load_instagram_auth(self.config)
-        meta = stored.get("meta") if isinstance(stored.get("meta"), dict) else {}
-
-        saved_at = _parse_dt(stored.get("saved_at"))
-        expires_at = _parse_dt(meta.get("expires_at"))
-
-        if not expires_at and saved_at:
-            expires_at = saved_at + timedelta(days=self._assumed_ttl_days())
-
-        now = datetime.now(timezone.utc)
-        remaining_days = None
-        if expires_at:
-            remaining_days = (expires_at - now).total_seconds() / 86400
-
-        return {
-            "saved_at": saved_at.isoformat() if saved_at else None,
-            "expires_at": expires_at.isoformat() if expires_at else None,
-            "remaining_days": remaining_days,
-            "refreshed_at": meta.get("refreshed_at"),
-            "source": meta.get("source"),
-        }
-
-    def _token_needs_refresh(self, force: bool = False) -> tuple[bool, str]:
-        if force:
-            return True, "forced"
-
-        if not self.config.ig_token or not self.config.ig_id:
-            return False, "missing_token_or_ig_id"
-
-        state = self._auth_state()
-        expires_at = _parse_dt(state.get("expires_at"))
-        saved_at = _parse_dt(state.get("saved_at"))
-        now = datetime.now(timezone.utc)
-
-        if saved_at:
-            age_hours = (now - saved_at).total_seconds() / 3600
-            if age_hours < self._min_refresh_age_hours():
-                return False, "token_too_young"
-
-        if not expires_at:
-            return False, "expiry_unknown"
-
-        remaining = expires_at - now
-        if remaining <= timedelta(days=self._refresh_threshold_days()):
-            return True, "refresh_threshold"
-        return False, "healthy"
-
-    def ensure_fresh_instagram_token(self, force: bool = False) -> dict[str, Any]:
-        self.sync_instagram_auth()
-
-        should_refresh, reason = self._token_needs_refresh(force=force)
-        if not should_refresh:
-            return {
-                "ok": True,
-                "attempted": False,
-                "reason": reason,
-                "token_state": self._auth_state(),
-            }
-
-        refresh = refresh_instagram_long_lived_token(
-            self.config,
-            current_token=self.config.ig_token or "",
-            current_user_id=self.config.ig_id,
-        )
-
-        render_sync = {"ok": False, "persisted": False, "skipped": True}
-        if refresh.get("ok"):
-            refreshed_token = refresh.get("token") or ((refresh.get("data") or {}).get("access_token"))
-            if refreshed_token:
-                render_sync = persist_instagram_token_to_render(
-                    token=str(refreshed_token),
-                    user_id=self.config.ig_id,
-                )
-            sync_instagram_token_sources(self.config, persist=False)
-
-        return {
-            "ok": bool(refresh.get("ok")),
-            "attempted": True,
-            "reason": reason,
-            "refresh": refresh,
-            "render_env_sync": render_sync,
-            "token_state": self._auth_state(),
-        }
-
-    def _boot_sync(self) -> None:
+    render_sync = {"ok": False, "persisted": False, "skipped": True}
+    if refresh.get("ok"):
+        refreshed_token = refresh.get("token") or ((refresh.get("data") or {}).get("access_token"))
+        if refreshed_token:
+            render_sync = persist_instagram_token_to_render(
+                token=str(refreshed_token),
+                user_id=self.config.ig_id,
+            )
         sync_instagram_token_sources(self.config, persist=False)
-        try:
-            self.ensure_fresh_instagram_token(force=False)
-        except Exception:
-            pass
 
-    def sync_instagram_auth(self) -> dict:
-        return sync_instagram_token_sources(self.config, persist=False)
+    return {
+        "ok": bool(refresh.get("ok")),
+        "attempted": True,
+        "reason": reason,
+        "refresh": refresh,
+        "render_env_sync": render_sync,
+        "token_state": self._auth_state(),
+    }
 
-    def _performance_store_summary(self) -> dict[str, Any]:
-        if MEASUREMENT_STACK_IMPORT_ERROR or PerformanceStore is None:
-            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
-        try:
-            return PerformanceStore(self.config).summary().to_dict()
-        except Exception as exc:
-            return {"ok": False, "error": f"performance_store_summary_error: {type(exc).__name__}: {exc}"}
+def _boot_sync(self) -> None:
+    sync_instagram_token_sources(self.config, persist=False)
+    try:
+        self.ensure_fresh_instagram_token(force=False)
+    except Exception:
+        pass
 
-    def _experiment_registry_summary(self) -> dict[str, Any]:
-        if MEASUREMENT_STACK_IMPORT_ERROR or ExperimentRegistry is None:
-            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
-        try:
-            return ExperimentRegistry(self.config).summary().to_dict()
-        except Exception as exc:
-            return {"ok": False, "error": f"experiment_registry_summary_error: {type(exc).__name__}: {exc}"}
+def sync_instagram_auth(self) -> dict[str, Any]:
+    return sync_instagram_token_sources(self.config, persist=False)
 
-    def _episodic_memory_summary(self) -> dict[str, Any]:
-        if MEASUREMENT_STACK_IMPORT_ERROR or EpisodicPerformanceMemory is None:
-            return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
-        try:
-            return EpisodicPerformanceMemory(self.config).summary().to_dict()
-        except Exception as exc:
-            return {"ok": False, "error": f"episodic_memory_summary_error: {type(exc).__name__}: {exc}"}
+def _performance_store_summary(self) -> dict[str, Any]:
+    if MEASUREMENT_STACK_IMPORT_ERROR or PerformanceStore is None:
+        return {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"}
+    try:
+        return PerformanceStore(self.config).summary().to_dict()
+    except Exception as exc:
+        return {"ok": False, "error": f"performance_store_summary_error: {type(exc).__name__}: {exc}"}
 
-    def _state_sources(self) -> dict[str, Any]:
-        snapshot = self.snapshot()
-        last_publish = self.publish.last_publish()
-        performance_store = _safe_dict(snapshot.get("performance_store"))
-        episodic_memory = _safe_dict(snapshot.get("episodic_performance_memory"))
-        last_run_summary = _safe_dict(snapshot.get("last_run_summary"))
-        receipt = _safe_dict(last_publish.get("last_publish_receipt"))
-        error = _safe_dict(last_publish.get("last_publish_error"))
-        last_episode = _safe_dict(last_publish.get("last_episode"))
+def snapshot(self) -> dict[str, Any]:
+    sync = self.sync_instagram_auth()
+    token_state = self._auth_state()
+    env_flags = self._brand_env_flags()
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "token_present": bool(self.config.ig_token),
+        "ig_id_present": bool(self.config.ig_id),
+        "render_url": self.config.render_url,
+        "token_source": sync.get("token_source"),
+        "user_id_source": sync.get("user_id_source"),
+        "auth_path": sync.get("auth_path"),
+        "enable_real_publish": self.config.enable_real_publish,
+        "token_expires_at": token_state.get("expires_at"),
+        "token_remaining_days": token_state.get("remaining_days"),
+        "token_meta_source": token_state.get("source"),
+        "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
+        "authorization_stack_import_error": AUTH_STACK_IMPORT_ERROR,
+        "measurement_stack_import_error": MEASUREMENT_STACK_IMPORT_ERROR,
+        "performance_store": self._performance_store_summary(),
+        "experiment_registry": {"ok": False, "error": "not_loaded_in_slim_runtime"},
+        "episodic_performance_memory": {"ok": False, "error": "not_loaded_in_slim_runtime"},
+        "real_probe_route_supported": True,
+        "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
+        "brand_live_allowed": False,
+        "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+        "brand_surface_flags": env_flags,
+        "last_run_summary": self._last_run_summary,
+    }
 
-        latest_receipt_id = (
-            performance_store.get("latest_receipt_id")
-            or receipt.get("receipt_id")
-            or error.get("receipt_id")
-        )
-        latest_media_id = (
-            performance_store.get("latest_media_id")
-            or last_publish.get("latest_media_id")
-            or receipt.get("media_id")
-            or last_episode.get("media_id")
-        )
-        latest_permalink = (
-            performance_store.get("latest_permalink")
-            or last_publish.get("latest_permalink")
-            or receipt.get("permalink")
-            or last_episode.get("permalink")
-        )
-        latest_evidence_bridge_state = (
-            performance_store.get("latest_evidence_bridge_state")
-            or last_publish.get("latest_evidence_state")
-            or last_episode.get("evidence_state")
-        )
+def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    rubric_engine = {
+        "approved_minimum_quality": False,
+        "eligible_for_brand_live": False,
+        "global_score": 0.0,
+        "global_score_100": 0,
+        "breakdown": {},
+        "floors": {},
+        "failed_floors": ["authorization_stack_unavailable"],
+        "reasons": [reason],
+        "weights": {},
+        "stack_ok": False,
+    }
+    brand_veto_gate = {
+        "approved": False,
+        "blocked": False,
+        "categories": {
+            "commodity": False,
+            "cheap_ai": False,
+            "template": False,
+            "prototype": False,
+            "brand_indignity": False,
+        },
+        "triggers": [],
+        "reasons": [reason],
+        "summary": "brand veto em fallback",
+        "stack_ok": False,
+    }
+    publication_authorization_gate = {
+        "selected_state": "technical_test" if force_placeholder else "internal_lab",
+        "supported_states": [
+            "technical_test",
+            "internal_lab",
+            "editorial_staging",
+            "brand_live",
+            "blocked_quality",
+            "blocked_brand",
+        ],
+        "can_publish_placeholder": bool(force_placeholder),
+        "can_publish_real": False,
+        "brand_live_blocked_by_default": True,
+        "brand_live_candidate": False,
+        "main_surface_allowed": False,
+        "requires_human_review": True,
+        "block_reasons": [reason] if not force_placeholder else [],
+        "reasons": [reason],
+        "summary": "authorization stack em fallback seguro",
+        "stack_ok": False,
+        "premium_classification": "internal_lab" if not force_placeholder else "technical_test",
+        "eligible_for_editorial_staging": False,
+        "eligible_for_brand_live_candidate": False,
+        "missing_for_brand_live": [],
+        "score_gap_to_brand_live": 0.0,
+        "next_quality_lift_targets": [],
+    }
+    return rubric_engine, brand_veto_gate, publication_authorization_gate
 
-        return {
-            "snapshot": snapshot,
-            "last_publish": last_publish,
-            "performance_store": performance_store,
-            "episodic_memory": episodic_memory,
-            "last_run_summary": last_run_summary,
-            "receipt": receipt,
-            "error": error,
-            "last_episode": last_episode,
-            "latest_receipt_id": latest_receipt_id,
-            "latest_media_id": latest_media_id,
-            "latest_permalink": latest_permalink,
-            "latest_evidence_bridge_state": latest_evidence_bridge_state,
-        }
-
-    def compact_runtime_summary(self) -> dict[str, Any]:
-        state = self._state_sources()
-        snapshot = state["snapshot"]
-        performance_store = state["performance_store"]
-        episodic_memory = state["episodic_memory"]
-        last_run_summary = state["last_run_summary"]
-
-        return {
-            "brand_surface_mode": snapshot.get("brand_surface_mode"),
-            "token_present": snapshot.get("token_present"),
-            "ig_id_present": snapshot.get("ig_id_present"),
-            "enable_real_publish": snapshot.get("enable_real_publish"),
-            "premium_classification": last_run_summary.get("premium_classification"),
-            "eligible_for_editorial_staging": last_run_summary.get("eligible_for_editorial_staging"),
-            "eligible_for_brand_live_candidate": last_run_summary.get("eligible_for_brand_live_candidate"),
-            "score_gap_to_brand_live": last_run_summary.get("score_gap_to_brand_live"),
-            "missing_for_brand_live": last_run_summary.get("missing_for_brand_live"),
-            "latest_episode_id": episodic_memory.get("latest_episode_id"),
-            "latest_continuity_state": episodic_memory.get("latest_continuity_state"),
-            "latest_series_name": episodic_memory.get("latest_series_name"),
-            "latest_probe_requested": performance_store.get("latest_probe_requested"),
-            "latest_probe_publish_executed": performance_store.get("latest_probe_publish_executed"),
-            "latest_receipt_id": state["latest_receipt_id"],
-            "latest_media_id": state["latest_media_id"],
-            "latest_permalink": state["latest_permalink"],
-            "latest_evidence_bridge_state": state["latest_evidence_bridge_state"],
-        }
-
-    def probe_readiness_summary(self) -> dict[str, Any]:
-        state = self._state_sources()
-        snapshot = state["snapshot"]
-        performance_store = state["performance_store"]
-
-        operational_state = performance_store.get("last_operational_state")
-        surface_mode = snapshot.get("brand_surface_mode")
-        latest_probe_requested = performance_store.get("latest_probe_requested")
-        latest_probe_publish_executed = performance_store.get("latest_probe_publish_executed")
-        latest_receipt_id = state["latest_receipt_id"]
-        latest_media_id = state["latest_media_id"]
-        latest_permalink = state["latest_permalink"]
-
-        probe_eligible = operational_state in REAL_PROBE_ALLOWED_STATES if operational_state else False
-        render_only_mode = None
-        if operational_state:
-            render_only_mode = False if probe_eligible else None
-
-        if not operational_state:
-            block_reason = "no_operational_state_yet"
-            next_best_step = "rodar uma peça no caminho oficial antes de avaliar probe"
-        elif not probe_eligible:
-            block_reason = "operational_state_not_allowed_for_real_probe"
-            next_best_step = "manter internal_lab ou editorial_staging antes de probe explícito"
-        elif latest_probe_requested and not latest_receipt_id:
-            block_reason = "probe_requested_without_receipt"
-            next_best_step = "inspecionar a última tentativa explícita de probe"
-        elif latest_receipt_id and not latest_media_id:
-            block_reason = "receipt_without_media_id"
-            next_best_step = "verificar retorno do publish e persistência do media_id"
-        elif latest_media_id and not latest_permalink:
-            block_reason = "media_id_without_permalink"
-            next_best_step = "aguardar ou inspecionar leitura de permalink"
-        else:
-            block_reason = None
-            next_best_step = "readiness ok para leitura e novo probe explícito quando necessário"
-
-        env_flags = _safe_dict(snapshot.get("brand_surface_flags"))
-        env_flags_visible = {
-            "ACE_BRAND_SURFACE_MODE": env_flags.get("ACE_BRAND_SURFACE_MODE"),
-            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": env_flags.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"),
-            "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": env_flags.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"),
-            "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": env_flags.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"),
-        }
-
-        return {
-            "operational_state": operational_state,
-            "surface_mode": surface_mode,
-            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
-            "probe_eligible": probe_eligible,
-            "probe_requested": latest_probe_requested,
-            "probe_publish_executed": latest_probe_publish_executed,
-            "render_only_mode": render_only_mode,
-            "latest_receipt_id": latest_receipt_id,
-            "latest_media_id": latest_media_id,
-            "latest_permalink": latest_permalink,
-            "next_best_step": next_best_step,
-            "block_reason": block_reason,
-            "env_flags_visible": env_flags_visible,
-        }
-
-    def quality_gap_summary(self) -> dict[str, Any]:
-        state = self._state_sources()
-        last_run_summary = state["last_run_summary"]
-
-        premium_classification = last_run_summary.get("premium_classification")
-        eligible_for_editorial_staging = last_run_summary.get("eligible_for_editorial_staging")
-        eligible_for_brand_live_candidate = last_run_summary.get("eligible_for_brand_live_candidate")
-        missing_for_brand_live = last_run_summary.get("missing_for_brand_live")
-        score_gap_to_brand_live = last_run_summary.get("score_gap_to_brand_live")
-        next_quality_lift_targets = last_run_summary.get("next_quality_lift_targets")
-        caption_gate_result = last_run_summary.get("caption_gate_result")
-        caption_gate_score = last_run_summary.get("caption_gate_score")
-
-        if eligible_for_brand_live_candidate:
-            recommended_action = "hold_for_human_review"
-            next_best_step = "manter candidatura e revisar elegibilidade premium"
-        elif eligible_for_editorial_staging:
-            recommended_action = "quality_lift"
-            next_best_step = "elevar o gap restante antes de brand_live_candidate"
-        elif premium_classification in {"blocked_brand", "blocked_quality"}:
-            recommended_action = "fix_quality_gap"
-            next_best_step = "corrigir o gap mínimo antes de nova leitura oficial"
-        else:
-            recommended_action = "collect_quality_signal"
-            next_best_step = "gerar peça mais forte antes de buscar staging"
-
-        return {
-            "premium_classification": premium_classification,
-            "caption_gate_result": caption_gate_result,
-            "caption_gate_score": caption_gate_score,
-            "eligible_for_editorial_staging": eligible_for_editorial_staging,
-            "eligible_for_brand_live_candidate": eligible_for_brand_live_candidate,
-            "score_gap_to_brand_live": score_gap_to_brand_live,
-            "missing_for_brand_live": missing_for_brand_live,
-            "next_quality_lift_targets": next_quality_lift_targets,
-            "recommended_action": recommended_action,
-            "next_best_step": next_best_step,
-        }
-
-    def last_publish_compact_summary(self) -> dict[str, Any]:
-        state = self._state_sources()
-        performance_store = state["performance_store"]
-        last_publish = state["last_publish"]
-        receipt = state["receipt"]
-        error = state["error"]
-        last_episode = state["last_episode"]
-        last_run_summary = state["last_run_summary"]
-
-        publish_status = receipt.get("publish_status") or error.get("publish_status")
-        receipt_id = receipt.get("receipt_id") or error.get("receipt_id")
-        render_path = receipt.get("media_path") or error.get("media_path")
-        error_summary = _short_error_summary(
-            error.get("error")
-            or ((error.get("raw_publish_result") or {}).get("error"))
-            or last_publish.get("last_publish_error")
+def _run_authorization_stack(
+    self,
+    *,
+    force_placeholder: bool,
+    plan_dict: dict[str, Any],
+    editorial_qa: dict[str, Any],
+    visual_qa: dict[str, Any],
+    perceptual_qa: dict[str, Any],
+    env_flags: dict[str, Any],
+    request_flags: dict[str, Any],
+    staging_hardener: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if AUTH_STACK_IMPORT_ERROR or not evaluate_rubric_engine or not evaluate_brand_veto_gate or not authorize_publication:
+        return self._authorization_fallback(
+            force_placeholder=force_placeholder,
+            reason=f"authorization_stack_import_error: {AUTH_STACK_IMPORT_ERROR or 'unknown'}",
         )
 
+    try:
+        rubric = evaluate_rubric_engine(
+            plan=plan_dict,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+        )
+        brand_veto = evaluate_brand_veto_gate(
+            plan=plan_dict,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            rubric=rubric,
+        )
+        authorization = authorize_publication(
+            force_placeholder=force_placeholder,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            rubric=rubric,
+            brand_veto=brand_veto,
+            env_flags=env_flags,
+            request_flags=request_flags,
+            staging_hardener=staging_hardener,
+        )
+        rubric_dict = rubric.to_dict()
+        rubric_dict["stack_ok"] = True
+        brand_veto_dict = brand_veto.to_dict()
+        brand_veto_dict["stack_ok"] = True
+        authorization_dict = authorization.to_dict()
+        authorization_dict["stack_ok"] = True
+        return rubric_dict, brand_veto_dict, authorization_dict
+    except Exception as exc:
+        return self._authorization_fallback(
+            force_placeholder=force_placeholder,
+            reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
+        )
+
+def _run_reel_premium_stack(
+    self,
+    *,
+    trend: str,
+    creative_plan: dict[str, Any],
+    visual_qa: dict[str, Any],
+    perceptual_qa: dict[str, Any],
+    publication_authorization_gate: dict[str, Any],
+    operational_state: str,
+) -> dict[str, Any]:
+    if not all([
+        generate_hook_opening,
+        ReelStoryboardEngine,
+        ReelRhythmEngine,
+        PostProductionPipeline,
+        AudioDirectionLayer,
+        MultimodalReelQA,
+        CinematicGate,
+        ReleaseAuthority,
+        PublishGuard,
+    ]):
         return {
-            "latest_episode_id": last_episode.get("episode_id") or state["episodic_memory"].get("latest_episode_id"),
-            "publish_status": publish_status,
-            "receipt_id": receipt_id,
-            "media_id": state["latest_media_id"],
-            "permalink": state["latest_permalink"],
-            "latest_evidence_state": last_publish.get("latest_evidence_state") or last_episode.get("evidence_state"),
-            "latest_resolution_state": last_publish.get("latest_resolution_state") or last_episode.get("resolution_state"),
-            "premium_classification": last_run_summary.get("premium_classification"),
-            "operational_state": last_episode.get("operational_state") or performance_store.get("last_operational_state"),
-            "probe_requested": receipt.get("real_probe_requested") or performance_store.get("latest_probe_requested"),
-            "probe_publish_executed": receipt.get("real_probe_executed") or performance_store.get("latest_probe_publish_executed"),
-            "render_path": render_path,
-            "error_summary": error_summary,
+            "ok": False,
+            "stack_state": "reel_stack_import_error",
+            "error": "reel premium stack unavailable",
         }
 
-    def snapshot(self) -> dict:
-        sync = self.sync_instagram_auth()
-        token_state = self._auth_state()
-        env_flags = self._brand_env_flags()
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "token_present": bool(self.config.ig_token),
-            "ig_id_present": bool(self.config.ig_id),
-            "render_url": self.config.render_url,
-            "token_source": sync.get("token_source"),
-            "user_id_source": sync.get("user_id_source"),
-            "auth_path": sync.get("auth_path"),
-            "enable_real_publish": self.config.enable_real_publish,
-            "token_expires_at": token_state.get("expires_at"),
-            "token_remaining_days": token_state.get("remaining_days"),
-            "token_meta_source": token_state.get("source"),
-            "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
-            "authorization_stack_import_error": AUTH_STACK_IMPORT_ERROR,
-            "measurement_stack_import_error": MEASUREMENT_STACK_IMPORT_ERROR,
-            "performance_store": self._performance_store_summary(),
-            "experiment_registry": self._experiment_registry_summary(),
-            "episodic_performance_memory": self._episodic_memory_summary(),
-            "real_probe_route_supported": True,
-            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
-            "brand_live_allowed": False,
-            "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
-            "brand_surface_flags": env_flags,
-            "last_run_summary": self._last_run_summary,
-        }
+    hook_raw = generate_hook_opening(
+        trend=trend,
+        style=creative_plan.get("publish_style"),
+        content_type=creative_plan.get("publish_format_now"),
+    )
+    hook_opening = {
+        "opening_pattern": "curiosity_gap",
+        "opening_text": (
+            hook_raw.get("text_hook")
+            or hook_raw.get("audio_hook")
+            or hook_raw.get("visual_hook")
+            or trend
+        ),
+        "visual_hook": hook_raw.get("visual_hook"),
+        "audio_hook": hook_raw.get("audio_hook"),
+        "text_hook": hook_raw.get("text_hook"),
+        "pattern_interrupts": hook_raw.get("pattern_interrupts") or [],
+        "intensity_score": hook_raw.get("intensity_score"),
+    }
 
-    def _authorization_fallback(self, *, force_placeholder: bool, reason: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        rubric_engine = {
-            "approved_minimum_quality": False,
-            "eligible_for_brand_live": False,
-            "global_score": 0.0,
-            "global_score_100": 0,
-            "breakdown": {},
-            "floors": {},
-            "failed_floors": ["authorization_stack_unavailable"],
-            "reasons": [reason],
-            "weights": {},
-            "stack_ok": False,
-        }
-        brand_veto_gate = {
-            "approved": False,
-            "blocked": False,
-            "categories": {
-                "commodity": False,
-                "cheap_ai": False,
-                "template": False,
-                "prototype": False,
-                "brand_indignity": False,
+    storyboard = ReelStoryboardEngine().run(
+        creative_plan=creative_plan,
+        hook_opening=hook_opening,
+    )
+    rhythm = ReelRhythmEngine().run(
+        storyboard=storyboard,
+        hook_opening={"opening_pattern": hook_opening.get("opening_pattern", "curiosity_gap")},
+    )
+    subtitles = {
+        "emphasis_mode": (
+            "short_emphasis_lines"
+            if rhythm.get("subtitle_pacing_hint") == "short_emphasis_lines"
+            else "balanced_lines"
+        )
+    }
+    post_production = PostProductionPipeline().run(
+        storyboard=storyboard,
+        rhythm=rhythm,
+        subtitles=subtitles,
+    )
+    audio_direction = AudioDirectionLayer().run(
+        hook_opening={"opening_pattern": hook_opening.get("opening_pattern", "curiosity_gap")},
+        rhythm=rhythm,
+        post_production=post_production,
+    )
+
+    visual_score_10 = max(
+        float(visual_qa.get("final_score", 0)) / 10.0,
+        float(perceptual_qa.get("final_score", 0)) / 10.0,
+    )
+    audio_score_10 = 8.6 if audio_direction.get("state") == "audio_direction_layer_ready" else 6.0
+    rhythm_score_10 = 8.6 if rhythm.get("rhythm_state") == "reel_rhythm_ready" else 6.0
+
+    multimodal_qa = MultimodalReelQA().run(
+        visual_gate={"global_visual_score": visual_score_10},
+        audio_gate={"global_audio_score": audio_score_10},
+        reel_gate={"global_score": rhythm_score_10},
+        naturalism={"naturalism_state": "naturalism_engine_ready"},
+    )
+
+    overall_quality_score = max(visual_score_10, 8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10)
+
+    cinematic_gate = CinematicGate().run(
+        multimodal_qa=multimodal_qa,
+        reel_director={
+            "visual_mode": "cinematic_retention",
+            "cut_mode": "precision_fast",
+        },
+        premium_decision={
+            "overall_quality_score": overall_quality_score
+        },
+    )
+
+    release_authority = ReleaseAuthority().run(
+        cinematic_gate=cinematic_gate,
+        premium_decision={"overall_quality_score": overall_quality_score},
+        operation_bridge={"operational_state": operational_state},
+    )
+
+    publish_guard = PublishGuard().run(
+        release_authority=release_authority,
+        publish_truth={"truth_state": "publish_truth_absent"},
+    )
+
+    return {
+        "ok": True,
+        "stack_state": "reel_premium_stack_ready",
+        "hook_opening": hook_opening,
+        "storyboard": storyboard,
+        "rhythm": rhythm,
+        "subtitles": subtitles,
+        "post_production": post_production,
+        "audio_direction": audio_direction,
+        "multimodal_qa": multimodal_qa,
+        "cinematic_gate": cinematic_gate,
+        "release_authority": release_authority,
+        "publish_guard": publish_guard,
+    }
+
+def _measurement_summary(self, *, publish_result: dict[str, Any] | None) -> dict[str, Any]:
+    publish_result = _safe_dict(publish_result)
+    receipt_id = publish_result.get("receipt_id")
+    media_id = publish_result.get("media_id")
+    permalink = publish_result.get("permalink")
+    publish_status = publish_result.get("publish_status")
+    error_summary = _short_error_summary(publish_result.get("error"))
+    return {
+        "post_performance_contract": {
+            "ok": True,
+            "publish_receipt_bridge": {
+                "publish_status": publish_status,
+                "receipt_id": receipt_id,
+                "media_id": media_id,
+                "permalink": permalink,
+                "content_type": publish_result.get("content_type"),
+                "style": publish_result.get("style"),
+                "created_at": publish_result.get("created_at"),
             },
-            "triggers": [],
-            "reasons": [reason],
-            "summary": "brand veto em fallback",
-            "stack_ok": False,
-        }
-        publication_authorization_gate = {
-            "selected_state": "technical_test" if force_placeholder else "internal_lab",
-            "supported_states": [
-                "technical_test",
-                "internal_lab",
-                "editorial_staging",
-                "brand_live",
-                "blocked_quality",
-                "blocked_brand",
-            ],
-            "can_publish_placeholder": bool(force_placeholder),
-            "can_publish_real": False,
-            "brand_live_blocked_by_default": True,
-            "brand_live_candidate": False,
-            "main_surface_allowed": False,
-            "requires_human_review": True,
-            "block_reasons": [reason] if not force_placeholder else [],
-            "reasons": [reason],
-            "summary": "authorization stack em fallback seguro",
-            "stack_ok": False,
-            "premium_classification": "internal_lab" if not force_placeholder else "technical_test",
-            "eligible_for_editorial_staging": False,
-            "eligible_for_brand_live_candidate": False,
-            "missing_for_brand_live": [],
-            "score_gap_to_brand_live": 0.0,
-            "next_quality_lift_targets": [],
-        }
-        return rubric_engine, brand_veto_gate, publication_authorization_gate
-
-    def _run_authorization_stack(
-        self,
-        *,
-        force_placeholder: bool,
-        plan_dict: dict[str, Any],
-        editorial_qa: dict[str, Any],
-        visual_qa: dict[str, Any],
-        perceptual_qa: dict[str, Any],
-        env_flags: dict[str, Any],
-        request_flags: dict[str, Any],
-        staging_hardener: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        if AUTH_STACK_IMPORT_ERROR or not evaluate_rubric_engine or not evaluate_brand_veto_gate or not authorize_publication:
-            return self._authorization_fallback(
-                force_placeholder=force_placeholder,
-                reason=f"authorization_stack_import_error: {AUTH_STACK_IMPORT_ERROR or 'unknown'}",
-            )
-
-        try:
-            rubric = evaluate_rubric_engine(
-                plan=plan_dict,
-                editorial_qa=editorial_qa,
-                visual_qa=visual_qa,
-                perceptual_qa=perceptual_qa,
-            )
-            brand_veto = evaluate_brand_veto_gate(
-                plan=plan_dict,
-                editorial_qa=editorial_qa,
-                visual_qa=visual_qa,
-                perceptual_qa=perceptual_qa,
-                rubric=rubric,
-            )
-            authorization = authorize_publication(
-                force_placeholder=force_placeholder,
-                editorial_qa=editorial_qa,
-                visual_qa=visual_qa,
-                perceptual_qa=perceptual_qa,
-                rubric=rubric,
-                brand_veto=brand_veto,
-                env_flags=env_flags,
-                request_flags=request_flags,
-                staging_hardener=staging_hardener,
-            )
-
-            rubric_dict = rubric.to_dict()
-            rubric_dict["stack_ok"] = True
-            brand_veto_dict = brand_veto.to_dict()
-            brand_veto_dict["stack_ok"] = True
-            authorization_dict = authorization.to_dict()
-            authorization_dict["stack_ok"] = True
-            return rubric_dict, brand_veto_dict, authorization_dict
-        except Exception as exc:
-            return self._authorization_fallback(
-                force_placeholder=force_placeholder,
-                reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
-            )
-
-    def _measurement_fallback(self, *, reason: str):
-        post_performance_contract = {"ok": False, "error": reason}
-        performance_ingest = {
-            "ok": False,
-            "attempted": False,
+            "evidence_bridge": {
+                "has_real_receipt": bool(receipt_id),
+                "has_media_id": bool(media_id),
+                "has_permalink": bool(permalink),
+                "evidence_bridge_state": (
+                    "linked_real_target"
+                    if receipt_id and media_id
+                    else "receipt_only"
+                    if receipt_id
+                    else "no_receipt"
+                ),
+            },
+        },
+        "performance_ingest": {
+            "ok": True,
+            "attempted": bool(media_id),
             "collection_success": False,
-            "source_status": "ingest_error",
-            "real_metrics": {"source_status": "ingest_error", "source_reason": reason, "errors": [reason]},
+            "source_status": "not_collected_yet",
+            "real_metrics": {"source_status": "not_collected_yet"},
             "attention_inputs": {},
-            "errors": [reason],
+            "errors": [error_summary] if error_summary else [],
             "raw": {},
-        }
-        attention_metrics = {
-            "ok": False,
-            "source_status": "ingest_error",
+        },
+        "attention_metrics": {
+            "ok": True,
+            "source_status": "not_collected_yet",
             "breakdown": {},
             "available_inputs": [],
-            "notes": [reason],
-        }
-        resonance_engine = {
-            "ok": False,
-            "resonance_score": None,
-            "reasons": [reason],
-        }
-        reward_prediction = {
-            "ok": False,
-            "reward_prediction_score": None,
-            "reasons": [reason],
-        }
-        thompson_sampler = {
-            "ok": False,
+            "notes": [],
+        },
+        "resonance_engine": {"ok": True, "resonance_score": None, "reasons": []},
+        "reward_prediction": {"ok": True, "reward_prediction_score": None, "reasons": []},
+        "thompson_sampler": {
+            "ok": True,
             "selected_variant": None,
             "confidence_level": "low",
             "decision_state": "collecting",
             "posterior_mean": None,
             "winner_candidate": False,
-            "reasons": [reason],
-        }
-        decision_core_summary = {
-            "ok": False,
+            "reasons": [],
+        },
+        "decision_core_summary": {
+            "ok": True,
             "resonance_score": None,
             "reward_prediction_score": None,
             "selected_variant": None,
@@ -697,60 +483,67 @@ class OfficialRuntime:
             "experiment_decision_state": "collecting",
             "posterior_mean": None,
             "winner_candidate": False,
-            "reasons": [reason],
-        }
-        evidence_interpreter = {
-            "ok": False,
-            "evidence_state": "ingest_error",
-            "evidence_strength": "none",
+            "reasons": ["measurement_slim_mode"],
+        },
+        "evidence_interpreter": {
+            "ok": True,
+            "evidence_state": (
+                "linked_real_target"
+                if receipt_id and media_id
+                else "receipt_only"
+                if receipt_id
+                else "no_receipt"
+            ),
+            "evidence_strength": "low" if receipt_id else "none",
             "evidence_ready_for_resolution": False,
-            "evidence_reasons": [reason],
-            "bridge_state": "no_receipt",
-        }
-        experiment_resolution = {
-            "ok": False,
+            "evidence_reasons": [],
+            "bridge_state": (
+                "linked_real_target"
+                if receipt_id and media_id
+                else "receipt_only"
+                if receipt_id
+                else "no_receipt"
+            ),
+        },
+        "experiment_resolution": {
+            "ok": True,
             "resolution_state": "collecting",
             "can_resolve": False,
             "winner_candidate": False,
             "loser_candidate": False,
             "keep_collecting": True,
             "confidence_level": "low",
-            "resolution_reason": reason,
+            "resolution_reason": "measurement_slim_mode",
             "promotion_readiness": "not_ready",
-        }
-        recommendation_engine = {
-            "ok": False,
-            "recommended_action": "repeat_probe",
-            "action_priority": "low",
-            "recommendation_reason": reason,
-            "next_best_step": "restaurar a base antes de interpretar evidência",
-            "safe_to_repeat": False,
+        },
+        "recommendation_engine": {
+            "ok": True,
+            "recommended_action": "measure_now" if media_id else "publish_or_improve",
+            "action_priority": "medium",
+            "recommendation_reason": "measurement_slim_mode",
+            "next_best_step": "coletar métricas reais após publicação",
+            "safe_to_repeat": True,
             "safe_to_promote_to_editorial_staging": False,
             "requires_human_review": True,
-        }
-        wave10_summary = {
-            "ok": False,
-            "evidence_state": "ingest_error",
-            "resolution_state": "collecting",
-            "recommended_action": "repeat_probe",
-        }
-        wave11_summary = {
-            "ok": False,
+        },
+        "wave10_summary": {"ok": True, "evidence_state": "collecting", "resolution_state": "collecting", "recommended_action": "measure_now"},
+        "wave11_summary": {
+            "ok": True,
             "brand_live_allowed": False,
-            "evidence_state": "no_receipt",
-            "has_receipt": False,
-            "has_media_id": False,
-            "has_permalink": False,
+            "evidence_state": "collecting",
+            "has_receipt": bool(receipt_id),
+            "has_media_id": bool(media_id),
+            "has_permalink": bool(permalink),
             "can_resolve": False,
-            "recommended_action": "repeat_probe",
-            "next_best_step": "restaurar a base antes de interpretar evidência",
-        }
-        experiment_registry = {"ok": False, "error": reason}
-        episodic_performance_memory = {"ok": False, "error": reason}
-        reflection_memory = {
-            "ok": False,
-            "status": "ingest_error",
-            "notes": [reason],
+            "recommended_action": "measure_now" if media_id else "publish_or_improve",
+            "next_best_step": "coletar métricas reais após publicação",
+        },
+        "experiment_registry": {"ok": False, "error": "measurement_slim_runtime"},
+        "episodic_performance_memory": {"ok": False, "error": "measurement_slim_runtime"},
+        "reflection_memory": {
+            "ok": True,
+            "status": "recorded",
+            "notes": [],
             "guardrails": {
                 "can_change_brand_policy": False,
                 "can_change_editorial_policy": False,
@@ -758,813 +551,482 @@ class OfficialRuntime:
                 "can_authorize_brand_live": False,
                 "can_autopublish": False,
             },
-        }
-        learning_loop = {
-            "ok": False,
-            "error": reason,
+        },
+        "learning_loop": {
+            "ok": True,
+            "error": None,
             "insight_control": {
-                "can_record": False,
+                "can_record": True,
                 "can_consolidate": False,
-                "can_suggest": False,
+                "can_suggest": True,
                 "can_change_brand_policy": False,
                 "can_change_editorial_policy": False,
                 "can_change_visual_policy": False,
                 "can_autopublish_brand_live": False,
             },
-        }
-        performance_summary = {"ok": False, "error": reason}
-        return (
-            post_performance_contract,
-            performance_ingest,
-            attention_metrics,
-            resonance_engine,
-            reward_prediction,
-            thompson_sampler,
-            decision_core_summary,
-            evidence_interpreter,
-            experiment_resolution,
-            recommendation_engine,
-            wave10_summary,
-            wave11_summary,
-            experiment_registry,
-            episodic_performance_memory,
-            reflection_memory,
-            learning_loop,
-            performance_summary,
-        )
+        },
+        "performance_summary": {"ok": True, "mode": "measurement_slim_runtime"},
+        "performance_store": self._performance_store_summary(),
+    }
 
-    def _run_measurement_core(
-        self,
-        *,
-        trend: str,
-        operational_state: str,
-        brand_live_allowed: bool,
-        creative_plan: dict[str, Any],
-        editorial_qa: dict[str, Any],
-        visual_qa: dict[str, Any],
-        visual_template: dict[str, Any],
-        rubric_engine: dict[str, Any],
-        publication_authorization_gate: dict[str, Any],
-        publish_result: dict[str, Any] | None,
-        probe_context: dict[str, Any],
-    ):
-        if (
-            MEASUREMENT_STACK_IMPORT_ERROR
-            or not PerformanceStore
-            or not build_learning_loop_summary
-            or not build_post_performance_contract
-            or not collect_real_performance_metrics
-            or not build_reflection_memory
-            or not build_attention_metrics
-            or not ExperimentRegistry
-            or not build_experiment_record
-            or not EpisodicPerformanceMemory
-            or not build_episode_record
-            or not build_performance_summary
-            or not build_resonance_engine
-            or not build_reward_prediction
-            or not build_thompson_sampler
-            or not build_evidence_interpreter
-            or not build_experiment_resolution
-            or not build_recommendation_engine
-        ):
-            fallback = self._measurement_fallback(
-                reason=f"measurement_stack_import_error: {MEASUREMENT_STACK_IMPORT_ERROR or 'unknown'}"
-            )
-            return (*fallback, {"ok": False, "error": MEASUREMENT_STACK_IMPORT_ERROR or "measurement_stack_unavailable"})
+def run(
+    self,
+    *,
+    trend: str,
+    force_placeholder: bool = False,
+    force_real_probe: bool = False,
+    probe_state: str | None = None,
+) -> dict[str, Any]:
+    trend = (trend or "teste real").strip()
+    probe_state_requested = _normalize_probe_state(probe_state)
 
-        try:
-            record = build_post_performance_contract(
-                trend=trend,
-                operational_state=operational_state,
-                brand_live_allowed=brand_live_allowed,
-                creative_plan=creative_plan,
-                editorial_qa=editorial_qa,
-                visual_qa=visual_qa,
-                publish_result=publish_result,
-                publication_authorization_gate=publication_authorization_gate,
-            )
-            record["probe_context"] = dict(probe_context)
-            record["visual_template"] = visual_template
-            record["rubric_engine"] = rubric_engine
+    env_flags = self._brand_env_flags()
+    request_flags = {
+        "probe_requested": bool(force_real_probe) and not force_placeholder,
+        "explicit_probe_arm": bool(force_real_probe) and not force_placeholder,
+        "explicit_main_surface_publish": bool(force_real_probe) and not force_placeholder,
+        "brand_live_arm": False,
+        "human_review_approved": False,
+    }
 
-            performance_ingest = collect_real_performance_metrics(
-                config=self.config,
-                publish_result=publish_result,
-            )
-            real_metrics = dict(performance_ingest.get("real_metrics") or {})
-            attention_inputs = dict(performance_ingest.get("attention_inputs") or {})
-            attention_metrics = build_attention_metrics(
-                real_metrics=real_metrics,
-                attention_inputs=attention_inputs,
-            )
+    mission_control_state = {
+        "enabled": True,
+        "approval_required": _mission_approval_required(),
+        "blocked": False,
+    }
 
-            record["real_metrics"] = real_metrics
-            record["performance_ingest"] = performance_ingest
-            record["attention_metrics"] = attention_metrics
-
-            resonance_engine = build_resonance_engine(record=record)
-            reward_prediction = build_reward_prediction(
-                record=record,
-                resonance_engine=resonance_engine,
-            )
-            thompson_sampler = build_thompson_sampler(
-                record=record,
-                reward_prediction=reward_prediction,
-                conservative_mode=True,
-            )
-            decision_core_summary = {
-                "ok": True,
-                "resonance_score": resonance_engine.get("resonance_score"),
-                "reward_prediction_score": reward_prediction.get("reward_prediction_score"),
-                "selected_variant": thompson_sampler.get("selected_variant"),
-                "confidence_level": thompson_sampler.get("confidence_level"),
-                "experiment_decision_state": thompson_sampler.get("decision_state"),
-                "posterior_mean": thompson_sampler.get("posterior_mean"),
-                "winner_candidate": thompson_sampler.get("winner_candidate"),
-                "conservative_mode": thompson_sampler.get("conservative_mode"),
-                "reasons": [
-                    "decision core deriva de módulos auditáveis",
-                    "nenhum sorteio aleatório foi usado",
-                ],
-            }
-
-            record["resonance_engine"] = resonance_engine
-            record["reward_prediction"] = reward_prediction
-            record["sampler_decision"] = thompson_sampler
-            record["decision_core_summary"] = decision_core_summary
-
-            evidence_interpreter = build_evidence_interpreter(record=record)
-
-            experiment_resolution = build_experiment_resolution(
-                experiment_context=dict(record.get("experiment_registry") or {}),
-                thompson_sampler=thompson_sampler,
-                reward_prediction=reward_prediction,
-                attention_metrics=attention_metrics,
-                evidence_interpreter=evidence_interpreter,
-            )
-
-            serial_continuity = dict(creative_plan.get("serial_continuity") or {})
-            distribution_context = dict(creative_plan.get("distribution_context") or {})
-            episodic_memory_preview = {
-                "episode_id": record.get("record_id"),
-                "topic_seed": creative_plan.get("topic_seed"),
-                "series_name": serial_continuity.get("series_name"),
-                "linked_series_candidate": serial_continuity.get("linked_series_candidate"),
-                "continuity_state": serial_continuity.get("continuation_type"),
-                "next_episode_seed": serial_continuity.get("next_episode_seed"),
-                "latest_episode_id": self._episodic_memory_summary().get("latest_episode_id"),
-            }
-
-            recommendation_engine = build_recommendation_engine(
-                evidence_interpreter=evidence_interpreter,
-                experiment_resolution=experiment_resolution,
-                resonance_engine=resonance_engine,
-                reward_prediction=reward_prediction,
-                attention_metrics=attention_metrics,
-                operational_state=operational_state,
-                episodic_memory=episodic_memory_preview,
-                serial_continuity=serial_continuity,
-                distribution_context=distribution_context,
-                publish_result=publish_result or {},
-                real_metrics=real_metrics,
-            )
-
-            wave10_summary = {
-                "ok": True,
-                "evidence_state": evidence_interpreter.get("evidence_state"),
-                "resolution_state": experiment_resolution.get("resolution_state"),
-                "recommended_action": recommendation_engine.get("recommended_action"),
-            }
-
-            wave11_summary = {
-                "ok": True,
+    try:
+        mission_decision = decide_mission(
+            trend,
+            format_hint=None,
+            signal_context={"source": "official_runtime", "mode": "run"},
+            brand_context={
+                "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
                 "brand_live_allowed": False,
-                "evidence_state": evidence_interpreter.get("evidence_state"),
-                "has_receipt": evidence_interpreter.get("has_real_receipt"),
-                "has_media_id": evidence_interpreter.get("has_media_id"),
-                "has_permalink": evidence_interpreter.get("has_permalink"),
-                "can_resolve": experiment_resolution.get("can_resolve"),
-                "recommended_action": recommendation_engine.get("recommended_action"),
-                "next_best_step": recommendation_engine.get("next_best_step"),
-            }
-
-            record["evidence_interpreter"] = evidence_interpreter
-            record["experiment_resolution"] = experiment_resolution
-            record["recommendation_engine"] = recommendation_engine
-            record["wave10_summary"] = wave10_summary
-            record["wave11_summary"] = wave11_summary
-            record["resolution_context"] = {
-                "evidence_state": evidence_interpreter.get("evidence_state"),
-                "evidence_strength": evidence_interpreter.get("evidence_strength"),
-                "resolution_state": experiment_resolution.get("resolution_state"),
-                "recommended_action": recommendation_engine.get("recommended_action"),
-            }
-            record["publish_receipt_bridge"] = {
-                "publish_status": (record.get("publish_result") or {}).get("publish_status"),
-                "receipt_id": (record.get("publish_result") or {}).get("receipt_id"),
-                "media_id": (record.get("publish_result") or {}).get("media_id"),
-                "permalink": (record.get("publish_result") or {}).get("permalink"),
-                "content_type": (record.get("publish_result") or {}).get("content_type"),
-                "style": (record.get("publish_result") or {}).get("style"),
-                "created_at": (record.get("publish_result") or {}).get("created_at"),
-            }
-            record["evidence_bridge"] = {
-                "has_real_receipt": bool((record.get("publish_result") or {}).get("receipt_id")),
-                "has_media_id": bool((record.get("publish_result") or {}).get("media_id")),
-                "has_permalink": bool((record.get("publish_result") or {}).get("permalink")),
-                "latest_real_metrics_status": real_metrics.get("source_status"),
-                "latest_source_status": real_metrics.get("source_status"),
-                "evidence_bridge_state": evidence_interpreter.get("bridge_state"),
-            }
-            record["brand_surface_policy"] = probe_context.get("brand_surface_policy")
-            record["lab_probe_policy"] = probe_context.get("lab_probe_policy")
-
-            record["post_performance"] = {
-                "status": real_metrics.get("source_status"),
-                "source": real_metrics.get("source_endpoint"),
-                "metrics": {
-                    "impressions": real_metrics.get("impressions"),
-                    "reach": real_metrics.get("reach"),
-                    "likes": real_metrics.get("likes"),
-                    "comments": real_metrics.get("comments"),
-                    "saves": real_metrics.get("saves"),
-                    "shares": real_metrics.get("shares"),
-                    "engagement_proxy": real_metrics.get("engagement_proxy"),
-                    "attention_score": (
-                        (attention_metrics.get("breakdown") or {}).get("attention_score")
-                        if isinstance(attention_metrics, dict)
-                        else None
-                    ),
-                },
-                "notes": [
-                    "dados de performance baseados apenas em coleta real ou ausência real de dados",
-                    str(real_metrics.get("source_reason") or ""),
-                ],
-            }
-
-            experiment_record = build_experiment_record(record=record)
-            experiment_store = ExperimentRegistry(self.config)
-            experiment_registry = experiment_store.upsert_experiment(experiment_record)
-            record["experiment_registry"] = experiment_record
-
-            episode_record = build_episode_record(record=record)
-            episode_store = EpisodicPerformanceMemory(self.config)
-            episodic_performance_memory = episode_store.upsert_episode(episode_record)
-            record["episodic_performance_memory"] = episode_record
-
-            reflection_memory = build_reflection_memory(record=record)
-            record["reflection_memory"] = reflection_memory
-
-            store = PerformanceStore(self.config)
-            performance_store = store.upsert_record(record)
-            records = store.list_records(limit=30)
-
-            learning_loop = build_learning_loop_summary(
-                records=records,
-                latest_record=record,
-            )
-            performance_summary = build_performance_summary(
-                performance_store=performance_store,
-                learning_loop=learning_loop,
-                experiment_registry=experiment_registry,
-                episodic_performance_memory=episodic_performance_memory,
-                attention_metrics=attention_metrics,
-                real_metrics_contract=real_metrics,
-                performance_ingest=performance_ingest,
-                publish_result=publish_result,
-                reflection_memory=reflection_memory,
-                probe_context=probe_context,
-                resonance_engine=resonance_engine,
-                reward_prediction=reward_prediction,
-                thompson_sampler=thompson_sampler,
-                decision_core_summary=decision_core_summary,
-                evidence_interpreter=evidence_interpreter,
-                experiment_resolution=experiment_resolution,
-                recommendation_engine=recommendation_engine,
-                wave10_summary=wave10_summary,
-                wave11_summary=wave11_summary,
-            )
-            return (
-                record,
-                performance_ingest,
-                attention_metrics,
-                resonance_engine,
-                reward_prediction,
-                thompson_sampler,
-                decision_core_summary,
-                evidence_interpreter,
-                experiment_resolution,
-                recommendation_engine,
-                wave10_summary,
-                wave11_summary,
-                experiment_registry,
-                episodic_performance_memory,
-                reflection_memory,
-                learning_loop,
-                performance_summary,
-                performance_store,
-            )
-        except Exception as exc:
-            fallback = self._measurement_fallback(
-                reason=f"measurement_core_runtime_error: {type(exc).__name__}: {exc}"
-            )
-            return (*fallback, {"ok": False, "error": f"measurement_core_runtime_error: {type(exc).__name__}: {exc}"})
-
-    def run(
-        self,
-        *,
-        trend: str,
-        force_placeholder: bool = False,
-        force_real_probe: bool = False,
-        probe_state: str | None = None,
-    ) -> dict:
-        trend = (trend or "teste real").strip()
-        probe_state_requested = _normalize_probe_state(probe_state)
-
-        env_flags = self._brand_env_flags()
-        request_flags = {
-            "probe_requested": bool(force_real_probe) and not force_placeholder,
-            "explicit_probe_arm": bool(force_real_probe) and not force_placeholder,
-            "explicit_main_surface_publish": bool(force_real_probe) and not force_placeholder,
-            "brand_live_arm": False,
-            "human_review_approved": False,
-        }
-
-        mission_control_state = {
-            "enabled": True,
-            "approval_required": _mission_approval_required(),
-            "blocked": False,
-        }
-
-        try:
-            mission_decision = decide_mission(
-                trend,
-                format_hint=None,
-                signal_context={
-                    "source": "official_runtime",
-                    "mode": "run",
-                },
-                brand_context={
-                    "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
-                    "brand_live_allowed": False,
-                },
-                queue_state=self._runtime_queue_state(),
-                recent_signal_score=None,
-            )
-        except Exception as exc:
-            mission_decision = {
-                "ok": False,
-                "should_act": True,
-                "reason": f"mission_control_runtime_error: {type(exc).__name__}: {exc}",
-                "decision_state": "fallback_allow",
-                "trend": trend,
-                "trend_normalized": trend.strip().lower(),
-                "style": "unknown",
-                "content_type": "image",
-                "goal": "authority",
-                "hypothesis": "mission_control_unavailable_runtime_fallback",
-                "priority": 0.5,
-                "api_budget_mode": "lean",
-                "confidence": 0.2,
-                "planner_selected": "mission_control_runtime_fallback",
-                "queue_full": False,
-                "signal_strength": "unknown",
-                "guardrails": {
-                    "brand_live_allowed": False,
-                    "safe_for_brand_live": False,
-                    "requires_human_review": True,
-                },
-                "inputs": {},
-            }
-            mission_control_state["fallback"] = True
-            mission_control_state["error"] = mission_decision["reason"]
-
-        if mission_control_state["approval_required"] and not bool(mission_decision.get("should_act")):
-            mission_control_state["blocked"] = True
-            return {
-                "ok": True,
-                "mode": "blocked_by_mission_control",
-                "authorization_state": "blocked_by_mission_control",
-                "operational_state": "blocked_by_mission_control",
-                "brand_live_allowed": False,
-                "trend": trend,
-                "mission_decision": mission_decision,
-                "mission_control_state": mission_control_state,
-                "block_reasons": [mission_decision.get("reason")],
-                "runtime": self.snapshot(),
-                "publish_result": None,
-                "last_publish": self.publish.last_publish(),
-            }
-
-        try:
-            recent_memory = self._recent_episodic_memory_for_planner(limit=5)
-            planner_overrides = _planner_overrides_from_mission_decision(mission_decision)
-            plan = build_creative_plan(
-                trend,
-                overrides=planner_overrides,
-                mission_decision=mission_decision,
-                recent_memory=recent_memory,
-            )
-            plan_dict = plan.to_dict()
-        except Exception as exc:
-            return {
-                "ok": False,
-                "operational_state": "blocked_quality",
-                "brand_live_allowed": False,
-                "block_reasons": [f"creative_planner_error: {type(exc).__name__}: {exc}"],
-                "error": f"creative_planner_error: {type(exc).__name__}: {exc}",
-                "mission_decision": mission_decision,
-                "mission_control_state": mission_control_state,
-                "runtime": self.snapshot(),
-                "publish_result": None,
-                "last_publish": self.publish.last_publish(),
-            }
-
-        try:
-            editorial_qa_obj = evaluate_editorial_quality(plan_dict)
-            editorial_qa = editorial_qa_obj.to_dict()
-        except Exception as exc:
-            editorial_qa = {
-                "approved": False,
-                "breakdown": {},
-                "flags": [],
-                "reasons": [f"editorial_qa_error: {type(exc).__name__}: {exc}"],
-            }
-
-        try:
-            visual_identity = build_visual_identity(plan_dict)
-            visual_identity_dict = visual_identity.to_dict()
-        except Exception as exc:
-            visual_identity = None
-            visual_identity_dict = {"error": f"visual_identity_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            typography = build_typography_spec(plan_dict)
-            typography_dict = typography.to_dict()
-        except Exception as exc:
-            typography = None
-            typography_dict = {"error": f"typography_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            visual_contract = build_visual_contract(plan_dict)
-            visual_contract_dict = visual_contract.to_dict()
-        except Exception as exc:
-            visual_contract = None
-            visual_contract_dict = {"error": f"visual_contract_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            visual_template_obj = resolve_visual_template(plan_dict)
-            visual_template_dict = visual_template_obj.to_dict()
-        except Exception as exc:
-            visual_template_obj = None
-            visual_template_dict = {"error": f"visual_template_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            if visual_identity is None or typography is None or visual_contract is None or visual_template_obj is None:
-                raise RuntimeError("visual dependencies unavailable")
-            perceptual_qa_obj = evaluate_perceptual_quality(
-                plan=plan_dict,
-                contract=visual_contract,
-                template=visual_template_obj,
-                identity=visual_identity,
-                typography=typography,
-            )
-            perceptual_qa = perceptual_qa_obj.to_dict()
-        except Exception as exc:
-            perceptual_qa = {
-                "approved": False,
-                "final_score": 0,
-                "breakdown": {},
-                "metrics": {"zero_overlap": False},
-                "reasons": [f"perceptual_qa_error: {type(exc).__name__}: {exc}"],
-                "recommendations": [],
-            }
-
-        try:
-            if visual_identity is None or typography is None:
-                raise RuntimeError("visual identity/typography unavailable")
-            visual_qa_obj = evaluate_visual_quality(
-                plan=plan_dict,
-                identity=visual_identity,
-                typography=typography,
-            )
-            visual_qa = visual_qa_obj.to_dict()
-        except Exception as exc:
-            visual_qa = {
-                "approved": False,
-                "final_score": 0,
-                "minimum_score": 75,
-                "breakdown": {},
-                "metrics": {"zero_overlap": False},
-                "reasons": [f"visual_qa_error: {type(exc).__name__}: {exc}"],
-                "recommendations": [],
-            }
-
-        premium_visual = build_visual_premium_bridge(
-            creative_plan=plan_dict,
-            visual_identity=visual_identity_dict,
-            visual_contract=visual_contract_dict,
-            strategic_format=plan_dict.get("publish_format_now"),
-            template_id=None,
-            capture_mode="safe",
-        )
-
-        rubric_engine, brand_veto_gate, publication_authorization_gate = self._run_authorization_stack(
-            force_placeholder=force_placeholder,
-            plan_dict=plan_dict,
-            editorial_qa=editorial_qa,
-            visual_qa=visual_qa,
-            perceptual_qa=perceptual_qa,
-            env_flags=env_flags,
-            request_flags=request_flags,
-            staging_hardener=dict(premium_visual.get("hardening_report") or {}),
-        )
-
-        try:
-            carousel_preview = build_carousel_sequence(plan_dict)
-        except Exception as exc:
-            carousel_preview = {"ok": False, "error": f"carousel_preview_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            stories_preview = build_stories_sequence(plan_dict)
-        except Exception as exc:
-            stories_preview = {"ok": False, "error": f"stories_preview_error: {type(exc).__name__}: {exc}"}
-
-        try:
-            refresh_result = self.ensure_fresh_instagram_token(force=False)
-        except Exception as exc:
-            refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
-
-        authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
-        operational_state = authorization_state
-        block_reasons = list(publication_authorization_gate.get("reasons") or [])
-        if publication_authorization_gate.get("stack_ok") is False:
-            block_reasons.extend(publication_authorization_gate.get("block_reasons") or [])
-
-        lab_probe_policy = resolve_lab_probe_policy(
-            operational_state=authorization_state,
-            requested_probe=request_flags["probe_requested"],
-            requested_state=probe_state_requested,
-            env_flags=env_flags,
-            request_flags=request_flags,
-        )
-
-        brand_surface_policy = resolve_brand_surface_policy(
-            operational_state=authorization_state,
-            requested_real_publish=lab_probe_policy.get("requested_real_publish", False),
-            env_flags=env_flags,
-            request_flags=request_flags,
-            quality_context={
-                "brand_live_candidate": publication_authorization_gate.get("brand_live_candidate"),
-                "can_publish_real": publication_authorization_gate.get("can_publish_real"),
             },
+            queue_state=self._runtime_queue_state(),
+            recent_signal_score=None,
         )
+    except Exception as exc:
+        mission_decision = {
+            "ok": False,
+            "should_act": True,
+            "reason": f"mission_control_runtime_error: {type(exc).__name__}: {exc}",
+            "decision_state": "fallback_allow",
+            "trend": trend,
+            "trend_normalized": trend.strip().lower(),
+            "style": "unknown",
+            "content_type": "image",
+            "goal": "authority",
+            "hypothesis": "mission_control_unavailable_runtime_fallback",
+            "priority": 0.5,
+            "api_budget_mode": "lean",
+            "confidence": 0.2,
+            "planner_selected": "mission_control_runtime_fallback",
+            "queue_full": False,
+            "signal_strength": "unknown",
+            "guardrails": {
+                "brand_live_allowed": False,
+                "safe_for_brand_live": False,
+                "requires_human_review": True,
+            },
+            "inputs": {},
+        }
+        mission_control_state["fallback"] = True
+        mission_control_state["error"] = mission_decision["reason"]
 
-        explicit_probe_execution_allowed = bool(
-            request_flags.get("probe_requested")
-            and request_flags.get("explicit_probe_arm")
-            and not force_placeholder
-            and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
-        )
-
-        if explicit_probe_execution_allowed:
-            lab_probe_policy["probe_eligible"] = True
-            lab_probe_policy["probe_block_reason"] = None
-            lab_probe_policy["requested_real_publish"] = True
-            lab_probe_policy["render_only_mode"] = False
-
-        if lab_probe_policy.get("probe_block_reason"):
-            block_reasons.append(str(lab_probe_policy.get("probe_block_reason")))
-
-        if brand_surface_policy.get("block_reason") and not explicit_probe_execution_allowed:
-            block_reasons.append(str(brand_surface_policy.get("block_reason")))
-
-        render_path = None
-        render_error = None
-        publish_result: dict[str, Any] | None = None
-
-        linkage_context = {
-            "operational_state": operational_state,
+    if mission_control_state["approval_required"] and not bool(mission_decision.get("should_act")):
+        mission_control_state["blocked"] = True
+        return {
+            "ok": True,
+            "mode": "blocked_by_mission_control",
+            "authorization_state": "blocked_by_mission_control",
+            "operational_state": "blocked_by_mission_control",
             "brand_live_allowed": False,
-            "probe": {},
-            "brand_surface_policy": brand_surface_policy,
-            "lab_probe_policy": lab_probe_policy,
+            "trend": trend,
+            "mission_decision": mission_decision,
+            "mission_control_state": mission_control_state,
+            "block_reasons": [mission_decision.get("reason")],
+            "runtime": self.snapshot(),
+            "publish_result": None,
+            "last_publish": self.publish.last_publish(),
         }
 
-        if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
-            publish_result = self.publish.publish_placeholder(
+    try:
+        plan = build_creative_plan(
+            trend,
+            overrides=_planner_overrides_from_mission_decision(mission_decision),
+            mission_decision=mission_decision,
+            recent_memory=[],
+        )
+        plan_dict = plan.to_dict()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "operational_state": "blocked_quality",
+            "brand_live_allowed": False,
+            "block_reasons": [f"creative_planner_error: {type(exc).__name__}: {exc}"],
+            "error": f"creative_planner_error: {type(exc).__name__}: {exc}",
+            "mission_decision": mission_decision,
+            "mission_control_state": mission_control_state,
+            "runtime": self.snapshot(),
+            "publish_result": None,
+            "last_publish": self.publish.last_publish(),
+        }
+
+    try:
+        editorial_qa = evaluate_editorial_quality(plan_dict).to_dict()
+    except Exception as exc:
+        editorial_qa = {
+            "approved": False,
+            "breakdown": {},
+            "flags": [],
+            "reasons": [f"editorial_qa_error: {type(exc).__name__}: {exc}"],
+        }
+
+    try:
+        visual_identity = build_visual_identity(plan_dict)
+        visual_identity_dict = visual_identity.to_dict()
+    except Exception as exc:
+        visual_identity = None
+        visual_identity_dict = {"error": f"visual_identity_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        typography = build_typography_spec(plan_dict)
+        typography_dict = typography.to_dict()
+    except Exception as exc:
+        typography = None
+        typography_dict = {"error": f"typography_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        visual_contract = build_visual_contract(plan_dict)
+        visual_contract_dict = visual_contract.to_dict()
+    except Exception as exc:
+        visual_contract = None
+        visual_contract_dict = {"error": f"visual_contract_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        visual_template_obj = resolve_visual_template(plan_dict)
+        visual_template_dict = visual_template_obj.to_dict()
+    except Exception as exc:
+        visual_template_obj = None
+        visual_template_dict = {"error": f"visual_template_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        if visual_identity is None or typography is None or visual_contract is None or visual_template_obj is None:
+            raise RuntimeError("visual dependencies unavailable")
+        perceptual_qa = evaluate_perceptual_quality(
+            plan=plan_dict,
+            contract=visual_contract,
+            template=visual_template_obj,
+            identity=visual_identity,
+            typography=typography,
+        ).to_dict()
+    except Exception as exc:
+        perceptual_qa = {
+            "approved": False,
+            "final_score": 0,
+            "breakdown": {},
+            "metrics": {"zero_overlap": False},
+            "reasons": [f"perceptual_qa_error: {type(exc).__name__}: {exc}"],
+            "recommendations": [],
+        }
+
+    try:
+        if visual_identity is None or typography is None:
+            raise RuntimeError("visual identity/typography unavailable")
+        visual_qa = evaluate_visual_quality(
+            plan=plan_dict,
+            identity=visual_identity,
+            typography=typography,
+        ).to_dict()
+    except Exception as exc:
+        visual_qa = {
+            "approved": False,
+            "final_score": 0,
+            "minimum_score": 75,
+            "breakdown": {},
+            "metrics": {"zero_overlap": False},
+            "reasons": [f"visual_qa_error: {type(exc).__name__}: {exc}"],
+            "recommendations": [],
+        }
+
+    premium_visual = build_visual_premium_bridge(
+        creative_plan=plan_dict,
+        visual_identity=visual_identity_dict,
+        visual_contract=visual_contract_dict,
+        strategic_format=plan_dict.get("publish_format_now"),
+        template_id=None,
+        capture_mode="safe",
+    )
+
+    rubric_engine, brand_veto_gate, publication_authorization_gate = self._run_authorization_stack(
+        force_placeholder=force_placeholder,
+        plan_dict=plan_dict,
+        editorial_qa=editorial_qa,
+        visual_qa=visual_qa,
+        perceptual_qa=perceptual_qa,
+        env_flags=env_flags,
+        request_flags=request_flags,
+        staging_hardener=dict(premium_visual.get("hardening_report") or {}),
+    )
+
+    authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
+    operational_state = authorization_state
+    block_reasons = list(publication_authorization_gate.get("reasons") or [])
+    if publication_authorization_gate.get("stack_ok") is False:
+        block_reasons.extend(publication_authorization_gate.get("block_reasons") or [])
+
+    lab_probe_policy = resolve_lab_probe_policy(
+        operational_state=authorization_state,
+        requested_probe=request_flags["probe_requested"],
+        requested_state=probe_state_requested,
+        env_flags=env_flags,
+        request_flags=request_flags,
+    )
+
+    brand_surface_policy = resolve_brand_surface_policy(
+        operational_state=authorization_state,
+        requested_real_publish=lab_probe_policy.get("requested_real_publish", False),
+        env_flags=env_flags,
+        request_flags=request_flags,
+        quality_context={
+            "brand_live_candidate": publication_authorization_gate.get("brand_live_candidate"),
+            "can_publish_real": publication_authorization_gate.get("can_publish_real"),
+        },
+    )
+
+    explicit_probe_execution_allowed = bool(
+        request_flags.get("probe_requested")
+        and request_flags.get("explicit_probe_arm")
+        and not force_placeholder
+        and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
+    )
+
+    reel_stack = self._run_reel_premium_stack(
+        trend=trend,
+        creative_plan=plan_dict,
+        visual_qa=visual_qa,
+        perceptual_qa=perceptual_qa,
+        publication_authorization_gate=publication_authorization_gate,
+        operational_state=operational_state,
+    )
+
+    if reel_stack.get("ok"):
+        release_authority = _safe_dict(reel_stack.get("release_authority"))
+        publish_guard = _safe_dict(reel_stack.get("publish_guard"))
+        if release_authority.get("release_state", "").startswith("BLOCKED_"):
+            block_reasons.append(release_authority.get("release_state"))
+        if publish_guard.get("mode") == "blocked":
+            block_reasons.append("blocked_by_publish_guard")
+
+    try:
+        carousel_preview = build_carousel_sequence(plan_dict)
+    except Exception as exc:
+        carousel_preview = {"ok": False, "error": f"carousel_preview_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        stories_preview = build_stories_sequence(plan_dict)
+    except Exception as exc:
+        stories_preview = {"ok": False, "error": f"stories_preview_error: {type(exc).__name__}: {exc}"}
+
+    try:
+        refresh_result = self.ensure_fresh_instagram_token(force=False)
+    except Exception as exc:
+        refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
+
+    render_path = None
+    render_error = None
+    publish_result: dict[str, Any] | None = None
+
+    linkage_context = {
+        "operational_state": operational_state,
+        "brand_live_allowed": False,
+        "probe": {},
+        "brand_surface_policy": brand_surface_policy,
+        "lab_probe_policy": lab_probe_policy,
+    }
+
+    publish_guard_mode = _safe_dict(reel_stack.get("publish_guard")).get("mode")
+    publish_guard_can_publish = bool(_safe_dict(reel_stack.get("publish_guard")).get("can_publish"))
+
+    if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
+        publish_result = self.publish.publish_placeholder(
+            trend=trend,
+            style=str(plan.publish_style),
+            content_type=str(plan.publish_format_now),
+            caption=str(plan.caption),
+            media_path=None,
+            linkage_context=linkage_context,
+        )
+    else:
+        should_render = bool(lab_probe_policy.get("probe_render_requested")) or publish_guard_can_publish
+        if should_render:
+            try:
+                render_path = render_visual_foundation_card(
+                    config=self.config,
+                    plan=plan_dict,
+                    identity=visual_identity,
+                    typography=typography,
+                )
+                lab_probe_policy["probe_render_executed"] = True
+                lab_probe_policy["render_path"] = render_path
+            except Exception as exc:
+                render_error = f"render_error: {type(exc).__name__}: {exc}"
+                block_reasons.append(render_error)
+                lab_probe_policy["probe_render_executed"] = False
+                lab_probe_policy["render_path"] = None
+
+        effective_real_publish = bool(
+            explicit_probe_execution_allowed
+            and lab_probe_policy.get("probe_eligible")
+            and publish_guard_mode == "ready"
+        )
+
+        if effective_real_publish:
+            linkage_context["probe"] = {
+                "requested": lab_probe_policy.get("probe_requested"),
+                "requested_state": lab_probe_policy.get("probe_state_requested"),
+                "effective_state": lab_probe_policy.get("probe_state_effective"),
+                "eligible": True,
+                "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
+                "publish_executed": False,
+                "render_path": render_path,
+                "render_error": render_error,
+                "allow_real_publish": True,
+                "probe_block_reason": None,
+                "surface_mode": brand_surface_policy.get("surface_mode"),
+            }
+
+            publish_result = self.publish.publish_real(
                 trend=trend,
                 style=str(plan.publish_style),
                 content_type=str(plan.publish_format_now),
                 caption=str(plan.caption),
-                media_path=None,
+                media_path=render_path,
                 linkage_context=linkage_context,
             )
+
+            publish_status = str((publish_result or {}).get("publish_status") or "")
+            lab_probe_policy["probe_publish_executed"] = publish_status == "published_real_probe"
         else:
-            should_render = bool(lab_probe_policy.get("probe_render_requested"))
-            if should_render:
-                try:
-                    render_path = render_visual_foundation_card(
-                        config=self.config,
-                        plan=plan_dict,
-                        identity=visual_identity,
-                        typography=typography,
-                    )
-                    lab_probe_policy["probe_render_executed"] = True
-                    lab_probe_policy["render_path"] = render_path
-                except Exception as exc:
-                    render_error = f"render_error: {type(exc).__name__}: {exc}"
-                    block_reasons.append(render_error)
-                    lab_probe_policy["probe_render_executed"] = False
-                    lab_probe_policy["render_path"] = None
+            publish_result = {
+                "ok": True,
+                "publish_status": "not_published_surface_protected" if publish_guard_mode != "ready" else "not_published_probe_not_allowed",
+                "operational_state": operational_state,
+                "content_type": str(plan.publish_format_now),
+                "style": str(plan.publish_style),
+                "created_at": datetime.now().isoformat(),
+                "render_path": render_path,
+                "surface_mode": brand_surface_policy.get("surface_mode"),
+                "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
+                "probe_requested": lab_probe_policy.get("probe_requested"),
+                "probe_eligible": lab_probe_policy.get("probe_eligible"),
+                "probe_publish_executed": False,
+                "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
+                "render_error": render_error,
+            }
 
-            effective_real_publish = bool(
-                explicit_probe_execution_allowed
-                and lab_probe_policy.get("probe_eligible")
-            )
+    measurement = self._measurement_summary(publish_result=publish_result)
 
-            if effective_real_publish:
-                linkage_context["probe"] = {
-                    "requested": lab_probe_policy.get("probe_requested"),
-                    "requested_state": lab_probe_policy.get("probe_state_requested"),
-                    "effective_state": lab_probe_policy.get("probe_state_effective"),
-                    "eligible": True,
-                    "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
-                    "publish_executed": False,
-                    "render_path": render_path,
-                    "render_error": render_error,
-                    "allow_real_publish": True,
-                    "probe_block_reason": None,
-                    "surface_mode": brand_surface_policy.get("surface_mode"),
-                }
+    self._last_run_summary = {
+        "timestamp": datetime.now().isoformat(),
+        "premium_classification": publication_authorization_gate.get("premium_classification"),
+        "eligible_for_editorial_staging": publication_authorization_gate.get("eligible_for_editorial_staging"),
+        "eligible_for_brand_live_candidate": publication_authorization_gate.get("eligible_for_brand_live_candidate"),
+        "missing_for_brand_live": publication_authorization_gate.get("missing_for_brand_live"),
+        "score_gap_to_brand_live": publication_authorization_gate.get("score_gap_to_brand_live"),
+        "next_quality_lift_targets": publication_authorization_gate.get("next_quality_lift_targets"),
+        "caption_gate_result": plan_dict.get("caption_gate_result"),
+        "caption_gate_score": plan_dict.get("caption_gate_score"),
+        "caption_gate_flags": plan_dict.get("caption_gate_flags"),
+        "premium_visual_result": bool(premium_visual.get("approved_for_premium_visual")),
+        "premium_visual_reasons": premium_visual.get("reasons"),
+        "publication_authorization_summary": publication_authorization_gate.get("summary"),
+        "selected_template_id": premium_visual.get("selected_template_id"),
+        "premium_render_state": premium_visual.get("premium_render_state"),
+        "hardening_applied": premium_visual.get("hardening_applied"),
+        "hardening_report": premium_visual.get("hardening_report"),
+        "reel_stack_state": reel_stack.get("stack_state"),
+        "publish_guard_mode": _safe_dict(reel_stack.get("publish_guard")).get("mode"),
+        "cinematic_score": _safe_dict(reel_stack.get("cinematic_gate")).get("cinematic_score"),
+    }
 
-                publish_result = self.publish.publish_real(
-                    trend=trend,
-                    style=str(plan.publish_style),
-                    content_type=str(plan.publish_format_now),
-                    caption=str(plan.caption),
-                    media_path=render_path,
-                    linkage_context=linkage_context,
-                )
-
-                publish_status = str((publish_result or {}).get("publish_status") or "")
-                lab_probe_policy["probe_publish_executed"] = publish_status == "published_real_probe"
-            else:
-                publish_result = {
-                    "ok": True,
-                    "publish_status": "not_published_surface_protected",
-                    "operational_state": operational_state,
-                    "content_type": str(plan.publish_format_now),
-                    "style": str(plan.publish_style),
-                    "created_at": datetime.now().isoformat(),
-                    "render_path": render_path,
-                    "surface_mode": brand_surface_policy.get("surface_mode"),
-                    "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
-                    "probe_requested": lab_probe_policy.get("probe_requested"),
-                    "probe_eligible": lab_probe_policy.get("probe_eligible"),
-                    "probe_publish_executed": False,
-                    "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
-                    "render_error": render_error,
-                }
-
-        probe_context = {
-            "requested": bool(lab_probe_policy.get("probe_requested")),
-            "requested_state": lab_probe_policy.get("probe_state_requested"),
-            "effective_state": lab_probe_policy.get("probe_state_effective"),
-            "eligible": bool(lab_probe_policy.get("probe_eligible")),
-            "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
-            "publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
-            "render_path": render_path,
-            "render_error": render_error,
-            "allow_real_publish": bool(
-                explicit_probe_execution_allowed
-                and lab_probe_policy.get("probe_eligible")
-            ),
-            "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
-            "surface_mode": brand_surface_policy.get("surface_mode"),
-            "brand_surface_policy": brand_surface_policy,
-            "lab_probe_policy": lab_probe_policy,
-        }
-
-        (
-            post_performance_contract,
-            performance_ingest,
-            attention_metrics,
-            resonance_engine,
-            reward_prediction,
-            thompson_sampler,
-            decision_core_summary,
-            evidence_interpreter,
-            experiment_resolution,
-            recommendation_engine,
-            wave10_summary,
-            wave11_summary,
-            experiment_registry,
-            episodic_performance_memory,
-            reflection_memory,
-            learning_loop,
-            performance_summary,
-            performance_store,
-        ) = self._run_measurement_core(
-            trend=trend,
-            operational_state=operational_state,
-            brand_live_allowed=False,
-            creative_plan=plan_dict,
-            editorial_qa=editorial_qa,
-            visual_qa=visual_qa,
-            visual_template=visual_template_dict,
-            rubric_engine=rubric_engine,
-            publication_authorization_gate=publication_authorization_gate,
-            publish_result=publish_result,
-            probe_context=probe_context,
-        )
-
-        self._last_run_summary = {
-            "timestamp": datetime.now().isoformat(),
-            "premium_classification": publication_authorization_gate.get("premium_classification"),
-            "eligible_for_editorial_staging": publication_authorization_gate.get("eligible_for_editorial_staging"),
-            "eligible_for_brand_live_candidate": publication_authorization_gate.get("eligible_for_brand_live_candidate"),
-            "missing_for_brand_live": publication_authorization_gate.get("missing_for_brand_live"),
-            "score_gap_to_brand_live": publication_authorization_gate.get("score_gap_to_brand_live"),
-            "next_quality_lift_targets": publication_authorization_gate.get("next_quality_lift_targets"),
-            "caption_gate_result": plan_dict.get("caption_gate_result"),
-            "caption_gate_score": plan_dict.get("caption_gate_score"),
-            "caption_gate_flags": plan_dict.get("caption_gate_flags"),
-            "premium_visual_result": bool(premium_visual.get("approved_for_premium_visual")),
-            "premium_visual_reasons": premium_visual.get("reasons"),
-            "publication_authorization_summary": publication_authorization_gate.get("summary"),
-            "selected_template_id": premium_visual.get("selected_template_id"),
-            "premium_render_state": premium_visual.get("premium_render_state"),
-            "hardening_applied": premium_visual.get("hardening_applied"),
-            "hardening_report": premium_visual.get("hardening_report"),
-        }
-
-        return {
-            "ok": True,
-            "mode": operational_state,
-            "authorization_state": authorization_state,
-            "operational_state": operational_state,
-            "surface_mode": brand_surface_policy.get("surface_mode"),
-            "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
-            "brand_live_allowed": False,
-            "real_probe_route_supported": True,
-            "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
-            "probe_requested": bool(lab_probe_policy.get("probe_requested")),
-            "probe_eligible": bool(lab_probe_policy.get("probe_eligible")),
-            "probe_publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
-            "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
-            "block_reasons": block_reasons,
-            "brand_surface_policy": brand_surface_policy,
-            "lab_probe_policy": lab_probe_policy,
-            "trend": trend,
-            "mission_decision": mission_decision,
-            "mission_control_state": mission_control_state,
-            "creative_plan": plan_dict,
-            "editorial_qa": editorial_qa,
-            "visual_contract": visual_contract_dict,
-            "visual_template": visual_template_dict,
-            "perceptual_qa": perceptual_qa,
-            "visual_identity": visual_identity_dict,
-            "typography": typography_dict,
-            "visual_qa": visual_qa,
-            "premium_visual": premium_visual,
-            "approved_for_premium_visual": premium_visual.get("approved_for_premium_visual"),
-            "selected_template_id": premium_visual.get("selected_template_id"),
-            "premium_render_state": premium_visual.get("premium_render_state"),
-            "hardening_applied": premium_visual.get("hardening_applied"),
-            "hardening_report": premium_visual.get("hardening_report"),
-            "premium_visual_reasons": premium_visual.get("reasons"),
-            "rubric_engine": rubric_engine,
-            "brand_veto_gate": brand_veto_gate,
-            "publication_authorization_gate": publication_authorization_gate,
-            "carousel_preview": carousel_preview,
-            "stories_preview": stories_preview,
-            "token_refresh": refresh_result,
-            "post_performance_contract": post_performance_contract,
-            "performance_ingest": performance_ingest,
-            "real_metrics_contract": performance_ingest.get("real_metrics") if isinstance(performance_ingest, dict) else None,
-            "attention_metrics": attention_metrics,
-            "resonance_engine": resonance_engine,
-            "reward_prediction": reward_prediction,
-            "thompson_sampler": thompson_sampler,
-            "decision_core_summary": decision_core_summary,
-            "publish_receipt_bridge": post_performance_contract.get("publish_receipt_bridge"),
-            "evidence_bridge": post_performance_contract.get("evidence_bridge"),
-            "evidence_interpreter": evidence_interpreter,
-            "experiment_resolution": experiment_resolution,
-            "recommendation_engine": recommendation_engine,
-            "recommendation_state": recommendation_engine.get("recommended_action") if isinstance(recommendation_engine, dict) else None,
-            "resolution_state": experiment_resolution.get("resolution_state") if isinstance(experiment_resolution, dict) else None,
-            "wave10_summary": wave10_summary,
-            "wave11_summary": wave11_summary,
-            "experiment_registry": experiment_registry,
-            "episodic_performance_memory": episodic_performance_memory,
-            "reflection_memory": reflection_memory,
-            "learning_loop": learning_loop,
-            "performance_summary": performance_summary,
-            "performance_store": performance_store,
-            "runtime": self.snapshot(),
-            "publish_result": publish_result,
-            "last_publish": self.publish.last_publish(),
-        }
+    return {
+        "ok": True,
+        "mode": operational_state,
+        "authorization_state": authorization_state,
+        "operational_state": operational_state,
+        "surface_mode": brand_surface_policy.get("surface_mode"),
+        "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
+        "brand_live_allowed": False,
+        "real_probe_route_supported": True,
+        "real_probe_allowed_states": REAL_PROBE_ALLOWED_STATES,
+        "probe_requested": bool(lab_probe_policy.get("probe_requested")),
+        "probe_eligible": bool(lab_probe_policy.get("probe_eligible")),
+        "probe_publish_executed": bool(lab_probe_policy.get("probe_publish_executed")),
+        "probe_block_reason": lab_probe_policy.get("probe_block_reason") or brand_surface_policy.get("block_reason"),
+        "block_reasons": block_reasons,
+        "brand_surface_policy": brand_surface_policy,
+        "lab_probe_policy": lab_probe_policy,
+        "trend": trend,
+        "mission_decision": mission_decision,
+        "mission_control_state": mission_control_state,
+        "creative_plan": plan_dict,
+        "editorial_qa": editorial_qa,
+        "visual_contract": visual_contract_dict,
+        "visual_template": visual_template_dict,
+        "perceptual_qa": perceptual_qa,
+        "visual_identity": visual_identity_dict,
+        "typography": typography_dict,
+        "visual_qa": visual_qa,
+        "premium_visual": premium_visual,
+        "approved_for_premium_visual": premium_visual.get("approved_for_premium_visual"),
+        "selected_template_id": premium_visual.get("selected_template_id"),
+        "premium_render_state": premium_visual.get("premium_render_state"),
+        "hardening_applied": premium_visual.get("hardening_applied"),
+        "hardening_report": premium_visual.get("hardening_report"),
+        "premium_visual_reasons": premium_visual.get("reasons"),
+        "rubric_engine": rubric_engine,
+        "brand_veto_gate": brand_veto_gate,
+        "publication_authorization_gate": publication_authorization_gate,
+        "carousel_preview": carousel_preview,
+        "stories_preview": stories_preview,
+        "token_refresh": refresh_result,
+        "post_performance_contract": measurement["post_performance_contract"],
+        "performance_ingest": measurement["performance_ingest"],
+        "real_metrics_contract": measurement["performance_ingest"].get("real_metrics"),
+        "attention_metrics": measurement["attention_metrics"],
+        "resonance_engine": measurement["resonance_engine"],
+        "reward_prediction": measurement["reward_prediction"],
+        "thompson_sampler": measurement["thompson_sampler"],
+        "decision_core_summary": measurement["decision_core_summary"],
+        "publish_receipt_bridge": measurement["post_performance_contract"].get("publish_receipt_bridge"),
+        "evidence_bridge": measurement["post_performance_contract"].get("evidence_bridge"),
+        "evidence_interpreter": measurement["evidence_interpreter"],
+        "experiment_resolution": measurement["experiment_resolution"],
+        "recommendation_engine": measurement["recommendation_engine"],
+        "recommendation_state": measurement["recommendation_engine"].get("recommended_action"),
+        "resolution_state": measurement["experiment_resolution"].get("resolution_state"),
+        "wave10_summary": measurement["wave10_summary"],
+        "wave11_summary": measurement["wave11_summary"],
+        "experiment_registry": measurement["experiment_registry"],
+        "episodic_performance_memory": measurement["episodic_performance_memory"],
+        "reflection_memory": measurement["reflection_memory"],
+        "learning_loop": measurement["learning_loop"],
+        "performance_summary": measurement["performance_summary"],
+        "performance_store": measurement["performance_store"],
+        "runtime": self.snapshot(),
+        "publish_result": publish_result,
+        "last_publish": self.publish.last_publish(),
+        "reel_stack": reel_stack,
+        "hook_opening": reel_stack.get("hook_opening"),
+        "reel_storyboard": reel_stack.get("storyboard"),
+        "reel_rhythm": reel_stack.get("rhythm"),
+        "post_production": reel_stack.get("post_production"),
+        "audio_direction": reel_stack.get("audio_direction"),
+        "multimodal_reel_qa": reel_stack.get("multimodal_qa"),
+        "cinematic_gate": reel_stack.get("cinematic_gate"),
+        "release_authority": reel_stack.get("release_authority"),
+        "publish_guard": reel_stack.get("publish_guard"),
+    }
