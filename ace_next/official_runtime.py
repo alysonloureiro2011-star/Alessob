@@ -4,7 +4,7 @@ import os from datetime import datetime, timedelta, timezone from typing import 
 
 from .auth_store import load_instagram_auth, sync_instagram_token_sources from .brand_surface_isolation import resolve_brand_surface_policy from .config import AceNextConfig from .creative_planner import build_creative_plan from .editorial_rubric import evaluate_editorial_quality from .lab_probe_policy import resolve_lab_probe_policy from .mission_control import decide_mission from .perceptual_qa import evaluate_perceptual_quality from .publish import PublishService from .render_env_sync import persist_instagram_token_to_render from .token_upgrade import refresh_instagram_long_lived_token from .visual_contract import build_visual_contract from .visual_foundation_pack import ( build_carousel_sequence, build_stories_sequence, build_typography_spec, build_visual_identity, evaluate_visual_quality, render_visual_foundation_card, ) from .visual_premium_bridge import build_visual_premium_bridge from .visual_templates import resolve_visual_template
 
-AUTH_STACK_IMPORT_ERROR: str | None = None MEASUREMENT_STACK_IMPORT_ERROR: str | None = None REAL_PROBE_ALLOWED_STATES = ["internal_lab", "editorial_staging"]
+AUTH_STACK_IMPORT_ERROR: str | None = None MEASUREMENT_STACK_IMPORT_ERROR: str | None = None REAL_PROBE_ALLOWED_STATES = ["internal_lab", "editorial_staging"] ALLOWED_RELEASE_OPERATION_STATES = { "internal_lab": "ready", "editorial_staging": "staging", "brand_live": "brand_live_ready", "blocked_quality": "blocked_quality", "blocked_brand": "blocked_brand", "technical_test": "technical_test", }
 
 try: from .rubric_engine import evaluate_rubric_engine from .brand_veto_gate import evaluate_brand_veto_gate from .publication_authorization_gate import authorize_publication except Exception as exc: AUTH_STACK_IMPORT_ERROR = f"{type(exc).name}: {exc}" evaluate_rubric_engine = None evaluate_brand_veto_gate = None authorize_publication = None
 
@@ -25,6 +25,36 @@ def _planner_overrides_from_mission_decision(mission_decision: dict[str, Any] | 
 def _safe_dict(value: Any) -> dict[str, Any]: return dict(value) if isinstance(value, dict) else {}
 
 def _short_error_summary(value: Any, limit: int = 180) -> str | None: text = str(value or "").strip() if not text: return None return text if len(text) <= limit else f"{text[:limit - 3]}..."
+
+def _normalize_release_operation_state(operational_state: str | None) -> str: state = str(operational_state or "technical_test").strip().lower() return ALLOWED_RELEASE_OPERATION_STATES.get(state, "technical_test")
+
+def _publish_truth_state_from_result(publish_result: dict[str, Any] | None) -> str: publish_result = _safe_dict(publish_result) if not publish_result: return "publish_truth_absent"
+
+publish_status = str(publish_result.get("publish_status") or "").strip().lower()
+receipt_id = publish_result.get("receipt_id")
+media_id = publish_result.get("media_id")
+permalink = publish_result.get("permalink")
+
+if publish_status == "published_real_probe" and receipt_id and media_id:
+    return "publish_truth_confirmed"
+if receipt_id or permalink or media_id:
+    return "publish_attempt_recorded"
+return "publish_truth_absent"
+
+def _gate_stage_summary(reel_stack: dict[str, Any] | None) -> dict[str, Any]: reel_stack = _safe_dict(reel_stack) cinematic_gate = _safe_dict(reel_stack.get("cinematic_gate")) release_authority = _safe_dict(reel_stack.get("release_authority")) publish_guard = _safe_dict(reel_stack.get("publish_guard"))
+
+return {
+    "ok": bool(reel_stack.get("ok")),
+    "stack_state": reel_stack.get("stack_state"),
+    "cinematic_gate_state": cinematic_gate.get("state"),
+    "cinematic_gate_approved": bool(cinematic_gate.get("approved")),
+    "cinematic_score": cinematic_gate.get("cinematic_score"),
+    "release_state": release_authority.get("release_state"),
+    "approved_for_publish": bool(release_authority.get("approved_for_publish")),
+    "publish_guard_mode": publish_guard.get("mode"),
+    "can_publish": bool(publish_guard.get("can_publish")),
+    "next_step": publish_guard.get("next_step"),
+}
 
 class OfficialRuntime: def init(self, config: AceNextConfig): self.config = config self.publish = PublishService(config) self._last_run_summary: dict[str, Any] = {} self._boot_sync()
 
@@ -297,6 +327,7 @@ def _run_reel_premium_stack(
     perceptual_qa: dict[str, Any],
     publication_authorization_gate: dict[str, Any],
     operational_state: str,
+    publish_truth_state: str = "publish_truth_absent",
 ) -> dict[str, Any]:
     if not all([
         generate_hook_opening,
@@ -375,7 +406,10 @@ def _run_reel_premium_stack(
         naturalism={"naturalism_state": "naturalism_engine_ready"},
     )
 
-    overall_quality_score = max(visual_score_10, 8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10)
+    overall_quality_score = max(
+        visual_score_10,
+        8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10,
+    )
 
     cinematic_gate = CinematicGate().run(
         multimodal_qa=multimodal_qa,
@@ -391,12 +425,14 @@ def _run_reel_premium_stack(
     release_authority = ReleaseAuthority().run(
         cinematic_gate=cinematic_gate,
         premium_decision={"overall_quality_score": overall_quality_score},
-        operation_bridge={"operational_state": operational_state},
+        operation_bridge={
+            "operational_state": _normalize_release_operation_state(operational_state)
+        },
     )
 
     publish_guard = PublishGuard().run(
         release_authority=release_authority,
-        publish_truth={"truth_state": "publish_truth_absent"},
+        publish_truth={"truth_state": publish_truth_state},
     )
 
     return {
@@ -412,6 +448,13 @@ def _run_reel_premium_stack(
         "cinematic_gate": cinematic_gate,
         "release_authority": release_authority,
         "publish_guard": publish_guard,
+        "pipeline_summary": _gate_stage_summary({
+            "ok": True,
+            "stack_state": "reel_premium_stack_ready",
+            "cinematic_gate": cinematic_gate,
+            "release_authority": release_authority,
+            "publish_guard": publish_guard,
+        }),
     }
 
 def _measurement_summary(self, *, publish_result: dict[str, Any] | None) -> dict[str, Any]:
@@ -803,18 +846,19 @@ def run(
         and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
     )
 
-    reel_stack = self._run_reel_premium_stack(
+    prepublish_reel_stack = self._run_reel_premium_stack(
         trend=trend,
         creative_plan=plan_dict,
         visual_qa=visual_qa,
         perceptual_qa=perceptual_qa,
         publication_authorization_gate=publication_authorization_gate,
         operational_state=operational_state,
+        publish_truth_state="publish_truth_absent",
     )
 
-    if reel_stack.get("ok"):
-        release_authority = _safe_dict(reel_stack.get("release_authority"))
-        publish_guard = _safe_dict(reel_stack.get("publish_guard"))
+    if prepublish_reel_stack.get("ok"):
+        release_authority = _safe_dict(prepublish_reel_stack.get("release_authority"))
+        publish_guard = _safe_dict(prepublish_reel_stack.get("publish_guard"))
         if release_authority.get("release_state", "").startswith("BLOCKED_"):
             block_reasons.append(release_authority.get("release_state"))
         if publish_guard.get("mode") == "blocked":
@@ -845,10 +889,12 @@ def run(
         "probe": {},
         "brand_surface_policy": brand_surface_policy,
         "lab_probe_policy": lab_probe_policy,
+        "premium_gate": _gate_stage_summary(prepublish_reel_stack),
     }
 
-    publish_guard_mode = _safe_dict(reel_stack.get("publish_guard")).get("mode")
-    publish_guard_can_publish = bool(_safe_dict(reel_stack.get("publish_guard")).get("can_publish"))
+    prepublish_guard = _safe_dict(prepublish_reel_stack.get("publish_guard"))
+    publish_guard_mode = prepublish_guard.get("mode")
+    publish_guard_can_publish = bool(prepublish_guard.get("can_publish"))
 
     if force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
         publish_result = self.publish.publish_placeholder(
@@ -927,6 +973,16 @@ def run(
                 "render_error": render_error,
             }
 
+    publish_truth_state = _publish_truth_state_from_result(publish_result)
+    postpublish_reel_stack = self._run_reel_premium_stack(
+        trend=trend,
+        creative_plan=plan_dict,
+        visual_qa=visual_qa,
+        perceptual_qa=perceptual_qa,
+        publication_authorization_gate=publication_authorization_gate,
+        operational_state=operational_state,
+        publish_truth_state=publish_truth_state,
+    )
     measurement = self._measurement_summary(publish_result=publish_result)
 
     self._last_run_summary = {
@@ -947,9 +1003,10 @@ def run(
         "premium_render_state": premium_visual.get("premium_render_state"),
         "hardening_applied": premium_visual.get("hardening_applied"),
         "hardening_report": premium_visual.get("hardening_report"),
-        "reel_stack_state": reel_stack.get("stack_state"),
-        "publish_guard_mode": _safe_dict(reel_stack.get("publish_guard")).get("mode"),
-        "cinematic_score": _safe_dict(reel_stack.get("cinematic_gate")).get("cinematic_score"),
+        "reel_stack_state": prepublish_reel_stack.get("stack_state"),
+        "prepublish_gate": _gate_stage_summary(prepublish_reel_stack),
+        "postpublish_gate": _gate_stage_summary(postpublish_reel_stack),
+        "publish_truth_state": publish_truth_state,
     }
 
     return {
@@ -1019,15 +1076,24 @@ def run(
         "runtime": self.snapshot(),
         "publish_result": publish_result,
         "last_publish": self.publish.last_publish(),
-        "reel_stack": reel_stack,
-        "hook_opening": reel_stack.get("hook_opening"),
-        "reel_storyboard": reel_stack.get("storyboard"),
-        "reel_rhythm": reel_stack.get("rhythm"),
-        "post_production": reel_stack.get("post_production"),
-        "audio_direction": reel_stack.get("audio_direction"),
-        "multimodal_reel_qa": reel_stack.get("multimodal_qa"),
-        "cinematic_gate": reel_stack.get("cinematic_gate"),
-        "release_authority": reel_stack.get("release_authority"),
-        "publish_guard": reel_stack.get("publish_guard"),
+        "reel_stack": prepublish_reel_stack,
+        "prepublish_reel_stack": prepublish_reel_stack,
+        "postpublish_reel_stack": postpublish_reel_stack,
+        "hook_opening": prepublish_reel_stack.get("hook_opening"),
+        "reel_storyboard": prepublish_reel_stack.get("storyboard"),
+        "reel_rhythm": prepublish_reel_stack.get("rhythm"),
+        "post_production": prepublish_reel_stack.get("post_production"),
+        "audio_direction": prepublish_reel_stack.get("audio_direction"),
+        "multimodal_reel_qa": prepublish_reel_stack.get("multimodal_qa"),
+        "cinematic_gate": prepublish_reel_stack.get("cinematic_gate"),
+        "release_authority": prepublish_reel_stack.get("release_authority"),
+        "publish_guard": prepublish_reel_stack.get("publish_guard"),
+        "publish_truth_state": publish_truth_state,
+        "organism_cycle": {
+            "planning": True,
+            "premium_stack": bool(prepublish_reel_stack.get("ok")),
+            "gate_before_publish": bool(_safe_dict(prepublish_reel_stack.get("publish_guard")).get("state") == "publish_guard_ready"),
+            "publish_truth_after_publish": True,
+            "organism_state": "planning_to_stack_to_gate_to_publish_truth",
+        },
     }
-
