@@ -3,10 +3,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from typing import Any
 
 from .trend_radar import TrendRadar
-from .config import AceNextConfig
 from .config import AceNextConfig
 from .runtime_bootstrap import bootstrap_capabilities
 from .runtime_registry import capability_registry_snapshot, resolve_capability
@@ -127,7 +125,7 @@ class OfficialRuntime:
         publish_cls = self._symbol("PublishService")
         self.publish = publish_cls(config) if publish_cls else None
         self.trend_radar = TrendRadar()
-       
+
         self._boot_sync()
 
     # ---------------------------------------------------------
@@ -489,7 +487,6 @@ class OfficialRuntime:
             "goal": mission_decision.get("goal"),
             "hypothesis": mission_decision.get("hypothesis"),
             "planner_selected": mission_decision.get("planner_selected"),
-            # estudos aplicados
             "attention_priority": "save_share_replay_retention",
             "clarity_density_policy": STUDY_TAGS["psychology_clt"],
             "narrative_policy": STUDY_TAGS["stepps"],
@@ -581,7 +578,6 @@ class OfficialRuntime:
                 plan_dict.setdefault("ethical_boundary", "no_hidden_manipulation")
                 return True, plan_dict
 
-        # fallback mínimo seguro
         return False, {
             "topic_seed": trend,
             "headline": trend,
@@ -646,7 +642,16 @@ class OfficialRuntime:
             "error": safe_dict(template_obj).get("error") or "visual_template_unavailable"
         }
 
-        if visual_identity and typography and visual_contract and visual_template and "error" not in visual_identity and "error" not in typography and "error" not in visual_contract and "error" not in visual_template:
+        if (
+            visual_identity
+            and typography
+            and visual_contract
+            and visual_template
+            and "error" not in visual_identity
+            and "error" not in typography
+            and "error" not in visual_contract
+            and "error" not in visual_template
+        ):
             ok, result = self._call(
                 "evaluate_perceptual_quality",
                 plan=plan_dict,
@@ -1152,7 +1157,6 @@ class OfficialRuntime:
         publish_status = publish_result.get("publish_status")
         error_summary = _short_error_summary(publish_result.get("error"))
 
-        # base atual
         performance_ingest = {
             "ok": True,
             "attempted": bool(media_id),
@@ -1171,7 +1175,6 @@ class OfficialRuntime:
             },
         }
 
-        # futuro via capability
         thompson_sampler_result = {
             "ok": True,
             "selected_variant": None,
@@ -1384,23 +1387,23 @@ class OfficialRuntime:
 
         trend_value = normalize_trend(runtime_request.trend)
 
-radar = self.trend_radar.run(
-    trend=trend_value,
-    recent_signal_score=None,
-    signal_context={
-        "source": "official_runtime",
-        "mode": "run",
-    },
-    source="official_runtime",
-)
+        radar = self.trend_radar.run(
+            trend=trend_value,
+            recent_signal_score=None,
+            signal_context={
+                "source": "official_runtime",
+                "mode": "run",
+            },
+            source="official_runtime",
+        )
 
-effective_trend = (
-    radar.get("effective_trend")
-    or trend_value
-)
+        effective_trend = (
+            radar.get("effective_trend")
+            or trend_value
+        )
 
-probe_state_requested = normalize_probe_state(runtime_request.probe_state)
-env_flags = self._brand_env_flags()
+        probe_state_requested = normalize_probe_state(runtime_request.probe_state)
+        env_flags = self._brand_env_flags()
 
         request_flags = {
             "probe_requested": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
@@ -1411,7 +1414,7 @@ env_flags = self._brand_env_flags()
             "force_placeholder": bool(runtime_request.force_placeholder),
         }
 
-        mission_decision, mission_control_state = self._mission_decision(trend_value, env_flags)
+        mission_decision, mission_control_state = self._mission_decision(effective_trend, env_flags)
 
         if mission_control_state["approval_required"] and not bool(safe_dict(mission_decision.get("raw")).get("should_act", True)):
             mission_control_state["blocked"] = True
@@ -1421,7 +1424,8 @@ env_flags = self._brand_env_flags()
                 "authorization_state": "blocked_by_mission_control",
                 "operational_state": "blocked_by_mission_control",
                 "brand_live_allowed": False,
-                "trend": trend_value,
+                "trend": effective_trend,
+                "trend_radar": radar,
                 "mission_decision": mission_decision,
                 "mission_control_state": mission_control_state,
                 "block_reasons": [safe_dict(mission_decision.get("raw")).get("reason")],
@@ -1431,7 +1435,7 @@ env_flags = self._brand_env_flags()
                 "request_envelope": envelope.to_dict(),
             }
 
-        plan_ok, creative_plan = self._creative_plan(trend_value, mission_decision)
+        plan_ok, creative_plan = self._creative_plan(effective_trend, mission_decision)
         editorial_qa = self._editorial_quality(creative_plan)
 
         visual_identity, typography, visual_contract, visual_template, visual_bundle = self._visual_foundation(creative_plan)
@@ -1465,7 +1469,7 @@ env_flags = self._brand_env_flags()
         )
 
         prepublish_reel_stack = self._run_reel_premium_stack(
-            trend=trend_value,
+            trend=effective_trend,
             creative_plan=creative_plan,
             visual_qa=visual_qa,
             perceptual_qa=perceptual_qa,
@@ -1474,7 +1478,6 @@ env_flags = self._brand_env_flags()
             publish_truth_state="publish_truth_absent",
         )
 
-        # HARD GATE SOBERANO — B1 + C1 + C2
         release_authority = safe_dict(prepublish_reel_stack.get("release_authority"))
         publish_guard = safe_dict(prepublish_reel_stack.get("publish_guard"))
 
@@ -1530,10 +1533,10 @@ env_flags = self._brand_env_flags()
         if runtime_request.force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
             if self.publish:
                 publish_result = self.publish.publish_placeholder(
-                    trend=trend_value,
+                    trend=effective_trend,
                     style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
                     content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
-                    caption=str(creative_plan.get("caption") or creative_plan.get("headline") or trend_value),
+                    caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
                     media_path=None,
                     linkage_context=linkage_context,
                 )
@@ -1586,10 +1589,10 @@ env_flags = self._brand_env_flags()
 
                 if self.publish:
                     publish_result = self.publish.publish_real(
-                        trend=trend_value,
+                        trend=effective_trend,
                         style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
                         content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
-                        caption=str(creative_plan.get("caption") or creative_plan.get("headline") or trend_value),
+                        caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
                         media_path=render_path,
                         linkage_context=linkage_context,
                     )
@@ -1628,7 +1631,7 @@ env_flags = self._brand_env_flags()
         publish_truth_state = _publish_truth_state_from_result(publish_result)
 
         postpublish_reel_stack = self._run_reel_premium_stack(
-            trend=trend_value,
+            trend=effective_trend,
             creative_plan=creative_plan,
             visual_qa=visual_qa,
             perceptual_qa=perceptual_qa,
@@ -1690,7 +1693,8 @@ env_flags = self._brand_env_flags()
             "request_contract": runtime_request.to_dict(),
             "brand_surface_policy": brand_surface_policy,
             "lab_probe_policy": lab_probe_policy,
-            "trend": trend_value,
+            "trend": effective_trend,
+            "trend_radar": radar,
             "mission_decision": mission_decision,
             "mission_control_state": mission_control_state,
             "creative_plan_ok": plan_ok,
