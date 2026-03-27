@@ -1383,8 +1383,24 @@ class OfficialRuntime:
         )
 
         trend_value = normalize_trend(runtime_request.trend)
-        probe_state_requested = normalize_probe_state(runtime_request.probe_state)
-        env_flags = self._brand_env_flags()
+
+radar = self.trend_radar.run(
+    trend=trend_value,
+    recent_signal_score=None,
+    signal_context={
+        "source": "official_runtime",
+        "mode": "run",
+    },
+    source="official_runtime",
+)
+
+effective_trend = (
+    radar.get("effective_trend")
+    or trend_value
+)
+
+probe_state_requested = normalize_probe_state(runtime_request.probe_state)
+env_flags = self._brand_env_flags()
 
         request_flags = {
             "probe_requested": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
