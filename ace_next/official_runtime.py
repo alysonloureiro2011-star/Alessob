@@ -1030,3 +1030,4 @@ def run(
         "release_authority": reel_stack.get("release_authority"),
         "publish_guard": reel_stack.get("publish_guard"),
     }
+
