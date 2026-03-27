@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from flask import Flask, request, jsonify
-from ace_next.official_runtime_phase7 import OfficialRuntime
+from flask import Flask, jsonify, request
 
 from ace_next.config import AceNextConfig
+from ace_next.official_runtime import OfficialRuntime
 
 app = Flask(__name__)
 
-_runtime = None
+_runtime: OfficialRuntime | None = None
 
 
-def get_runtime():
+def get_runtime() -> OfficialRuntime:
     global _runtime
     if _runtime is None:
         config = AceNextConfig()
@@ -20,7 +20,7 @@ def get_runtime():
 
 @app.route("/")
 def health():
-    return {"ok": True, "service": "ACE Ω", "mode": "thin_shell"}
+    return {"ok": True, "service": "ACE Ω", "mode": "official_runtime_bridge"}
 
 
 @app.route("/ext/runtime")
@@ -33,10 +33,27 @@ def runtime_snapshot():
 def run_pipeline():
     runtime = get_runtime()
 
-    data = request.json if request.method == "POST" else request.args
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+    else:
+        data = request.args
+
     trend = data.get("trend") or "tendência do dia"
 
-    result = runtime.run(trend=trend)
+    force_placeholder = str(data.get("force_placeholder", "0")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    force_real_probe = str(data.get("force_real_probe", "0")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    probe_state = data.get("probe_state") or "auto"
+
+    result = runtime.run(
+        trend=trend,
+        force_placeholder=force_placeholder,
+        force_real_probe=force_real_probe,
+        probe_state=probe_state,
+    )
     return jsonify(result)
 
 
@@ -50,6 +67,8 @@ def test_publish():
     result = runtime.run(
         trend=trend,
         force_real_probe=(live == "1"),
+        force_placeholder=False,
+        probe_state="auto",
     )
 
     return jsonify(result)
