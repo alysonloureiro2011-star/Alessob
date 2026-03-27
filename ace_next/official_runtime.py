@@ -21,6 +21,7 @@ from .runtime_contracts import (
     safe_bool,
     safe_dict,
 )
+from .runtime_phase_absorption import build_runtime_phase_absorption
 
 REAL_PROBE_ALLOWED_STATES = {"internal_lab", "editorial_staging"}
 ALLOWED_RELEASE_OPERATION_STATES = {
@@ -125,6 +126,7 @@ class OfficialRuntime:
         publish_cls = self._symbol("PublishService")
         self.publish = publish_cls(config) if publish_cls else None
         self.trend_radar = TrendRadar()
+        self.phase_absorption = build_runtime_phase_absorption()
 
         self._boot_sync()
 
@@ -807,7 +809,7 @@ class OfficialRuntime:
         }
         return rubric_engine, brand_veto_gate, publication_authorization_gate
 
-    def _run_authorization_stack(
+    def _run_authorization_stack_base(
         self,
         *,
         force_placeholder: bool,
@@ -867,6 +869,30 @@ class OfficialRuntime:
                 reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
             )
 
+    def _run_authorization_stack(
+        self,
+        *,
+        force_placeholder: bool,
+        plan_dict: dict[str, Any],
+        editorial_qa: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        env_flags: dict[str, Any],
+        request_flags: dict[str, Any],
+        staging_hardener: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        return self.phase_absorption.apply_phase5_authorization_stack(
+            force_placeholder=force_placeholder,
+            plan_dict=plan_dict,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            env_flags=env_flags,
+            request_flags=request_flags,
+            staging_hardener=staging_hardener,
+            fallback_runner=self._run_authorization_stack_base,
+        )
+
     def _brand_and_probe_policies(
         self,
         *,
@@ -921,7 +947,7 @@ class OfficialRuntime:
 
         return brand_surface_policy, lab_probe_policy, explicit_probe_execution_allowed
 
-    def _run_reel_premium_stack(
+    def _run_reel_premium_stack_base(
         self,
         *,
         trend: str,
@@ -1125,6 +1151,28 @@ class OfficialRuntime:
             },
         }
 
+    def _run_reel_premium_stack(
+        self,
+        *,
+        trend: str,
+        creative_plan: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        publication_authorization_gate: dict[str, Any],
+        operational_state: str,
+        publish_truth_state: str = "publish_truth_absent",
+    ) -> dict[str, Any]:
+        return self.phase_absorption.apply_phase4_reel_stack(
+            trend=trend,
+            creative_plan=creative_plan,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            publication_authorization_gate=publication_authorization_gate,
+            operational_state=operational_state,
+            publish_truth_state=publish_truth_state,
+            fallback_runner=self._run_reel_premium_stack_base,
+        )
+
     def _render_previews(self, plan_dict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         carousel_preview = {}
         stories_preview = {}
@@ -1143,7 +1191,7 @@ class OfficialRuntime:
 
         return carousel_preview, stories_preview
 
-    def _measurement_summary(
+    def _measurement_summary_base(
         self,
         *,
         publish_result: dict[str, Any] | None,
@@ -1358,6 +1406,23 @@ class OfficialRuntime:
             },
             "performance_store": self._performance_store_summary(),
         }
+
+    def _measurement_summary(
+        self,
+        *,
+        publish_result: dict[str, Any] | None,
+        creative_plan: dict[str, Any],
+        mission_decision: dict[str, Any],
+    ) -> dict[str, Any]:
+        base_measurement = self._measurement_summary_base(
+            publish_result=publish_result,
+            creative_plan=creative_plan,
+            mission_decision=mission_decision,
+        )
+        return self.phase_absorption.apply_phase6_measurement_summary(
+            base_measurement=base_measurement,
+            publish_result=publish_result,
+        )
 
     # ---------------------------------------------------------
     # MAIN RUN
