@@ -21,31 +21,23 @@ class OfficialRuntimeSurface:
         self.config = config
         self.runtime = OfficialRuntime(config)
 
-    # =============================
-    # PROXIES DIRETOS
-    # =============================
-
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         return self.runtime.snapshot()
 
-    def compact_runtime_summary(self) -> dict:
+    def compact_runtime_summary(self) -> dict[str, Any]:
         return self.runtime.compact_runtime_summary()
 
-    def probe_readiness_summary(self) -> dict:
+    def probe_readiness_summary(self) -> dict[str, Any]:
         return self.runtime.probe_readiness_summary()
 
-    def quality_gap_summary(self) -> dict:
+    def quality_gap_summary(self) -> dict[str, Any]:
         return self.runtime.quality_gap_summary()
 
-    def last_publish_compact_summary(self) -> dict:
+    def last_publish_compact_summary(self) -> dict[str, Any]:
         return self.runtime.last_publish_compact_summary()
 
-    def sync_instagram_auth(self) -> dict:
+    def sync_instagram_auth(self) -> dict[str, Any]:
         return self.runtime.sync_instagram_auth()
-
-    # =============================
-    # EXECUÇÃO CENTRAL
-    # =============================
 
     def run(
         self,
@@ -54,12 +46,7 @@ class OfficialRuntimeSurface:
         force_placeholder: bool = False,
         force_real_probe: bool = False,
         probe_state: str | None = None,
-    ) -> dict:
-        """
-        Execução única e soberana.
-
-        Toda inteligência está no runtime.
-        """
+    ) -> dict[str, Any]:
         return self.runtime.run(
             trend=trend,
             force_placeholder=force_placeholder,
