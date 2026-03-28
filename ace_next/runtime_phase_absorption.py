@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .decision_memory_engine import build_decision_memory_summary
+from .decision_memory_engine import (
+    build_decision_memory_entry,
+    build_decision_memory_summary,
+)
 from .publish_cycle_bridge import build_publish_cycle_bundle
 from .reel_execution_bridge import build_reel_execution_bundle
 from .runtime_contracts import safe_dict
@@ -215,6 +218,92 @@ class RuntimePhaseAbsorption:
     # ---------------------------------------------------------
     # PHASE 7 — DECISION MEMORY BUNDLE
     # ---------------------------------------------------------
+    def _extract_phase7_metrics(self, measurement_summary: dict[str, Any]) -> dict[str, Any]:
+        performance_ingest = safe_dict(measurement_summary.get("performance_ingest"))
+        real_metrics = safe_dict(performance_ingest.get("real_metrics"))
+        attention_metrics = safe_dict(measurement_summary.get("attention_metrics"))
+        attention_breakdown = safe_dict(attention_metrics.get("breakdown"))
+
+        return {
+            "save_rate": float(real_metrics.get("save_rate") or attention_breakdown.get("save_rate") or 0.0),
+            "share_rate": float(real_metrics.get("share_rate") or attention_breakdown.get("share_rate") or 0.0),
+            "retention": float(real_metrics.get("retention") or attention_breakdown.get("retention") or 0.0),
+            "replay_proxy": float(real_metrics.get("replay_proxy") or attention_breakdown.get("replay_proxy") or 0.0),
+        }
+
+    def build_phase7_decision_memory_entries(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        mission_decision: dict[str, Any],
+        measurement_summary: dict[str, Any],
+        trend: str,
+    ) -> list[dict[str, Any]]:
+        plan = safe_dict(creative_plan)
+        mission = safe_dict(mission_decision)
+        metrics = self._extract_phase7_metrics(measurement_summary)
+
+        if not any(float(value or 0.0) > 0.0 for value in metrics.values()):
+            return []
+
+        hypothesis = (
+            plan.get("hypothesis")
+            or safe_dict(mission.get("raw")).get("hypothesis")
+            or mission.get("hypothesis")
+        )
+        content_type = (
+            plan.get("publish_format_now")
+            or plan.get("strategic_target_format")
+            or mission.get("content_type")
+        )
+        publish_style = plan.get("publish_style") or mission.get("style")
+        headline = plan.get("headline")
+        hook = plan.get("hook")
+
+        entries: list[dict[str, Any]] = []
+
+        if hook:
+            entries.append(build_decision_memory_entry(
+                axis="hook",
+                candidate=str(hook),
+                metrics=metrics,
+                hypothesis=hypothesis,
+                content_type=content_type,
+                trend=trend,
+            ))
+
+        if content_type:
+            entries.append(build_decision_memory_entry(
+                axis="format",
+                candidate=str(content_type),
+                metrics=metrics,
+                hypothesis=hypothesis,
+                content_type=content_type,
+                trend=trend,
+            ))
+
+        if publish_style:
+            entries.append(build_decision_memory_entry(
+                axis="style",
+                candidate=str(publish_style),
+                metrics=metrics,
+                hypothesis=hypothesis,
+                content_type=content_type,
+                trend=trend,
+            ))
+
+        if headline:
+            entries.append(build_decision_memory_entry(
+                axis="headline",
+                candidate=str(headline),
+                metrics=metrics,
+                hypothesis=hypothesis,
+                content_type=content_type,
+                trend=trend,
+            ))
+
+        return [safe_dict(item) for item in entries if safe_dict(item)]
+
     def apply_phase7_decision_memory(
         self,
         *,
@@ -224,20 +313,41 @@ class RuntimePhaseAbsorption:
         plan = dict(creative_plan)
 
         try:
-            raw_entries = measurement_summary.get("decision_memory_entries") or []
-            decision_entries = raw_entries if isinstance(raw_entries, list) else []
+            current_entries_raw = measurement_summary.get("decision_memory_entries") or []
+            previous_entries_raw = measurement_summary.get("previous_decision_memory_entries") or []
+
+            current_entries = [
+                safe_dict(item)
+                for item in current_entries_raw
+                if isinstance(item, dict) and safe_dict(item)
+            ]
+            previous_entries = [
+                safe_dict(item)
+                for item in previous_entries_raw
+                if isinstance(item, dict) and safe_dict(item)
+            ]
+            decision_entries = previous_entries + current_entries
 
             memory_summary = build_decision_memory_summary(
                 entries=decision_entries,
                 preferred_axis="hook",
             )
 
+            original_hook = str(plan.get("hook") or "").strip()
             best_hook = memory_summary.get("best_candidate")
-            if best_hook:
+            hook_changed = bool(best_hook and best_hook != original_hook)
+
+            if hook_changed:
                 plan["hook"] = best_hook
                 plan["memory_override"] = True
+            else:
+                plan["memory_override"] = False
 
             plan["decision_memory_summary"] = memory_summary
+            plan["decision_memory_loaded_count"] = len(decision_entries)
+            plan["previous_decision_memory_count"] = len(previous_entries)
+            plan["current_decision_memory_count"] = len(current_entries)
+
         except Exception:
             pass
 

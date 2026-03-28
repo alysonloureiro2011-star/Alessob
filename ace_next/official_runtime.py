@@ -1500,7 +1500,21 @@ class OfficialRuntime:
                 "request_envelope": envelope.to_dict(),
             }
 
+        previous_decision_memory_entries = [
+            safe_dict(item)
+            for item in (self._last_run_summary.get("decision_memory_entries") or [])
+            if isinstance(item, dict) and safe_dict(item)
+        ]
+
         plan_ok, creative_plan = self._creative_plan(effective_trend, mission_decision)
+        creative_plan = self.phase_absorption.apply_phase7_decision_memory(
+            creative_plan=creative_plan,
+            measurement_summary={
+                "previous_decision_memory_entries": previous_decision_memory_entries,
+            },
+        )
+        current_cycle_memory_override = bool(creative_plan.get("memory_override"))
+
         editorial_qa = self._editorial_quality(creative_plan)
 
         visual_identity, typography, visual_contract, visual_template, visual_bundle = self._visual_foundation(creative_plan)
@@ -1711,6 +1725,22 @@ class OfficialRuntime:
             mission_decision=mission_decision,
         )
 
+        current_decision_memory_entries = self.phase_absorption.build_phase7_decision_memory_entries(
+            creative_plan=creative_plan,
+            mission_decision=mission_decision,
+            measurement_summary=measurement,
+            trend=effective_trend,
+        )
+        measurement["previous_decision_memory_entries"] = previous_decision_memory_entries
+        measurement["decision_memory_entries"] = current_decision_memory_entries
+
+        next_cycle_memory = self.phase_absorption.apply_phase7_decision_memory(
+            creative_plan=dict(creative_plan),
+            measurement_summary=measurement,
+        )
+        decision_memory_summary = safe_dict(next_cycle_memory.get("decision_memory_summary"))
+        next_cycle_hook_candidate = next_cycle_memory.get("hook")
+
         self._last_run_summary = {
             "timestamp": _now_iso(),
             "premium_classification": publication_authorization_gate.get("premium_classification"),
@@ -1728,6 +1758,10 @@ class OfficialRuntime:
             "prepublish_gate": _gate_stage_summary(prepublish_reel_stack),
             "postpublish_gate": _gate_stage_summary(postpublish_reel_stack),
             "publish_truth_state": publish_truth_state,
+            "decision_memory_entries": current_decision_memory_entries,
+            "decision_memory_summary": decision_memory_summary,
+            "memory_override": current_cycle_memory_override,
+            "next_cycle_hook_candidate": next_cycle_hook_candidate,
             "study_tags": STUDY_TAGS,
             "wave_alignment": {
                 "wave1_runtime_fino": True,
@@ -1736,6 +1770,7 @@ class OfficialRuntime:
                 "wave4_reel_premium_stack": True,
                 "wave5_publish_truth_learning": True,
                 "wave6_expansion_ready": True,
+                "wave7_decision_memory": True,
             },
         }
 
@@ -1764,6 +1799,10 @@ class OfficialRuntime:
             "mission_control_state": mission_control_state,
             "creative_plan_ok": plan_ok,
             "creative_plan": creative_plan,
+            "decision_memory_entries": current_decision_memory_entries,
+            "decision_memory_summary": decision_memory_summary,
+            "memory_override": current_cycle_memory_override,
+            "next_cycle_hook_candidate": next_cycle_hook_candidate,
             "editorial_qa": editorial_qa,
             "visual_contract": visual_contract,
             "visual_template": visual_template,
