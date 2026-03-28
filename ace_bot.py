@@ -3,35 +3,35 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 
 from ace_next.config import AceNextConfig
-from ace_next.official_runtime import OfficialRuntime
+from ace_next.official_runtime_surface import OfficialRuntimeSurface
 
 app = Flask(__name__)
 
-_runtime: OfficialRuntime | None = None
+_surface: OfficialRuntimeSurface | None = None
 
 
-def get_runtime() -> OfficialRuntime:
-    global _runtime
-    if _runtime is None:
+def get_surface() -> OfficialRuntimeSurface:
+    global _surface
+    if _surface is None:
         config = AceNextConfig()
-        _runtime = OfficialRuntime(config)
-    return _runtime
+        _surface = OfficialRuntimeSurface(config)
+    return _surface
 
 
 @app.route("/")
 def health():
-    return {"ok": True, "service": "ACE Ω", "mode": "official_runtime_bridge"}
+    return {"ok": True, "service": "ACE Ω", "mode": "official_runtime_surface_bridge"}
 
 
 @app.route("/ext/runtime")
 def runtime_snapshot():
-    runtime = get_runtime()
-    return jsonify(runtime.snapshot())
+    surface = get_surface()
+    return jsonify(surface.snapshot())
 
 
 @app.route("/ext/run", methods=["GET", "POST"])
 def run_pipeline():
-    runtime = get_runtime()
+    surface = get_surface()
 
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
@@ -48,7 +48,7 @@ def run_pipeline():
     }
     probe_state = data.get("probe_state") or "auto"
 
-    result = runtime.run(
+    result = surface.run(
         trend=trend,
         force_placeholder=force_placeholder,
         force_real_probe=force_real_probe,
@@ -59,12 +59,12 @@ def run_pipeline():
 
 @app.route("/ext/test/publish")
 def test_publish():
-    runtime = get_runtime()
+    surface = get_surface()
 
     trend = request.args.get("trend") or "teste publicação"
     live = request.args.get("live", "0")
 
-    result = runtime.run(
+    result = surface.run(
         trend=trend,
         force_real_probe=(live == "1"),
         force_placeholder=False,
