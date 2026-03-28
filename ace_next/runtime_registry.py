@@ -28,7 +28,7 @@ CURRENT_CAPABILITIES: tuple[CapabilitySpec, ...] = (
     CapabilitySpec("resolve_lab_probe_policy", ".lab_probe_policy", "resolve_lab_probe_policy", required=True, stage="wave5"),
     CapabilitySpec("decide_mission", ".mission_control", "decide_mission", required=True, stage="wave2"),
     CapabilitySpec("evaluate_perceptual_quality", ".perceptual_qa", "evaluate_perceptual_quality", required=True, stage="wave3"),
-    CapabilitySpec("PublishService", ".publish", "PublishService", required=True, stage="wave5"),
+    CapabilitySpec("PublishService", ".publish_runtime_bridge", "PublishService", required=True, stage="wave5", notes="official publish bridge -> official_instagram_publish with legacy receipt compatibility"),
     CapabilitySpec("persist_instagram_token_to_render", ".render_env_sync", "persist_instagram_token_to_render", required=False, stage="wave5"),
     CapabilitySpec("refresh_instagram_long_lived_token", ".token_upgrade", "refresh_instagram_long_lived_token", required=False, stage="wave5"),
     CapabilitySpec("build_visual_contract", ".visual_contract", "build_visual_contract", required=True, stage="wave3"),
