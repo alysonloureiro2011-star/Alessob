@@ -25,6 +25,10 @@ def _safe_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _safe_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
 def _recent_memory_context(recent_memory: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     recent_memory = list(recent_memory or [])[-5:]
     normalized_recent: list[dict[str, Any]] = []

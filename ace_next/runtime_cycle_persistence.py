@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .learning_loop import build_learning_loop_summary
+from .learning_loop_runtime_bridge import build_learning_loop_summary
 from .performance_store import PerformanceStore
 
 
@@ -66,6 +66,9 @@ def build_runtime_cycle_record(runtime_result: dict[str, Any]) -> dict[str, Any]
     episodic_performance_memory = _safe_dict(result.get("episodic_performance_memory"))
     reflection_memory = _safe_dict(result.get("reflection_memory"))
     creative_plan = _safe_dict(result.get("creative_plan"))
+    mission_decision = _safe_dict(result.get("mission_decision"))
+
+    distribution_context = _safe_dict(creative_plan.get("distribution_context"))
 
     return {
         "record_id": _record_id(result, publish_result),
@@ -90,13 +93,25 @@ def build_runtime_cycle_record(runtime_result: dict[str, Any]) -> dict[str, Any]
         "probe_context": _probe_context(result, publish_result),
         "creative_plan": {
             "goal": creative_plan.get("goal"),
+            "hypothesis": creative_plan.get("hypothesis") or mission_decision.get("hypothesis"),
+            "hook": creative_plan.get("hook"),
+            "headline": creative_plan.get("headline"),
             "publish_style": creative_plan.get("publish_style"),
             "publish_format_now": creative_plan.get("publish_format_now"),
+            "timing_hypothesis": creative_plan.get("timing_hypothesis") or distribution_context.get("recommended_timing_hypothesis"),
             "serial_continuity": _safe_dict(creative_plan.get("serial_continuity")),
-            "distribution_context": _safe_dict(creative_plan.get("distribution_context")),
+            "distribution_context": distribution_context,
+        },
+        "mission_context": {
+            "goal": mission_decision.get("goal"),
+            "hypothesis": mission_decision.get("hypothesis"),
+            "content_type": mission_decision.get("content_type"),
+            "style": mission_decision.get("style"),
+            "confidence": mission_decision.get("confidence"),
         },
         "decision_memory_entries": list(result.get("decision_memory_entries") or []),
         "decision_memory_summary": _safe_dict(result.get("decision_memory_summary")),
+        "next_cycle_hook_candidate": result.get("next_cycle_hook_candidate"),
     }
 
 
