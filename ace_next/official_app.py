@@ -1,13 +1,13 @@
 from flask import Flask, jsonify, request
 
-from .config import AceNextConfig
+from .config import load_config
 from .official_runtime_surface import OfficialRuntimeSurface
 
 
 def create_official_app() -> Flask:
     app = Flask(__name__)
 
-    config = AceNextConfig()
+    config = load_config()
     runtime_surface = OfficialRuntimeSurface(config)
 
     def _feedback_payload(data: dict) -> dict:
