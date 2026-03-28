@@ -10,6 +10,16 @@ def create_official_app() -> Flask:
     config = load_config()
     runtime_surface = OfficialRuntimeSurface(config)
 
+    def _safe_json(data):
+        try:
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "fallback": True
+            })
+
     def _feedback_payload(data: dict) -> dict:
         return {
             "real_metrics": data.get("real_metrics"),
@@ -33,7 +43,14 @@ def create_official_app() -> Flask:
 
     @app.route("/snapshot")
     def snapshot():
-        return jsonify(runtime_surface.snapshot())
+        try:
+            return _safe_json(runtime_surface.snapshot())
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "safe_mode": True
+            })
 
     @app.route("/run", methods=["POST"])
     def run():
@@ -47,19 +64,25 @@ def create_official_app() -> Flask:
             feedback_payload=_feedback_payload(data),
         )
 
-        return jsonify(result)
+        return _safe_json(result)
 
     @app.route("/probe")
     def probe():
-        return jsonify(runtime_surface.probe_readiness_summary())
+        return _safe_json(runtime_surface.probe_readiness_summary())
 
     @app.route("/quality")
     def quality():
-        return jsonify(runtime_surface.quality_gap_summary())
+        try:
+            return _safe_json(runtime_surface.quality_gap_summary())
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
 
     @app.route("/last_publish")
     def last_publish():
-        return jsonify(runtime_surface.last_publish_compact_summary())
+        try:
+            return _safe_json(runtime_surface.last_publish_compact_summary())
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
 
     return app
 
