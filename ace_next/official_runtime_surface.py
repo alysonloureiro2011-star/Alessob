@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .official_runtime import OfficialRuntime
+from .runtime_cycle_persistence import persist_runtime_cycle
 
 
 class OfficialRuntimeSurface:
@@ -47,9 +48,17 @@ class OfficialRuntimeSurface:
         force_real_probe: bool = False,
         probe_state: str | None = None,
     ) -> dict[str, Any]:
-        return self.runtime.run(
+        result = self.runtime.run(
             trend=trend,
             force_placeholder=force_placeholder,
             force_real_probe=force_real_probe,
             probe_state=probe_state,
         )
+        persisted = persist_runtime_cycle(self.config, result)
+        if isinstance(persisted, dict):
+            result["runtime_cycle_persistence"] = persisted
+            if persisted.get("performance_store"):
+                result["performance_store"] = persisted.get("performance_store")
+            if persisted.get("learning_loop"):
+                result["learning_loop"] = persisted.get("learning_loop")
+        return result
