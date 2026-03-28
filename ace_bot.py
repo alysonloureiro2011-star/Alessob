@@ -18,6 +18,22 @@ def get_surface() -> OfficialRuntimeSurface:
     return _surface
 
 
+def _feedback_payload(data: object) -> dict:
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "real_metrics": data.get("real_metrics"),
+        "attention_metrics": data.get("attention_metrics"),
+        "performance_ingest": data.get("performance_ingest"),
+        "recommendation_engine": data.get("recommendation_engine"),
+        "experiment_resolution": data.get("experiment_resolution"),
+        "experiment_registry": data.get("experiment_registry"),
+        "episodic_performance_memory": data.get("episodic_performance_memory"),
+        "reflection_memory": data.get("reflection_memory"),
+        "next_cycle_hook_candidate": data.get("next_cycle_hook_candidate"),
+    }
+
+
 @app.route("/")
 def health():
     return {"ok": True, "service": "ACE Ω", "mode": "official_runtime_surface_bridge"}
@@ -48,27 +64,38 @@ def run_pipeline():
     }
     probe_state = data.get("probe_state") or "auto"
 
+    feedback_payload = _feedback_payload(data) if request.method == "POST" else None
+
     result = surface.run(
         trend=trend,
         force_placeholder=force_placeholder,
         force_real_probe=force_real_probe,
         probe_state=probe_state,
+        feedback_payload=feedback_payload,
     )
     return jsonify(result)
 
 
-@app.route("/ext/test/publish")
+@app.route("/ext/test/publish", methods=["GET", "POST"])
 def test_publish():
     surface = get_surface()
 
-    trend = request.args.get("trend") or "teste publicação"
-    live = request.args.get("live", "0")
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+    else:
+        data = request.args
+
+    trend = data.get("trend") or "teste publicação"
+    live = str(data.get("live", "0")).strip().lower()
+
+    feedback_payload = _feedback_payload(data) if request.method == "POST" else None
 
     result = surface.run(
         trend=trend,
-        force_real_probe=(live == "1"),
+        force_real_probe=(live in {"1", "true", "yes", "on"}),
         force_placeholder=False,
         probe_state="auto",
+        feedback_payload=feedback_payload,
     )
 
     return jsonify(result)

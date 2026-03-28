@@ -13,3 +13,4 @@ decorator
 tqdm
 python-dotenv
 gunicorn
+playwright

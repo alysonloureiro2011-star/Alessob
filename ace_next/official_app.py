@@ -10,6 +10,19 @@ def create_official_app() -> Flask:
     config = AceNextConfig()
     runtime_surface = OfficialRuntimeSurface(config)
 
+    def _feedback_payload(data: dict) -> dict:
+        return {
+            "real_metrics": data.get("real_metrics"),
+            "attention_metrics": data.get("attention_metrics"),
+            "performance_ingest": data.get("performance_ingest"),
+            "recommendation_engine": data.get("recommendation_engine"),
+            "experiment_resolution": data.get("experiment_resolution"),
+            "experiment_registry": data.get("experiment_registry"),
+            "episodic_performance_memory": data.get("episodic_performance_memory"),
+            "reflection_memory": data.get("reflection_memory"),
+            "next_cycle_hook_candidate": data.get("next_cycle_hook_candidate"),
+        }
+
     @app.route("/")
     def home():
         return jsonify({"ok": True, "service": "ACE Ω Runtime Online"})
@@ -31,6 +44,7 @@ def create_official_app() -> Flask:
             force_placeholder=bool(data.get("force_placeholder", False)),
             force_real_probe=bool(data.get("force_real_probe", False)),
             probe_state=data.get("probe_state"),
+            feedback_payload=_feedback_payload(data),
         )
 
         return jsonify(result)
