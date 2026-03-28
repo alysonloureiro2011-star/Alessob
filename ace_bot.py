@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from flask import Flask, jsonify, request
 
-from ace_next.config import AceNextConfig
+from ace_next.config import load_config
 from ace_next.official_runtime_surface import OfficialRuntimeSurface
 
 app = Flask(__name__)
@@ -13,7 +13,7 @@ _surface: OfficialRuntimeSurface | None = None
 def get_surface() -> OfficialRuntimeSurface:
     global _surface
     if _surface is None:
-        config = AceNextConfig()
+        config = load_config()
         _surface = OfficialRuntimeSurface(config)
     return _surface
 
