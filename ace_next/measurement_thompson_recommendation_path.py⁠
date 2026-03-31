@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+from typing import Any
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _call_builder(symbol: Any, **kwargs: Any) -> dict[str, Any]:
+    if symbol is None:
+        return {}
+    try:
+        result = symbol(**kwargs)
+        return result if isinstance(result, dict) else {}
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _build_record(
+    *,
+    publish_result: dict[str, Any],
+    creative_plan: dict[str, Any],
+    mission_decision: dict[str, Any],
+    attention_metrics: dict[str, Any],
+    resonance_engine: dict[str, Any],
+    reward_prediction: dict[str, Any],
+    evidence_interpreter: dict[str, Any],
+    experiment_resolution: dict[str, Any],
+    recommendation_engine: dict[str, Any],
+    thompson_sampler: dict[str, Any],
+    operational_state: str,
+    distribution_context: dict[str, Any],
+    serial_continuity: dict[str, Any],
+) -> dict[str, Any]:
+    publish_result = _safe_dict(publish_result)
+    creative_plan = _safe_dict(creative_plan)
+    mission_decision = _safe_dict(mission_decision)
+    attention_metrics = _safe_dict(attention_metrics)
+    resonance_engine = _safe_dict(resonance_engine)
+    reward_prediction = _safe_dict(reward_prediction)
+    evidence_interpreter = _safe_dict(evidence_interpreter)
+    experiment_resolution = _safe_dict(experiment_resolution)
+    recommendation_engine = _safe_dict(recommendation_engine)
+    thompson_sampler = _safe_dict(thompson_sampler)
+    distribution_context = _safe_dict(distribution_context)
+    serial_continuity = _safe_dict(serial_continuity)
+
+    receipt_bridge = {
+        "receipt_id": publish_result.get("receipt_id"),
+        "media_id": publish_result.get("media_id"),
+        "permalink": publish_result.get("permalink"),
+        "publish_status": publish_result.get("publish_status"),
+        "content_type": publish_result.get("content_type"),
+        "style": publish_result.get("style"),
+        "created_at": publish_result.get("created_at"),
+    }
+
+    source_status = "not_collected_yet"
+    if receipt_bridge["receipt_id"] and receipt_bridge["media_id"]:
+        source_status = "receipt_linked_waiting_metrics"
+
+    record_id = (
+        publish_result.get("receipt_id")
+        or publish_result.get("media_id")
+        or publish_result.get("permalink")
+        or creative_plan.get("headline")
+        or mission_decision.get("trend")
+        or "measurement_record"
+    )
+
+    return {
+        "record_id": str(record_id),
+        "operational_state": operational_state,
+        "creative_plan": creative_plan,
+        "mission_decision": mission_decision,
+        "visual_template": {
+            "template_id": creative_plan.get("selected_template_id")
+            or creative_plan.get("visual_style")
+            or creative_plan.get("publish_style")
+        },
+        "receipt": receipt_bridge,
+        "publish_result": publish_result,
+        "real_metrics": {
+            "source_status": source_status,
+            "receipt_id": receipt_bridge["receipt_id"],
+            "media_id": receipt_bridge["media_id"],
+            "permalink": receipt_bridge["permalink"],
+        },
+        "attention_metrics": attention_metrics,
+        "resonance_engine": resonance_engine,
+        "reward_prediction": reward_prediction,
+        "evidence_interpreter": evidence_interpreter,
+        "experiment_resolution": experiment_resolution,
+        "recommendation_engine": recommendation_engine,
+        "thompson_sampler": thompson_sampler,
+        "sampler_decision": thompson_sampler,
+        "distribution_context": distribution_context,
+        "serial_continuity": serial_continuity,
+        "probe_context": {
+            "requested": bool(publish_result.get("probe_requested")),
+            "publish_executed": bool(publish_result.get("probe_publish_executed")),
+        },
+        "performance_ingest": {
+            "attempted": bool(receipt_bridge["media_id"]),
+            "source_status": source_status,
+        },
+    }
+
+
+def build_measurement_thompson_recommendation_path(
+    *,
+    publish_result: dict[str, Any],
+    creative_plan: dict[str, Any],
+    mission_decision: dict[str, Any],
+    operational_state: str,
+    attention_metrics: dict[str, Any] | None = None,
+    resonance_engine: dict[str, Any] | None = None,
+    reward_prediction: dict[str, Any] | None = None,
+    evidence_interpreter: dict[str, Any] | None = None,
+    experiment_resolution: dict[str, Any] | None = None,
+    episodic_performance_memory: dict[str, Any] | None = None,
+    performance_store_cls: Any | None = None,
+    thompson_sampler_builder: Any | None = None,
+    recommendation_engine_builder: Any | None = None,
+    experiment_registry_cls: Any | None = None,
+    experiment_record_builder: Any | None = None,
+    config: Any | None = None,
+) -> dict[str, Any]:
+    publish_result = _safe_dict(publish_result)
+    creative_plan = _safe_dict(creative_plan)
+    mission_decision = _safe_dict(mission_decision)
+    attention_metrics = _safe_dict(attention_metrics)
+    resonance_engine = _safe_dict(resonance_engine)
+    reward_prediction = _safe_dict(reward_prediction)
+    evidence_interpreter = _safe_dict(evidence_interpreter)
+    experiment_resolution = _safe_dict(experiment_resolution)
+    episodic_performance_memory = _safe_dict(episodic_performance_memory)
+
+    serial_continuity = _safe_dict(
+        creative_plan.get("serial_continuity")
+    )
+    distribution_context = _safe_dict(
+        creative_plan.get("distribution_context")
+    )
+
+    draft_record = _build_record(
+        publish_result=publish_result,
+        creative_plan=creative_plan,
+        mission_decision=mission_decision,
+        attention_metrics=attention_metrics,
+        resonance_engine=resonance_engine,
+        reward_prediction=reward_prediction,
+        evidence_interpreter=evidence_interpreter,
+        experiment_resolution=experiment_resolution,
+        recommendation_engine={},
+        thompson_sampler={},
+        operational_state=operational_state,
+        distribution_context=distribution_context,
+        serial_continuity=serial_continuity,
+    )
+
+    thompson_sampler = _call_builder(
+        thompson_sampler_builder,
+        record=draft_record,
+        reward_prediction=reward_prediction,
+        conservative_mode=True,
+    )
+
+    recommendation_engine = _call_builder(
+        recommendation_engine_builder,
+        evidence_interpreter=evidence_interpreter,
+        experiment_resolution=experiment_resolution,
+        resonance_engine=resonance_engine,
+        reward_prediction=reward_prediction,
+        attention_metrics=attention_metrics,
+        operational_state=operational_state,
+        episodic_memory=episodic_performance_memory,
+        serial_continuity=serial_continuity,
+        distribution_context=distribution_context,
+        publish_result=publish_result,
+        real_metrics=draft_record.get("real_metrics"),
+    )
+
+    record = _build_record(
+        publish_result=publish_result,
+        creative_plan=creative_plan,
+        mission_decision=mission_decision,
+        attention_metrics=attention_metrics,
+        resonance_engine=resonance_engine,
+        reward_prediction=reward_prediction,
+        evidence_interpreter=evidence_interpreter,
+        experiment_resolution=experiment_resolution,
+        recommendation_engine=recommendation_engine,
+        thompson_sampler=thompson_sampler,
+        operational_state=operational_state,
+        distribution_context=distribution_context,
+        serial_continuity=serial_continuity,
+    )
+
+    experiment_record = _call_builder(
+        experiment_record_builder,
+        record=record,
+    )
+
+    performance_store_summary: dict[str, Any] = {}
+    experiment_registry_summary: dict[str, Any] = {}
+
+    if performance_store_cls is not None and config is not None:
+        try:
+            store = performance_store_cls(config)
+            performance_store_summary = _safe_dict(
+                store.upsert_record(record)
+            )
+        except Exception as exc:
+            performance_store_summary = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    if experiment_registry_cls is not None and config is not None and experiment_record:
+        try:
+            registry = experiment_registry_cls(config)
+            experiment_registry_summary = _safe_dict(
+                registry.upsert_experiment(experiment_record)
+            )
+        except Exception as exc:
+            experiment_registry_summary = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    resolution_state = _text(
+        experiment_resolution.get("resolution_state") or "collecting"
+    )
+    recommendation_state = _text(
+        recommendation_engine.get("recommended_action") or "collect_more"
+    )
+    decision_state = _text(
+        thompson_sampler.get("decision_state") or "collecting"
+    )
+
+    return {
+        "ok": True,
+        "module": "measurement_thompson_recommendation_path_v1",
+        "record": record,
+        "thompson_sampler": thompson_sampler,
+        "recommendation_engine": recommendation_engine,
+        "experiment_record": experiment_record,
+        "performance_store": performance_store_summary,
+        "experiment_registry": experiment_registry_summary,
+        "summary": {
+            "resolution_state": resolution_state,
+            "recommendation_state": recommendation_state,
+            "decision_state": decision_state,
+            "posterior_mean": thompson_sampler.get("posterior_mean"),
+            "winner_candidate": thompson_sampler.get("winner_candidate"),
+            "safe_to_promote_to_editorial_staging": recommendation_engine.get(
+                "safe_to_promote_to_editorial_staging"
+            ),
+        },
+        "study_alignment": {
+            "measurement_path": True,
+            "thompson_path": True,
+            "recommendation_path": True,
+            "evidence_aware": True,
+            "instagram_first": True,
+        },
+        "notes": [
+            f"resolution_state={resolution_state}",
+            f"recommendation_state={recommendation_state}",
+            f"decision_state={decision_state}",
+            f"receipt_id={_text(publish_result.get('receipt_id'))}",
+            f"media_id={_text(publish_result.get('media_id'))}",
+        ],
+    }
