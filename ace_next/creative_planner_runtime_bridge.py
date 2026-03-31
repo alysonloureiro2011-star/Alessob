@@ -165,14 +165,11 @@ def build_creative_plan(
         distribution=distribution,
     )
 
-    return {
-        "ok": True,
-        "module": "creative_planner_runtime_bridge_v3",
-        "creative_plan": final_plan,
-        "learning": learning,
-        "distribution": distribution,
-        "compatibility": {
-            "runtime_signature_compatible": True,
-            "accepts_trend_overrides_mission_recent_memory": True,
-        },
+    final_plan["planner_bridge_meta"] = {
+        "module": "creative_planner_runtime_bridge_v4",
+        "learning_confidence": learning.get("confidence"),
+        "distribution_confidence": distribution.get("confidence"),
+        "runtime_signature_compatible": True,
     }
+
+    return final_plan
