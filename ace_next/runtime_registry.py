@@ -51,6 +51,7 @@ CURRENT_CAPABILITIES: tuple[CapabilitySpec, ...] = (
     CapabilitySpec("AudioDirectionLayer", ".audio_direction_layer", "AudioDirectionLayer", required=False, stage="wave4"),
     CapabilitySpec("MultimodalReelQA", ".multimodal_reel_qa", "MultimodalReelQA", required=False, stage="wave4"),
     CapabilitySpec("CinematicGate", ".cinematic_gate", "CinematicGate", required=False, stage="wave4"),
+    CapabilitySpec("NaturalismEngine", ".naturalism_engine", "NaturalismEngine", required=False, stage="wave4", notes="contract-driven naturalism engine already hardened in main"),
     CapabilitySpec("ReleaseAuthority", ".release_authority", "ReleaseAuthority", required=False, stage="wave4"),
     CapabilitySpec("PublishGuard", ".publish_guard", "PublishGuard", required=False, stage="wave4"),
 )
@@ -67,7 +68,6 @@ FUTURE_CAPABILITIES: tuple[CapabilitySpec, ...] = (
     CapabilitySpec("ThompsonSampler", ".thompson_sampler", "ThompsonSampler", required=False, stage="future", notes="onda 6"),
     CapabilitySpec("ExperimentRegistry", ".experiment_registry", "ExperimentRegistry", required=False, stage="future", notes="onda 6"),
     CapabilitySpec("RecommendationEngine", ".recommendation_engine", "RecommendationEngine", required=False, stage="future", notes="onda 6"),
-    CapabilitySpec("NaturalismEngine", ".naturalism_engine", "NaturalismEngine", required=False, stage="future", notes="onda 4"),
     CapabilitySpec("DignityScore", ".dignity_score", "DignityScore", required=False, stage="future", notes="onda 3"),
     CapabilitySpec("VisualHierarchyGate", ".visual_hierarchy_gate", "VisualHierarchyGate", required=False, stage="future", notes="onda 3"),
     CapabilitySpec("YouTubeAdapter", ".platform_adapters.youtube", "YouTubeAdapter", required=False, stage="future", notes="onda 6"),
