@@ -1,10 +1,10 @@
-
 from __future__ import annotations
 from typing import Any
 from ace_next.visual_hierarchy_gate import evaluate_visual_hierarchy_gate
 
+
 def run_visual_gate_adapter(input_payload: dict[str, Any]) -> dict[str, Any]:
-    result = evaluate_visual_hierarchy_gate(input_payload or {})
+    result = evaluate_visual_hierarchy_gate(**(input_payload or {})) or {}
 
     return {
         "ok": True,
