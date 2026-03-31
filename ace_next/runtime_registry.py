@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 """
-ACE Ω — Runtime Registry (Soberano)
+ACE Ω — Runtime Registry (VERSÃO SOBERANA ALINHADA)
 
-Objetivo:
-- refletir o estado REAL do sistema
-- evitar inconsistência entre código e registry
-- não alterar comportamento do runtime
+Regra:
+- refletir 100% o estado real
+- incluir adapters
+- zero inconsistência
 """
 
 CURRENT_CAPABILITIES = {
@@ -48,15 +48,12 @@ CURRENT_CAPABILITIES = {
         "status": "active"
     },
 
-    # Adapter para função existente
     "VisualHierarchyGate": {
         "path": "ace_next.visual_hierarchy_gate",
         "symbol": "evaluate_visual_hierarchy_gate",
-        "status": "active",
-        "type": "function_adapter"
+        "status": "active"
     },
 
-    # Normalização do nome correto
     "DignityScore": {
         "path": "ace_next.brand_dignity_score",
         "symbol": "evaluate_brand_dignity_score",
@@ -119,19 +116,16 @@ CURRENT_CAPABILITIES = {
         "status": "active"
     },
 
-    # PROMOVIDO (já existe no código)
     "ReflectionEngine": {
         "path": "ace_next.reflection_engine",
         "symbol": "ReflectionEngine",
         "status": "active"
     },
 
-    # Adapter (função existente)
     "SerialContinuityEngine": {
         "path": "ace_next.serial_continuity_engine",
         "symbol": "build_serial_continuity",
-        "status": "active",
-        "type": "function_adapter"
+        "status": "active"
     },
 
     # =========================
@@ -148,12 +142,38 @@ CURRENT_CAPABILITIES = {
         "status": "active"
     },
 
+    # =========================
+    # ADAPTERS (NOVO BLOCO)
+    # =========================
+    "ReflectionAdapter": {
+        "path": "ace_next.reflection_adapter_runtime",
+        "symbol": "run_reflection_adapter",
+        "status": "active"
+    },
+
+    "SerialAdapter": {
+        "path": "ace_next.serial_adapter_runtime",
+        "symbol": "run_serial_adapter",
+        "status": "active"
+    },
+
+    "VisualGateAdapter": {
+        "path": "ace_next.visual_gate_adapter_runtime",
+        "symbol": "run_visual_gate_adapter",
+        "status": "active"
+    },
+
+    "DignityAdapter": {
+        "path": "ace_next.dignity_adapter_runtime",
+        "symbol": "run_dignity_adapter",
+        "status": "active"
+    },
+
 }
 
 
 FUTURE_CAPABILITIES = {
 
-    # Orquestração avançada ainda NÃO integrada
     "LLMOrchestrator": {
         "path": "ace_next.llm_orchestrator",
         "symbol": "LLMOrchestrator",
@@ -166,7 +186,6 @@ FUTURE_CAPABILITIES = {
         "status": "not_integrated"
     },
 
-    # NÃO encontrado no repo
     "SeoSocialEngine": {
         "path": "ace_next.seo_social_engine",
         "symbol": "SeoSocialEngine",
