@@ -1,10 +1,10 @@
-
 from __future__ import annotations
 from typing import Any
 from ace_next.brand_dignity_score import evaluate_brand_dignity_score
 
+
 def run_dignity_adapter(input_payload: dict[str, Any]) -> dict[str, Any]:
-    result = evaluate_brand_dignity_score(input_payload or {})
+    result = evaluate_brand_dignity_score(**(input_payload or {})) or {}
 
     return {
         "ok": True,
