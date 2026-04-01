@@ -87,6 +87,10 @@ def create_official_app() -> Flask:
     def snapshot():
         return safe_call(runtime_surface.snapshot, "snapshot")
 
+    @app.route("/compact-summary")
+    def compact_summary():
+        return safe_call(runtime_surface.compact_runtime_summary, "compact-summary")
+
     @app.route("/quality")
     def quality():
         return safe_call(runtime_surface.quality_gap_summary, "quality")
@@ -119,6 +123,31 @@ def create_official_app() -> Flask:
                 "error": str(e),
                 "fallback": True,
                 "source": "run"
+            })
+
+    @app.route("/run-test")
+    def run_test():
+        trend = request.args.get("trend", "verdade que ninguém fala")
+        real_flag = str(request.args.get("real", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        placeholder_flag = str(request.args.get("placeholder", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        probe_state = request.args.get("probe_state")
+
+        try:
+            result = runtime_surface.run(
+                trend=trend,
+                force_placeholder=placeholder_flag,
+                force_real_probe=real_flag,
+                probe_state=probe_state,
+                feedback_payload=None,
+            )
+            return safe_simple(result)
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "fallback": True,
+                "source": "run-test"
             })
 
     return app
