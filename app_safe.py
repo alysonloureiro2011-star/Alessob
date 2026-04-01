@@ -1,55 +1,54 @@
 from flask import Flask, jsonify, request
 
-from ace_next.official_runtime_v2 import OfficialRuntime
-from ace_next.config import load_config
+from ace_next.config import AceNextConfig
+from ace_next.official_runtime import OfficialRuntime
 
 app = Flask(__name__)
 
-config = load_config()
+config = AceNextConfig()
 runtime = OfficialRuntime(config)
-
-
-@app.route("/")
-def home():
-    return jsonify({"ok": True, "service": "ACE Ω Runtime Online"})
 
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True}), 200
-
-
-@app.route("/run", methods=["POST"])
-def run():
-    try:
-        data = request.get_json(force=True) or {}
-
-        result = runtime.run(
-            trend=data.get("trend", ""),
-            force_placeholder=bool(data.get("force_placeholder", False)),
-            force_real_probe=bool(data.get("force_real_probe", False)),
-            probe_state=data.get("probe_state"),
-        )
-
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        })
+    return jsonify({"ok": True})
 
 
 @app.route("/snapshot")
 def snapshot():
-    try:
-        return jsonify({"ok": True, "status": "runtime active"})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+    return jsonify(runtime.snapshot())
 
 
-if __name__ == "__main__":
-    import os
+@app.route("/compact-summary")
+def compact_summary():
+    return jsonify(runtime.compact_runtime_summary())
 
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+
+@app.route("/quality")
+def quality():
+    return jsonify(runtime.quality_gap_summary())
+
+
+@app.route("/last-publish")
+def last_publish():
+    return jsonify(runtime.last_publish_compact_summary())
+
+
+@app.route("/probe", methods=["GET"])
+def probe():
+    trend = request.args.get("trend", "teste simples")
+
+    result = runtime.run(
+        trend=trend,
+        force_placeholder=True
+    )
+
+    return jsonify(result)
+
+
+@app.route("/")
+def root():
+    return jsonify({
+        "ok": True,
+        "status": "runtime active"
+    })
