@@ -22,6 +22,10 @@ from .runtime_contracts import (
     safe_dict,
 )
 from .runtime_phase_absorption import build_runtime_phase_absorption
+from .reflection_adapter_runtime import run_reflection_adapter
+from .serial_adapter_runtime import run_serial_adapter
+from .visual_gate_adapter_runtime import run_visual_gate_adapter
+from .dignity_adapter_runtime import run_dignity_adapter
 
 REAL_PROBE_ALLOWED_STATES = {"internal_lab", "editorial_staging"}
 ALLOWED_RELEASE_OPERATION_STATES = {
@@ -108,13 +112,12 @@ class OfficialRuntime:
     """
     ACE Ω — Runtime Soberano Fino
 
-    Diretrizes absorvidas no arquivo:
-    - runtime é casca fina; inteligência vai para módulos
-    - integração grande por ondas
-    - Reel Premium Stack é prioridade estrutural
-    - publish truth só conta com receipt/media_id/permalink
-    - learning deve priorizar save/share/replay/retenção
-    - base já nasce aberta para multiplataforma
+    Diretrizes:
+    - runtime é o centro único
+    - integração nova entra de forma conservadora
+    - zero rota paralela
+    - publish truth só conta com evidence real
+    - learning prioriza save/share/replay/retenção
     """
 
     def __init__(self, config: AceNextConfig) -> None:
@@ -468,6 +471,155 @@ class OfficialRuntime:
             "latest_resolution_state": last_publish.get("latest_resolution_state"),
             "updated_at": last_publish.get("updated_at"),
         }
+
+    # ---------------------------------------------------------
+    # ADAPTERS / SAFE ENRICHMENT
+    # ---------------------------------------------------------
+    def _serial_continuity_summary(self, creative_plan: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = run_serial_adapter(
+                {
+                    "creative_plan": creative_plan,
+                    "recent_memory": self._recent_memory_for_planner(limit=5),
+                }
+            ) or {}
+            result = safe_dict(result)
+            data = safe_dict(result.get("data"))
+            if data:
+                merged = {
+                    **safe_dict(creative_plan.get("serial_continuity")),
+                    **data,
+                }
+                creative_plan["serial_continuity"] = merged
+                if merged.get("next_episode_seed") and not creative_plan.get("series_next"):
+                    creative_plan["series_next"] = merged.get("next_episode_seed")
+            return result
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "serial_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+    def _build_visual_gate_contract(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_template: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "brand_system": {
+                "text_contrast_policy": "premium_high_contrast",
+            },
+            "template_spec": {
+                "template_id": visual_template.get("template_id"),
+                "premium_tier": visual_template.get("premium_tier"),
+                "html_ready": visual_template.get("html_ready"),
+                "block_order": visual_template.get("block_order"),
+                "strategic_format": (
+                    creative_plan.get("publish_format_now")
+                    or creative_plan.get("strategic_target_format")
+                    or "image"
+                ),
+            },
+            "layout_payload": {
+                "display_payload": {
+                    "headline": creative_plan.get("headline"),
+                    "hook": creative_plan.get("hook"),
+                    "body": creative_plan.get("body"),
+                    "cta": creative_plan.get("cta"),
+                    "support_points": creative_plan.get("support_points") or [],
+                    "format": (
+                        creative_plan.get("publish_format_now")
+                        or creative_plan.get("strategic_target_format")
+                        or "image"
+                    ),
+                }
+            },
+            "gate_payload": {
+                "format": (
+                    creative_plan.get("publish_format_now")
+                    or creative_plan.get("strategic_target_format")
+                    or "image"
+                )
+            },
+        }
+
+    def _visual_gate_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_template: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            contract = self._build_visual_gate_contract(
+                creative_plan=creative_plan,
+                visual_template=visual_template,
+            )
+            return safe_dict(run_visual_gate_adapter({"contract": contract}) or {})
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "visual_gate_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+    def _dignity_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_qa: dict[str, Any],
+        hierarchy_gate: dict[str, Any],
+        visual_template: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return safe_dict(
+                run_dignity_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "visual_qa": visual_qa,
+                        "hierarchy_gate": hierarchy_gate,
+                        "template_meta": visual_template,
+                    }
+                )
+                or {}
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "dignity_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+    def _reflection_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        measurement: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            real_metrics = safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics"))
+            return safe_dict(
+                run_reflection_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "real_metrics": real_metrics,
+                        "recommendation_engine": safe_dict(measurement.get("recommendation_engine")),
+                        "attention_metrics": safe_dict(measurement.get("attention_metrics")),
+                    }
+                )
+                or {}
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "reflection_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
 
     # ---------------------------------------------------------
     # PLANNING / STUDY-DRIVEN HELPERS
@@ -1069,10 +1221,7 @@ class OfficialRuntime:
         audio_direction = safe_dict(
             audio_cls().run(
                 hook_opening={
-                    "opening_pattern": hook_opening.get(
-                        "opening_pattern",
-                        "curiosity_gap",
-                    )
+                    "opening_pattern": hook_opening.get("opening_pattern", "curiosity_gap")
                 },
                 rhythm=rhythm,
                 post_production=post_production,
@@ -1107,12 +1256,8 @@ class OfficialRuntime:
             float(visual_qa.get("final_score", 0)) / 10.0,
             float(perceptual_qa.get("final_score", 0)) / 10.0,
         )
-        audio_score_10 = (
-            8.6 if audio_direction.get("state") == "audio_direction_layer_ready" else 6.0
-        )
-        rhythm_score_10 = (
-            8.6 if rhythm.get("rhythm_state") == "reel_rhythm_ready" else 6.0
-        )
+        audio_score_10 = 8.6 if audio_direction.get("state") == "audio_direction_layer_ready" else 6.0
+        rhythm_score_10 = 8.6 if rhythm.get("rhythm_state") == "reel_rhythm_ready" else 6.0
 
         multimodal_qa = safe_dict(
             qa_cls().run(
@@ -1125,9 +1270,7 @@ class OfficialRuntime:
 
         overall_quality_score = max(
             visual_score_10,
-            8.5
-            if publication_authorization_gate.get("eligible_for_editorial_staging")
-            else visual_score_10,
+            8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10,
         )
 
         cinematic_gate = safe_dict(
@@ -1150,11 +1293,7 @@ class OfficialRuntime:
             release_cls().run(
                 cinematic_gate=cinematic_gate,
                 premium_decision={"overall_quality_score": overall_quality_score},
-                operation_bridge={
-                    "operational_state": _normalize_release_operation_state(
-                        operational_state
-                    )
-                },
+                operation_bridge={"operational_state": _normalize_release_operation_state(operational_state)},
             )
         )
 
@@ -1507,10 +1646,7 @@ class OfficialRuntime:
             source="official_runtime",
         )
 
-        effective_trend = (
-            radar.get("effective_trend")
-            or trend_value
-        )
+        effective_trend = radar.get("effective_trend") or trend_value
 
         probe_state_requested = normalize_probe_state(runtime_request.probe_state)
         env_flags = self._brand_env_flags()
@@ -1552,6 +1688,8 @@ class OfficialRuntime:
         ]
 
         plan_ok, creative_plan = self._creative_plan(effective_trend, mission_decision)
+        serial_adapter_summary = self._serial_continuity_summary(creative_plan)
+
         creative_plan = self.phase_absorption.apply_phase7_decision_memory(
             creative_plan=creative_plan,
             measurement_summary={
@@ -1566,6 +1704,20 @@ class OfficialRuntime:
         perceptual_qa = safe_dict(visual_bundle.get("perceptual_qa"))
         visual_qa = safe_dict(visual_bundle.get("visual_qa"))
         premium_visual = self._premium_visual(creative_plan, visual_identity, visual_contract)
+
+        visual_gate_adapter_summary = self._visual_gate_adapter_summary(
+            creative_plan=creative_plan,
+            visual_template=visual_template,
+        )
+        hierarchy_gate_adapter_data = safe_dict(visual_gate_adapter_summary.get("data"))
+
+        dignity_adapter_summary = self._dignity_adapter_summary(
+            creative_plan=creative_plan,
+            visual_qa=visual_qa,
+            hierarchy_gate=hierarchy_gate_adapter_data,
+            visual_template=visual_template,
+        )
+        dignity_adapter_data = safe_dict(dignity_adapter_summary.get("data"))
 
         rubric_engine, brand_veto_gate, publication_authorization_gate = self._run_authorization_stack(
             force_placeholder=runtime_request.force_placeholder,
@@ -1626,6 +1778,9 @@ class OfficialRuntime:
                 "publication_authorization_gate": publication_authorization_gate,
                 "brand_surface_policy": brand_surface_policy,
                 "lab_probe_policy": lab_probe_policy,
+                "serial_adapter_summary": serial_adapter_summary,
+                "visual_gate_adapter_summary": visual_gate_adapter_summary,
+                "dignity_adapter_summary": dignity_adapter_summary,
                 "runtime": self.snapshot(),
                 "request_envelope": envelope.to_dict(),
             }
@@ -1770,6 +1925,14 @@ class OfficialRuntime:
             mission_decision=mission_decision,
         )
 
+        reflection_adapter_summary = self._reflection_adapter_summary(
+            creative_plan=creative_plan,
+            measurement=measurement,
+        )
+        reflection_adapter_data = safe_dict(reflection_adapter_summary.get("data"))
+        if reflection_adapter_data:
+            measurement["reflection_memory"] = reflection_adapter_data
+
         current_decision_memory_entries = self.phase_absorption.build_phase7_decision_memory_entries(
             creative_plan=creative_plan,
             mission_decision=mission_decision,
@@ -1808,6 +1971,10 @@ class OfficialRuntime:
             "memory_override": current_cycle_memory_override,
             "next_cycle_hook_candidate": next_cycle_hook_candidate,
             "study_tags": STUDY_TAGS,
+            "serial_adapter_state": serial_adapter_summary.get("state"),
+            "visual_gate_adapter_state": visual_gate_adapter_summary.get("state"),
+            "dignity_adapter_state": dignity_adapter_summary.get("state"),
+            "reflection_adapter_state": reflection_adapter_summary.get("state"),
             "wave_alignment": {
                 "wave1_runtime_fino": True,
                 "wave2_editorial_brain": True,
@@ -1844,6 +2011,8 @@ class OfficialRuntime:
             "mission_control_state": mission_control_state,
             "creative_plan_ok": plan_ok,
             "creative_plan": creative_plan,
+            "serial_adapter_summary": serial_adapter_summary,
+            "serial_continuity": safe_dict(serial_adapter_summary.get("data")),
             "decision_memory_entries": current_decision_memory_entries,
             "decision_memory_summary": decision_memory_summary,
             "memory_override": current_cycle_memory_override,
@@ -1862,6 +2031,10 @@ class OfficialRuntime:
             "hardening_applied": premium_visual.get("hardening_applied"),
             "hardening_report": premium_visual.get("hardening_report"),
             "premium_visual_reasons": premium_visual.get("reasons"),
+            "visual_gate_adapter_summary": visual_gate_adapter_summary,
+            "visual_gate_adapter": hierarchy_gate_adapter_data,
+            "dignity_adapter_summary": dignity_adapter_summary,
+            "dignity_adapter": dignity_adapter_data,
             "rubric_engine": rubric_engine,
             "brand_veto_gate": brand_veto_gate,
             "publication_authorization_gate": publication_authorization_gate,
@@ -1888,6 +2061,7 @@ class OfficialRuntime:
             "experiment_registry": measurement["experiment_registry"],
             "episodic_performance_memory": measurement["episodic_performance_memory"],
             "reflection_memory": measurement["reflection_memory"],
+            "reflection_adapter_summary": reflection_adapter_summary,
             "learning_loop": measurement["learning_loop"],
             "performance_summary": measurement["performance_summary"],
             "performance_store": measurement["performance_store"],
