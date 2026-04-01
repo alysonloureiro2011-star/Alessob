@@ -1,7 +1,35 @@
+from __future__ import annotations
+
 from flask import Flask, jsonify, request
 
 from .config import load_config
 from .official_runtime_surface import OfficialRuntimeSurface
+
+
+def _json_safe(value):
+    if value is None:
+        return None
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    if hasattr(value, "to_dict"):
+        try:
+            parsed = value.to_dict()
+            return _json_safe(parsed)
+        except Exception:
+            return str(value)
+
+    if isinstance(value, type):
+        return value.__name__
+
+    return str(value)
 
 
 def create_official_app() -> Flask:
@@ -12,7 +40,7 @@ def create_official_app() -> Flask:
 
     def safe_call(fn, fallback_name):
         try:
-            return jsonify(fn())
+            return jsonify(_json_safe(fn()))
         except Exception as e:
             return jsonify({
                 "ok": False,
@@ -23,7 +51,7 @@ def create_official_app() -> Flask:
 
     def safe_simple(data):
         try:
-            return jsonify(data)
+            return jsonify(_json_safe(data))
         except Exception as e:
             return jsonify({
                 "ok": False,
