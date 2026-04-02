@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify, request
+from pathlib import Path
+
+from flask import Flask, jsonify, request, send_from_directory
 
 from .config import load_config
 from .official_runtime_surface import OfficialRuntimeSurface
@@ -82,6 +84,29 @@ def create_official_app() -> Flask:
     @app.route("/health")
     def health():
         return jsonify({"ok": True})
+
+    @app.route("/media/<path:filename>")
+    def media(filename: str):
+        safe_name = Path(filename).name
+        if not safe_name or safe_name != filename:
+            return jsonify({
+                "ok": False,
+                "error": "invalid_media_path",
+            }), 400
+
+        media_dir = config.media_dir
+        target = media_dir / safe_name
+
+        if not target.exists() or not target.is_file():
+            return jsonify({
+                "ok": False,
+                "error": "media_not_found",
+                "filename": safe_name,
+            }), 404
+
+        response = send_from_directory(media_dir, safe_name, as_attachment=False)
+        response.headers["Cache-Control"] = "public, max-age=300"
+        return response
 
     @app.route("/snapshot")
     def snapshot():
