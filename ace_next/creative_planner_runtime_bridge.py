@@ -5,6 +5,7 @@ from typing import Any, Dict
 from .creative_planner import build_creative_plan as base_build_creative_plan
 from .learning_decision_adapter_v1 import build_learning_decision_adapter_v1
 from .distribution_intelligence_v2 import build_distribution_intelligence_v2
+from .reel_retention_policy import evaluate_reel_retention_policy
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -13,6 +14,10 @@ def _safe_dict(value: Any) -> Dict[str, Any]:
 
 def _safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
 
 
 def _unwrap_plan(value: Any) -> Dict[str, Any]:
@@ -34,10 +39,19 @@ def _merge_unique(*groups: list[str]) -> list[str]:
     merged: list[str] = []
     for group in groups:
         for item in group:
-            text = " ".join(str(item or "").strip().split())
+            text = _clean_text(item)
             if text and text not in merged:
                 merged.append(text)
     return merged
+
+
+def _normalize_format(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"story", "stories"}:
+        return "story"
+    if normalized in {"carousel", "image"}:
+        return normalized
+    return "image"
 
 
 def _performance_context_from_legacy(
@@ -55,6 +69,98 @@ def _performance_context_from_legacy(
     }
 
 
+def _retention_payload_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    notes = _merge_unique(
+        [str(item) for item in _safe_list(plan.get("notes"))],
+        [
+            "planner_bridge=runtime_compatible",
+            "bridge_recomputed_retention=true",
+        ],
+    )
+
+    return {
+        "hook": plan.get("hook"),
+        "headline": plan.get("headline"),
+        "angle": plan.get("angle"),
+        "body": plan.get("body"),
+        "cta": plan.get("cta"),
+        "support_points": [str(item) for item in _safe_list(plan.get("support_points")) if _clean_text(item)],
+        "notes": notes,
+        "visual_style": "cinematic_natural_editorial",
+        "publish_style": plan.get("publish_style"),
+        "color_profile": "cinematic_vertical_premium",
+        "publish_format_now": _normalize_format(plan.get("publish_format_now")),
+        "strategic_target_format": _normalize_format(
+            plan.get("strategic_target_format") or plan.get("publish_format_now")
+        ),
+        "timing_hypothesis": plan.get("timing_hypothesis"),
+    }
+
+
+def _official_path_quality_state(
+    *,
+    critic: dict[str, Any],
+    retention_policy: dict[str, Any],
+) -> str:
+    critic = _safe_dict(critic)
+    caption_gate = _safe_dict(critic.get("caption_gate"))
+    veto_reasons = _safe_list(retention_policy.get("veto_reasons"))
+    retention_signal_ready = bool(retention_policy.get("publish_ready"))
+
+    if veto_reasons:
+        return "blocked_retention_gate"
+    if retention_signal_ready and critic.get("approved") and caption_gate.get("approved"):
+        return "approved"
+    if critic.get("failed_floors"):
+        return "needs_rewrite"
+    return "needs_rewrite"
+
+
+def _recompute_runtime_quality(plan: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(plan)
+
+    retention_policy = evaluate_reel_retention_policy(
+        _retention_payload_from_plan(updated)
+    )
+    official_quality_state = _official_path_quality_state(
+        critic=_safe_dict(updated.get("critic")),
+        retention_policy=retention_policy,
+    )
+    official_publish_ready = official_quality_state == "approved"
+    retention_signal_ready = bool(retention_policy.get("publish_ready"))
+
+    updated["retention_policy"] = retention_policy
+    updated["retention_score"] = float(retention_policy.get("premium_eligibility_score") or 0.0)
+    updated["premium_eligibility_score"] = float(retention_policy.get("premium_eligibility_score") or 0.0)
+    updated["publish_ready"] = official_publish_ready
+    updated["official_path_quality_state"] = official_quality_state
+    updated["veto_reasons"] = [str(item) for item in _safe_list(retention_policy.get("veto_reasons"))]
+    updated["lift_targets"] = [str(item) for item in _safe_list(retention_policy.get("lift_targets"))]
+    updated["study_axes_applied"] = [str(item) for item in _safe_list(retention_policy.get("study_axes_applied"))]
+
+    updated["notes"] = _merge_unique(
+        [str(item) for item in _safe_list(updated.get("notes"))],
+        [
+            f"retention_signal_ready={retention_signal_ready}",
+            f"official_publish_ready={official_publish_ready}",
+            f"official_path_quality_state={official_quality_state}",
+            "runtime_bridge_quality_recomputed=true",
+        ],
+    )
+
+    existing_flags = [str(item) for item in _safe_list(updated.get("fallback_flags"))]
+    normalized_flags = [flag for flag in existing_flags if flag not in {"retention_signal_not_ready", "official_quality_not_ready"}]
+
+    if not retention_signal_ready:
+        normalized_flags.append("retention_signal_not_ready")
+    if not official_publish_ready:
+        normalized_flags.append("official_quality_not_ready")
+
+    updated["fallback_flags"] = _merge_unique(normalized_flags)
+
+    return updated
+
+
 def _apply_learning_and_distribution(
     *,
     base_plan: dict[str, Any],
@@ -68,7 +174,7 @@ def _apply_learning_and_distribution(
         plan["hook_family"] = learning_guidance["recommended_hook_family"]
 
     if learning_guidance.get("recommended_format_bias"):
-        plan["publish_format_now"] = learning_guidance["recommended_format_bias"]
+        plan["publish_format_now"] = _normalize_format(learning_guidance["recommended_format_bias"])
 
     if learning_guidance.get("recommended_timing_bias"):
         plan["timing_hypothesis"] = learning_guidance["recommended_timing_bias"]
@@ -86,7 +192,10 @@ def _apply_learning_and_distribution(
         plan["timing_hypothesis"] = distribution["recommended_timing_hypothesis"]
 
     if distribution.get("recommended_format"):
-        plan["publish_format_now"] = distribution["recommended_format"]
+        plan["publish_format_now"] = _normalize_format(distribution["recommended_format"])
+
+    if not _clean_text(plan.get("strategic_target_format")):
+        plan["strategic_target_format"] = _normalize_format(plan.get("publish_format_now"))
 
     existing_distribution = _safe_dict(plan.get("distribution_context"))
     merged_distribution = {
@@ -107,10 +216,11 @@ def _apply_learning_and_distribution(
         **existing_trace,
         "learning_applied": bool(learning_guidance),
         "distribution_applied": bool(distribution),
+        "runtime_bridge_recomputed_quality": True,
     }
 
     plan["notes"] = _merge_unique(
-        _safe_list(plan.get("notes")),
+        [str(item) for item in _safe_list(plan.get("notes"))],
         [
             "planner_bridge=runtime_compatible",
             f"learning_confidence={learning.get('confidence')}",
@@ -118,7 +228,7 @@ def _apply_learning_and_distribution(
         ],
     )
 
-    return plan
+    return _recompute_runtime_quality(plan)
 
 
 def build_creative_plan(
@@ -166,10 +276,11 @@ def build_creative_plan(
     )
 
     final_plan["planner_bridge_meta"] = {
-        "module": "creative_planner_runtime_bridge_v4",
+        "module": "creative_planner_runtime_bridge_v5",
         "learning_confidence": learning.get("confidence"),
         "distribution_confidence": distribution.get("confidence"),
         "runtime_signature_compatible": True,
+        "retention_recomputed_after_bridge": True,
     }
 
     return final_plan
