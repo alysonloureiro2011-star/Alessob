@@ -8,7 +8,7 @@ from .visual_premium_bridge import build_visual_premium_bridge
 
 
 def _safe_dict(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+    return value if isinstance(value, dict) else {}
 
 
 def _existing_path(value: Any) -> str | None:
@@ -21,10 +21,12 @@ def _existing_path(value: Any) -> str | None:
 
 def _premium_asset_path(bundle: dict[str, Any]) -> str | None:
     render = _safe_dict(bundle.get("render"))
-    for key in ("screenshot_path",):
+
+    for key in ("screenshot_path", "image_path", "path"):
         existing = _existing_path(render.get(key))
         if existing:
             return existing
+
     return None
 
 
@@ -37,6 +39,7 @@ def render_visual_foundation_card(
 ) -> str:
     plan = _safe_dict(plan)
     identity = _safe_dict(identity)
+
     strategic_format = str(
         plan.get("publish_format_now")
         or plan.get("strategic_target_format")
@@ -52,9 +55,11 @@ def render_visual_foundation_card(
             strategic_format=strategic_format,
             capture_mode="safe",
         )
+
         premium_asset_path = _premium_asset_path(premium_bundle)
         if premium_asset_path:
             return premium_asset_path
+
     except Exception:
         pass
 
