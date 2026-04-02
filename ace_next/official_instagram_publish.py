@@ -8,6 +8,9 @@ import requests
 from .config import AceNextConfig
 
 
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
+
+
 def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -41,12 +44,19 @@ class OfficialInstagramPublishService:
             return None
         return f"{self.config.public_media_base_url.rstrip('/')}/media/{filename}"
 
+    def _extension(self, media_path: str | None) -> str:
+        return (Path(media_path).suffix or "").lower() if media_path else ""
+
+    def _is_video_path(self, media_path: str | None) -> bool:
+        return self._extension(media_path) in VIDEO_EXTENSIONS
+
     def media_kind_from_path(self, media_path: str | None, content_type: str = "reel") -> str:
-        ext = (Path(media_path).suffix or "").lower() if media_path else ""
+        ext = self._extension(media_path)
         ctype = (content_type or "").lower()
+
         if ctype == "reel":
             return "reel"
-        if ext in (".mp4", ".mov", ".m4v"):
+        if ext in VIDEO_EXTENSIONS:
             return "video"
         return "image"
 
@@ -122,6 +132,60 @@ class OfficialInstagramPublishService:
             params={"fields": "permalink"},
             timeout=60,
         )
+
+    def probe_media_url(self, media_url: str | None, timeout: int = 20) -> dict[str, Any]:
+        if not media_url:
+            return {"ok": False, "error": "media_url ausente"}
+
+        try:
+            response = requests.get(media_url, stream=True, timeout=timeout, allow_redirects=True)
+            content_type = response.headers.get("Content-Type", "")
+            ok = response.status_code == 200
+            return {
+                "ok": ok,
+                "status_code": response.status_code,
+                "content_type": content_type,
+                "final_url": str(response.url),
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "final_url": media_url,
+            }
+
+    def _validate_single_media(
+        self,
+        *,
+        media_path: str | None,
+        content_type: str,
+        media_url: str | None,
+    ) -> dict[str, Any]:
+        lowered = (content_type or "").strip().lower()
+        probe = self.probe_media_url(media_url)
+
+        if not probe.get("ok"):
+            return {
+                "ok": False,
+                "reason": "media_url_unreachable",
+                "detail": probe,
+            }
+
+        if lowered == "reel" and not self._is_video_path(media_path):
+            return {
+                "ok": False,
+                "reason": "reel_requires_video_media",
+                "detail": {
+                    "media_path": media_path,
+                    "media_url": media_url,
+                    "extension": self._extension(media_path),
+                },
+            }
+
+        return {
+            "ok": True,
+            "probe": probe,
+        }
 
     def create_single_media_container(
         self,
@@ -213,6 +277,14 @@ class OfficialInstagramPublishService:
         if not media_url:
             return {"ok": False, "reason": "media_url_indisponivel"}
 
+        validation = self._validate_single_media(
+            media_path=media_path,
+            content_type=content_type,
+            media_url=media_url,
+        )
+        if not validation.get("ok"):
+            return validation
+
         media_kind = self.media_kind_from_path(media_path, content_type=content_type)
         if content_type == "reel":
             media_kind = "reel"
@@ -235,6 +307,14 @@ class OfficialInstagramPublishService:
 
         published_data = _safe_dict(published.get("data"))
         media_id = published_data.get("id")
+        if not media_id:
+            return {
+                "ok": False,
+                "reason": "published_media_id_ausente",
+                "detail": published,
+                "container": _safe_dict(container.get("data")),
+                "media_url": media_url,
+            }
 
         permalink_lookup = self.fetch_permalink(media_id)
         permalink = None
@@ -244,6 +324,7 @@ class OfficialInstagramPublishService:
         return {
             "ok": True,
             "media_url": media_url,
+            "media_probe": validation.get("probe"),
             "container": _safe_dict(container.get("data")),
             "published": published_data,
             "media_id": media_id,
@@ -267,12 +348,24 @@ class OfficialInstagramPublishService:
             if not media_url:
                 return {"ok": False, "reason": "media_url_indisponivel", "media_path": media_path}
 
+            probe = self.probe_media_url(media_url)
+            if not probe.get("ok"):
+                return {
+                    "ok": False,
+                    "reason": "media_url_unreachable",
+                    "media_path": media_path,
+                    "detail": probe,
+                }
+
             media_kind = self.media_kind_from_path(media_path, content_type="carousel")
             if media_kind == "reel":
                 media_kind = "video"
 
             child = self.create_carousel_child_container(media_url=media_url, media_kind=media_kind)
-            child_debug.append(child)
+            child_debug.append({
+                "probe": probe,
+                "response": child,
+            })
 
             if not child.get("ok"):
                 return {
@@ -312,6 +405,13 @@ class OfficialInstagramPublishService:
 
         published_data = _safe_dict(published.get("data"))
         media_id = published_data.get("id")
+        if not media_id:
+            return {
+                "ok": False,
+                "reason": "carousel_media_id_ausente",
+                "detail": published,
+                "children_debug": child_debug,
+            }
 
         permalink_lookup = self.fetch_permalink(media_id)
         permalink = None
