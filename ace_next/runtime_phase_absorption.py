@@ -14,7 +14,7 @@ from .sovereign_gate_bridge import build_sovereign_gate_bundle
 
 class RuntimePhaseAbsorption:
     """
-    Camada única de absorção das fases 4/5/6/7.
+    Camada única de absorção das fases 4/5/6/7/8.
 
     Objetivo:
     - preservar o progresso das phases antigas
@@ -24,6 +24,36 @@ class RuntimePhaseAbsorption:
     Esta camada NÃO governa o sistema sozinha.
     Ela apenas oferece enriquecimentos opcionais para o runtime soberano.
     """
+
+    # ---------------------------------------------------------
+    # HELPERS
+    # ---------------------------------------------------------
+    def _normalize_format(self, value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"story", "stories"}:
+            return "story"
+        if normalized in {"carousel", "image", "reel"}:
+            return normalized
+        return "image"
+
+    def _safe_list(self, value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []
+
+    def _clean_text(self, value: Any) -> str:
+        return " ".join(str(value or "").strip().split())
+
+    def _extract_media_paths(self, preview: dict[str, Any] | None) -> list[str]:
+        preview = safe_dict(preview)
+        raw_paths = preview.get("media_paths")
+        if not isinstance(raw_paths, list):
+            return []
+
+        normalized: list[str] = []
+        for item in raw_paths:
+            text = self._clean_text(item)
+            if text and text not in normalized:
+                normalized.append(text)
+        return normalized
 
     # ---------------------------------------------------------
     # PHASE 4 — REEL EXECUTION BUNDLE
@@ -352,6 +382,67 @@ class RuntimePhaseAbsorption:
             pass
 
         return plan
+
+    # ---------------------------------------------------------
+    # PHASE 8 — PUBLISH LINKAGE BUNDLE
+    # ---------------------------------------------------------
+    def apply_phase8_publish_linkage_context(
+        self,
+        *,
+        linkage_context: dict[str, Any],
+        creative_plan: dict[str, Any],
+        carousel_preview: dict[str, Any] | None,
+        stories_preview: dict[str, Any] | None,
+        render_path: str | None,
+    ) -> dict[str, Any]:
+        context = dict(linkage_context or {})
+        plan = safe_dict(creative_plan)
+
+        publish_format_now = self._normalize_format(
+            plan.get("publish_format_now")
+            or plan.get("strategic_target_format")
+            or plan.get("format_recommendation")
+        )
+
+        carousel_preview = safe_dict(carousel_preview)
+        stories_preview = safe_dict(stories_preview)
+
+        media_paths: list[str] = []
+        linkage_state = "single_media"
+
+        if publish_format_now == "carousel":
+            media_paths = self._extract_media_paths(carousel_preview)
+            linkage_state = "carousel_media_ready" if len(media_paths) >= 2 else "carousel_media_missing"
+        elif publish_format_now == "story":
+            media_paths = self._extract_media_paths(stories_preview)
+            linkage_state = "stories_media_ready" if len(media_paths) >= 1 else "stories_media_missing"
+        else:
+            single = self._clean_text(render_path)
+            media_paths = [single] if single else []
+            linkage_state = "single_media_ready" if single else "single_media_missing"
+
+        context["publish_format_now"] = publish_format_now
+        context["media_paths"] = media_paths
+        context["publish_linkage_state"] = linkage_state
+        context["publish_linkage_ready"] = bool(media_paths)
+
+        if publish_format_now == "carousel":
+            context["carousel_preview_summary"] = {
+                "ok": bool(carousel_preview.get("ok")),
+                "media_paths_count": len(self._extract_media_paths(carousel_preview)),
+                "premium_visual_selected": bool(carousel_preview.get("premium_visual_selected")),
+                "premium_render_state": carousel_preview.get("premium_render_state"),
+            }
+
+        if publish_format_now == "story":
+            context["stories_preview_summary"] = {
+                "ok": bool(stories_preview.get("ok")),
+                "media_paths_count": len(self._extract_media_paths(stories_preview)),
+                "premium_visual_selected": bool(stories_preview.get("premium_visual_selected")),
+                "premium_render_state": stories_preview.get("premium_render_state"),
+            }
+
+        return context
 
 
 def build_runtime_phase_absorption() -> RuntimePhaseAbsorption:
