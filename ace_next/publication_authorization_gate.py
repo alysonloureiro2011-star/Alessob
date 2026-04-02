@@ -113,10 +113,6 @@ def authorize_publication(
     ]
 
     require_human_review = _as_bool(env_flags.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"), True)
-    allow_lab_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"), False)
-    allow_staging_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"), False)
-    explicit_main_surface_publish = _as_bool(request_flags.get("explicit_main_surface_publish"), False)
-    explicit_probe_arm = _as_bool(request_flags.get("explicit_probe_arm"), False)
 
     rubric_dict = _safe_dict(rubric)
     brand_veto_dict = _safe_dict(brand_veto)
@@ -158,39 +154,14 @@ def authorize_publication(
         brand_veto_dict.get("reasons") or [],
     )
 
-    selected_state = decision["selected_state"]
-    classification = decision["classification"]
-
-    requested_probe = bool(explicit_main_surface_publish and explicit_probe_arm and not force_placeholder)
-
-    if classification == BLOCKED_BRAND:
-        selected_state = BLOCKED_BRAND
-    elif classification == BLOCKED_QUALITY:
-        selected_state = BLOCKED_QUALITY
-    elif force_placeholder:
-        selected_state = TECHNICAL_TEST
-    elif selected_state == EDITORIAL_STAGING and requested_probe and allow_lab_probe and not allow_staging_probe:
-        selected_state = INTERNAL_LAB
-        reasons = _merge_reasons(
-            reasons,
-            "editorial_staging_downgraded_to_internal_lab_for_probe_route",
-        )
-
-    can_publish_real = bool(
-        not force_placeholder
-        and requested_probe
-        and selected_state in {INTERNAL_LAB, EDITORIAL_STAGING}
-        and classification not in {BLOCKED_BRAND, BLOCKED_QUALITY}
-    )
-
     premium_protocol = {
         "ok": True,
-        "classification": classification,
-        "eligible_for_lab": classification in {TECHNICAL_TEST, INTERNAL_LAB, EDITORIAL_STAGING, "brand_live_candidate", BRAND_LIVE},
+        "classification": decision["classification"],
+        "eligible_for_lab": decision["classification"] in {TECHNICAL_TEST, INTERNAL_LAB, EDITORIAL_STAGING, "brand_live_candidate", BRAND_LIVE},
         "eligible_for_editorial_staging": decision["eligible_for_editorial_staging"],
         "eligible_for_brand_live_candidate": decision["eligible_for_brand_live_candidate"],
-        "blocked_by_quality": classification == BLOCKED_QUALITY,
-        "blocked_by_brand": classification == BLOCKED_BRAND,
+        "blocked_by_quality": decision["classification"] == BLOCKED_QUALITY,
+        "blocked_by_brand": decision["classification"] == BLOCKED_BRAND,
         "requires_human_review": require_human_review,
         "brand_live_allowed_now": False,
         "premium_score": rubric_dict.get("global_score"),
@@ -201,19 +172,19 @@ def authorize_publication(
             + decision["failed_veto_floors"]
         ),
         "reasons": reasons,
-        "next_best_state": selected_state,
+        "next_best_state": decision["selected_state"],
         "summary": decision["summary"],
     }
 
     block_reasons = []
-    if classification in {BLOCKED_BRAND, BLOCKED_QUALITY}:
+    if decision["classification"] in {BLOCKED_BRAND, BLOCKED_QUALITY}:
         block_reasons = reasons
 
     return PublicationAuthorizationResult(
-        selected_state=selected_state,
+        selected_state=decision["selected_state"],
         supported_states=supported_states,
         can_publish_placeholder=force_placeholder,
-        can_publish_real=can_publish_real,
+        can_publish_real=False,
         brand_live_blocked_by_default=True,
         brand_live_candidate=decision["brand_live_candidate"],
         main_surface_allowed=False,
@@ -222,14 +193,14 @@ def authorize_publication(
         reasons=reasons,
         summary=decision["summary"],
         premium_protocol=premium_protocol,
-        premium_classification=classification,
+        premium_classification=decision["classification"],
         premium_score=rubric_dict.get("global_score"),
         eligible_for_editorial_staging=decision["eligible_for_editorial_staging"],
         eligible_for_brand_live_candidate=decision["eligible_for_brand_live_candidate"],
         staging_hardening_applied=True,
         staging_hardening_report=_safe_dict(staging_hardener),
         pre_hardening_state=rubric_dict.get("pre_hardening_state"),
-        post_hardening_state=selected_state,
+        post_hardening_state=decision["selected_state"],
         authority_payload_source=authority_payload_source or rubric_dict.get("authority_payload_source"),
         missing_for_brand_live=decision["missing_for_brand_live"],
         score_gap_to_brand_live=decision["score_gap_to_brand_live"],
