@@ -158,17 +158,15 @@ def _official_path_quality_state(
     critic = _safe_dict(critic)
     caption_gate = _safe_dict(critic.get("caption_gate"))
     veto_reasons = _safe_list(retention_policy.get("veto_reasons"))
-    publish_ready = bool(retention_policy.get("publish_ready"))
+    retention_signal_ready = bool(retention_policy.get("publish_ready"))
 
     if veto_reasons:
         return "blocked_retention_gate"
-    if publish_ready and critic.get("approved") and caption_gate.get("approved"):
+    if retention_signal_ready and critic.get("approved") and caption_gate.get("approved"):
         return "approved"
     if critic.get("failed_floors"):
         return "needs_rewrite"
-    if not publish_ready:
-        return "needs_rewrite"
-    return "conservative_fallback"
+    return "needs_rewrite"
 
 
 def _retention_policy_payload(
@@ -267,26 +265,30 @@ def _map_soberano_to_creative_plan(
         recent_memory=recent_memory,
     )
     retention_policy = evaluate_reel_retention_policy(retention_payload)
+    retention_signal_ready = bool(retention_policy.get("publish_ready"))
 
     critic = _safe_dict(sovereign.get("critic"))
     official_quality_state = _official_path_quality_state(
         critic=critic,
         retention_policy=retention_policy,
     )
+    official_publish_ready = official_quality_state == "approved"
 
     notes = _merge_notes(
         sovereign.get("notes"),
         [
             "planner_selected=creative_planner_consolidated_v1",
             f"official_path_quality_state={official_quality_state}",
-            f"retention_publish_ready={retention_policy.get('publish_ready')}",
+            f"retention_signal_ready={retention_signal_ready}",
+            f"official_publish_ready={official_publish_ready}",
             "studies_applied=hook_rhythm_naturalism_cinematic_algorithmic_priority",
         ],
     )
 
     fallback_flags = _merge_flags(
         sovereign.get("fallback_flags"),
-        [] if retention_policy.get("publish_ready") else ["retention_gate_not_ready"],
+        [] if retention_signal_ready else ["retention_signal_not_ready"],
+        [] if official_publish_ready else ["official_quality_not_ready"],
     )
 
     mission_context = {
@@ -353,7 +355,7 @@ def _map_soberano_to_creative_plan(
         retention_policy=retention_policy,
         retention_score=float(retention_policy.get("premium_eligibility_score") or 0.0),
         premium_eligibility_score=float(retention_policy.get("premium_eligibility_score") or 0.0),
-        publish_ready=bool(retention_policy.get("publish_ready")),
+        publish_ready=official_publish_ready,
         veto_reasons=[str(item) for item in _safe_list(retention_policy.get("veto_reasons"))],
         lift_targets=[str(item) for item in _safe_list(retention_policy.get("lift_targets"))],
         study_axes_applied=[str(item) for item in _safe_list(retention_policy.get("study_axes_applied"))],
@@ -369,6 +371,7 @@ def _build_creative_plan_legacy(
 ) -> CreativePlan:
     overrides = _safe_dict(overrides)
     mission_decision = _safe_dict(mission_decision)
+
     sovereign = build_creative_plan_soberano_v1(
         topic_seed=trend,
         signal_context={
@@ -386,6 +389,7 @@ def _build_creative_plan_legacy(
         },
         format_hint=overrides.get("publish_format_now") or mission_decision.get("content_type"),
     )
+
     plan = _map_soberano_to_creative_plan(
         trend,
         sovereign,
