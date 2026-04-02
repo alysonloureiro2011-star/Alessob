@@ -108,6 +108,20 @@ def _gate_stage_summary(reel_stack: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _first_path(paths: Any) -> str | None:
+    if not isinstance(paths, list):
+        return None
+    for item in paths:
+        text = _clean_text(item)
+        if text:
+            return text
+    return None
+
+
 class OfficialRuntime:
     """
     ACE Ω — Runtime Soberano Fino
@@ -1806,17 +1820,34 @@ class OfficialRuntime:
             "study_tags": STUDY_TAGS,
         }
 
+        publish_format_now = str(
+            creative_plan.get("publish_format_now")
+            or creative_plan.get("strategic_target_format")
+            or mission_decision.get("content_type")
+            or "image"
+        ).strip().lower()
+
         publish_guard_mode = publish_guard.get("mode")
         publish_guard_can_publish = bool(publish_guard.get("can_publish"))
 
         if runtime_request.force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
+            linkage_context = self.phase_absorption.apply_phase8_publish_linkage_context(
+                linkage_context=linkage_context,
+                creative_plan=creative_plan,
+                carousel_preview=carousel_preview,
+                stories_preview=stories_preview,
+                render_path=render_path,
+            )
+
+            placeholder_media_path = render_path or _first_path(linkage_context.get("media_paths"))
+
             if self.publish:
                 publish_result = self.publish.publish_placeholder(
                     trend=effective_trend,
                     style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
                     content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
                     caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
-                    media_path=None,
+                    media_path=placeholder_media_path,
                     linkage_context=linkage_context,
                 )
             else:
@@ -1827,7 +1858,9 @@ class OfficialRuntime:
                 }
         else:
             should_render = bool(lab_probe_policy.get("probe_render_requested")) or publish_guard_can_publish
-            if should_render:
+            requires_single_render = publish_format_now in {"image", "reel"}
+
+            if should_render and requires_single_render:
                 ok, render_result = self._call(
                     "render_visual_foundation_card",
                     config=self.config,
@@ -1845,13 +1878,49 @@ class OfficialRuntime:
                     lab_probe_policy["probe_render_executed"] = False
                     lab_probe_policy["render_path"] = None
 
+            linkage_context = self.phase_absorption.apply_phase8_publish_linkage_context(
+                linkage_context=linkage_context,
+                creative_plan=creative_plan,
+                carousel_preview=carousel_preview,
+                stories_preview=stories_preview,
+                render_path=render_path,
+            )
+
+            linked_media_paths = linkage_context.get("media_paths") if isinstance(linkage_context.get("media_paths"), list) else []
+            primary_publish_path = render_path or _first_path(linked_media_paths)
+
+            if should_render and not requires_single_render:
+                lab_probe_policy["probe_render_executed"] = bool(primary_publish_path)
+                lab_probe_policy["render_path"] = primary_publish_path
+
+            publish_linkage_ready = bool(linkage_context.get("publish_linkage_ready"))
+
             effective_real_publish = bool(
                 explicit_probe_execution_allowed
                 and lab_probe_policy.get("probe_eligible")
                 and publish_guard_mode == "ready"
             )
 
-            if effective_real_publish:
+            if effective_real_publish and not publish_linkage_ready:
+                block_reasons.append("publish_linkage_not_ready")
+                publish_result = {
+                    "ok": False,
+                    "publish_status": "publish_linkage_not_ready",
+                    "error": {
+                        "reason": "publish_linkage_not_ready",
+                        "publish_format_now": publish_format_now,
+                        "media_paths": linked_media_paths,
+                        "render_path": render_path,
+                        "publish_linkage_state": linkage_context.get("publish_linkage_state"),
+                    },
+                    "operational_state": operational_state,
+                    "content_type": str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
+                    "style": str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
+                    "created_at": _now_iso(),
+                    "render_path": render_path,
+                    "media_paths": linked_media_paths,
+                }
+            elif effective_real_publish:
                 linkage_context["probe"] = {
                     "requested": lab_probe_policy.get("probe_requested"),
                     "requested_state": lab_probe_policy.get("probe_state_requested"),
@@ -1860,10 +1929,12 @@ class OfficialRuntime:
                     "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
                     "publish_executed": False,
                     "render_path": render_path,
+                    "media_paths": linked_media_paths,
                     "render_error": render_error,
                     "allow_real_publish": True,
                     "probe_block_reason": None,
                     "surface_mode": brand_surface_policy.get("surface_mode"),
+                    "publish_linkage_state": linkage_context.get("publish_linkage_state"),
                 }
 
                 if self.publish:
@@ -1872,7 +1943,7 @@ class OfficialRuntime:
                         style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
                         content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
                         caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
-                        media_path=render_path,
+                        media_path=primary_publish_path,
                         linkage_context=linkage_context,
                     )
                 else:
@@ -1897,6 +1968,8 @@ class OfficialRuntime:
                     "style": str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
                     "created_at": _now_iso(),
                     "render_path": render_path,
+                    "media_paths": linked_media_paths,
+                    "publish_linkage_state": linkage_context.get("publish_linkage_state"),
                     "surface_mode": brand_surface_policy.get("surface_mode"),
                     "main_surface_allowed": brand_surface_policy.get("main_surface_allowed"),
                     "probe_requested": lab_probe_policy.get("probe_requested"),
