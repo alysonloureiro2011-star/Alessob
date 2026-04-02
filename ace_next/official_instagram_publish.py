@@ -8,6 +8,10 @@ import requests
 from .config import AceNextConfig
 
 
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 class OfficialInstagramPublishService:
     def __init__(self, config: AceNextConfig) -> None:
         self.config = config
@@ -65,35 +69,42 @@ class OfficialInstagramPublishService:
 
         try:
             if method.upper() == "GET":
-                r = requests.get(url, params=params, headers=headers, timeout=timeout)
+                response = requests.get(url, params=params, headers=headers, timeout=timeout)
             elif method.upper() == "POST":
-                r = requests.post(url, params=params, data=data, json=json_payload, headers=headers, timeout=timeout)
+                response = requests.post(
+                    url,
+                    params=params,
+                    data=data,
+                    json=json_payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
             else:
                 return {"ok": False, "error": f"metodo_unsupported:{method}"}
 
             try:
-                body = r.json()
+                body = response.json()
             except Exception:
-                body = {"raw": r.text[:4000]}
+                body = {"raw": response.text[:4000]}
 
-            if r.status_code >= 400:
+            if response.status_code >= 400:
                 return {
                     "ok": False,
-                    "status_code": r.status_code,
+                    "status_code": response.status_code,
                     "error": body,
                     "url": url,
                 }
 
             return {
                 "ok": True,
-                "status_code": r.status_code,
+                "status_code": response.status_code,
                 "data": body,
                 "url": url,
             }
-        except Exception as e:
+        except Exception as exc:
             return {
                 "ok": False,
-                "error": str(e),
+                "error": str(exc),
                 "url": url,
             }
 
@@ -102,7 +113,22 @@ class OfficialInstagramPublishService:
         payload["access_token"] = self.token()
         return self.instagram_request("POST", path, data=payload, timeout=timeout)
 
-    def create_single_media_container(self, media_url: str, caption: str = "", media_kind: str = "image") -> dict[str, Any]:
+    def fetch_permalink(self, media_id: str | None) -> dict[str, Any]:
+        if not media_id:
+            return {"ok": False, "error": "media_id ausente"}
+        return self.instagram_request(
+            "GET",
+            f"{media_id}",
+            params={"fields": "permalink"},
+            timeout=60,
+        )
+
+    def create_single_media_container(
+        self,
+        media_url: str,
+        caption: str = "",
+        media_kind: str = "image",
+    ) -> dict[str, Any]:
         ig_id = self.ig_id()
         if not ig_id:
             return {"ok": False, "error": "IG_ID ausente"}
@@ -110,6 +136,7 @@ class OfficialInstagramPublishService:
             return {"ok": False, "error": "media_url ausente"}
 
         path = f"{ig_id}/media"
+
         if media_kind == "reel":
             data = {
                 "media_type": "REELS",
@@ -127,6 +154,7 @@ class OfficialInstagramPublishService:
                 "image_url": media_url,
                 "caption": caption[:2200],
             }
+
         return self.ig_post(path, data, timeout=90)
 
     def create_carousel_child_container(self, media_url: str, media_kind: str = "image") -> dict[str, Any]:
@@ -137,6 +165,7 @@ class OfficialInstagramPublishService:
             return {"ok": False, "error": "media_url ausente"}
 
         path = f"{ig_id}/media"
+
         if media_kind == "video":
             data = {
                 "media_type": "VIDEO",
@@ -148,6 +177,7 @@ class OfficialInstagramPublishService:
                 "image_url": media_url,
                 "is_carousel_item": "true",
             }
+
         return self.ig_post(path, data, timeout=90)
 
     def create_carousel_container(self, children_ids: list[str], caption: str = "") -> dict[str, Any]:
@@ -187,11 +217,15 @@ class OfficialInstagramPublishService:
         if content_type == "reel":
             media_kind = "reel"
 
-        container = self.create_single_media_container(media_url=media_url, caption=caption, media_kind=media_kind)
+        container = self.create_single_media_container(
+            media_url=media_url,
+            caption=caption,
+            media_kind=media_kind,
+        )
         if not container.get("ok"):
             return {"ok": False, "reason": "container_fail", "detail": container}
 
-        creation_id = (container.get("data") or {}).get("id")
+        creation_id = _safe_dict(container.get("data")).get("id")
         if not creation_id:
             return {"ok": False, "reason": "creation_id_ausente", "detail": container}
 
@@ -199,11 +233,22 @@ class OfficialInstagramPublishService:
         if not published.get("ok"):
             return {"ok": False, "reason": "publish_fail", "detail": published}
 
+        published_data = _safe_dict(published.get("data"))
+        media_id = published_data.get("id")
+
+        permalink_lookup = self.fetch_permalink(media_id)
+        permalink = None
+        if permalink_lookup.get("ok"):
+            permalink = _safe_dict(permalink_lookup.get("data")).get("permalink")
+
         return {
             "ok": True,
             "media_url": media_url,
-            "container": container.get("data"),
-            "published": published.get("data"),
+            "container": _safe_dict(container.get("data")),
+            "published": published_data,
+            "media_id": media_id,
+            "permalink": permalink,
+            "permalink_lookup": permalink_lookup,
         }
 
     def publish_carousel(self, caption: str, media_paths: list[str]) -> dict[str, Any]:
@@ -222,26 +267,42 @@ class OfficialInstagramPublishService:
             if not media_url:
                 return {"ok": False, "reason": "media_url_indisponivel", "media_path": media_path}
 
-            media_kind = self.media_kind_from_path(media_path, content_type="carrossel")
+            media_kind = self.media_kind_from_path(media_path, content_type="carousel")
             if media_kind == "reel":
                 media_kind = "video"
 
             child = self.create_carousel_child_container(media_url=media_url, media_kind=media_kind)
             child_debug.append(child)
-            if not child.get("ok"):
-                return {"ok": False, "reason": "child_container_fail", "detail": child, "children_debug": child_debug}
 
-            child_id = (child.get("data") or {}).get("id")
+            if not child.get("ok"):
+                return {
+                    "ok": False,
+                    "reason": "child_container_fail",
+                    "detail": child,
+                    "children_debug": child_debug,
+                }
+
+            child_id = _safe_dict(child.get("data")).get("id")
             if not child_id:
-                return {"ok": False, "reason": "child_id_ausente", "detail": child, "children_debug": child_debug}
+                return {
+                    "ok": False,
+                    "reason": "child_id_ausente",
+                    "detail": child,
+                    "children_debug": child_debug,
+                }
 
             child_ids.append(child_id)
 
         parent = self.create_carousel_container(children_ids=child_ids, caption=caption)
         if not parent.get("ok"):
-            return {"ok": False, "reason": "carousel_parent_fail", "detail": parent, "children_debug": child_debug}
+            return {
+                "ok": False,
+                "reason": "carousel_parent_fail",
+                "detail": parent,
+                "children_debug": child_debug,
+            }
 
-        creation_id = (parent.get("data") or {}).get("id")
+        creation_id = _safe_dict(parent.get("data")).get("id")
         if not creation_id:
             return {"ok": False, "reason": "carousel_creation_id_ausente", "detail": parent}
 
@@ -249,9 +310,21 @@ class OfficialInstagramPublishService:
         if not published.get("ok"):
             return {"ok": False, "reason": "carousel_publish_fail", "detail": published}
 
+        published_data = _safe_dict(published.get("data"))
+        media_id = published_data.get("id")
+
+        permalink_lookup = self.fetch_permalink(media_id)
+        permalink = None
+        if permalink_lookup.get("ok"):
+            permalink = _safe_dict(permalink_lookup.get("data")).get("permalink")
+
         return {
             "ok": True,
             "children_ids": child_ids,
-            "parent": parent.get("data"),
-            "published": published.get("data"),
+            "parent": _safe_dict(parent.get("data")),
+            "published": published_data,
+            "media_id": media_id,
+            "permalink": permalink,
+            "permalink_lookup": permalink_lookup,
+            "children_debug": child_debug,
         }
