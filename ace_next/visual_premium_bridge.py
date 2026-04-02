@@ -336,6 +336,8 @@ def build_visual_premium_bridge(
             and brand_dignity_score.get("classification") != "brand_indignity"
         )
 
+        final_score = hierarchy_gate.get("final_score")
+
         reasons = _merge_reasons(
             render.get("reasons") or [],
             hierarchy_gate.get("rejection_reasons") or [],
@@ -349,10 +351,17 @@ def build_visual_premium_bridge(
             **_safe_dict(hardener.get("hardening_report")),
             "strategic_format": strategic_format,
             "hardened_payload": visible_plan,
+            "render_payload_used": render_payload,
             "hidden_overflow_for_caption": hardener.get("hidden_overflow_for_caption", []),
             "semantic_anchors_preserved": hardener.get("semantic_anchors_preserved", []),
             "applied_rules": hardener.get("applied_rules", []),
             "target_state": hardener.get("target_state"),
+            "selected_template_id": selected_template_id,
+            "final_score": final_score,
+            "approved": approved,
+            "approved_for_premium_visual": approved,
+            "hierarchy_gate": hierarchy_gate,
+            "brand_dignity_score": brand_dignity_score,
         }
 
         metrics = {
@@ -375,7 +384,7 @@ def build_visual_premium_bridge(
             "brand_dignity_score": brand_dignity_score,
             "approved": approved,
             "approved_for_premium_visual": approved,
-            "final_score": hierarchy_gate.get("final_score"),
+            "final_score": final_score,
             "selected_template_id": selected_template_id,
             "premium_render_state": render.get("render_state"),
             "hardening_applied": True,
