@@ -120,12 +120,16 @@ def _disabled_bundle(strategic_format: str) -> dict[str, Any]:
         "render": {},
         "hierarchy_gate": {},
         "brand_dignity_score": {},
+        "approved": False,
         "approved_for_premium_visual": False,
+        "final_score": None,
         "selected_template_id": None,
         "premium_render_state": None,
         "hardening_applied": False,
         "hardened_template_candidate": None,
         "hardened_visible_payload": {},
+        "hardening_report": {},
+        "metrics": {},
         "reasons": ["premium_visual_bridge_disabled"],
     }
 
@@ -140,12 +144,16 @@ def _failure_bundle(strategic_format: str, reasons: list[str]) -> dict[str, Any]
         "render": {},
         "hierarchy_gate": {},
         "brand_dignity_score": {},
+        "approved": False,
         "approved_for_premium_visual": False,
+        "final_score": None,
         "selected_template_id": None,
         "premium_render_state": None,
         "hardening_applied": False,
         "hardened_template_candidate": None,
         "hardened_visible_payload": {},
+        "hardening_report": {},
+        "metrics": {},
         "reasons": _merge_reasons(reasons),
     }
 
@@ -337,6 +345,25 @@ def build_visual_premium_bridge(
         if not approved and not reasons:
             reasons = ["premium_visual_bridge_not_approved"]
 
+        hardening_report_bundle = {
+            **_safe_dict(hardener.get("hardening_report")),
+            "strategic_format": strategic_format,
+            "hardened_payload": visible_plan,
+            "hidden_overflow_for_caption": hardener.get("hidden_overflow_for_caption", []),
+            "semantic_anchors_preserved": hardener.get("semantic_anchors_preserved", []),
+            "applied_rules": hardener.get("applied_rules", []),
+            "target_state": hardener.get("target_state"),
+        }
+
+        metrics = {
+            "render_payload_used": render_payload,
+            "staging_hardener": hardening_report_bundle,
+            "hierarchy_final_score": hierarchy_gate.get("final_score"),
+            "brand_dignity_final_score": brand_dignity_score.get("final_score"),
+            "template_id": selected_template_id,
+            "strategic_format": strategic_format,
+        }
+
         return {
             "ok": True,
             "engine": "visual_premium_bridge_v1",
@@ -346,14 +373,17 @@ def build_visual_premium_bridge(
             "render": render,
             "hierarchy_gate": hierarchy_gate,
             "brand_dignity_score": brand_dignity_score,
+            "approved": approved,
             "approved_for_premium_visual": approved,
+            "final_score": hierarchy_gate.get("final_score"),
             "selected_template_id": selected_template_id,
             "premium_render_state": render.get("render_state"),
             "hardening_applied": True,
             "hardened_template_candidate": selected_template_id,
             "hardened_visible_payload": render_payload,
-            "hardening_report": _safe_dict(hardener.get("hardening_report")),
+            "hardening_report": hardening_report_bundle,
             "hidden_overflow_for_caption": hardener.get("hidden_overflow_for_caption", []),
+            "metrics": metrics,
             "reasons": reasons,
         }
     except Exception as exc:
