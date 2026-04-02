@@ -22,6 +22,32 @@ def _safe_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _normalize_media_paths(
+    media_path: str | None,
+    linkage_context: dict[str, Any] | None = None,
+) -> list[str]:
+    linkage_context = _safe_dict(linkage_context)
+    raw_paths = linkage_context.get("media_paths")
+
+    normalized: list[str] = []
+
+    if isinstance(raw_paths, list):
+        for item in raw_paths:
+            text = _clean_text(item)
+            if text and text not in normalized:
+                normalized.append(text)
+
+    primary = _clean_text(media_path)
+    if primary and primary not in normalized:
+        normalized.insert(0, primary)
+
+    return normalized
+
+
 class PublishService:
     def __init__(self, config) -> None:
         self.config = config
@@ -229,11 +255,28 @@ class PublishService:
             )
 
         lowered = str(content_type or "").strip().lower()
+        media_paths = _normalize_media_paths(media_path, linkage_context)
 
         if lowered == "carousel":
+            if len(media_paths) < 2:
+                return self._failure_result(
+                    receipt_id=receipt_id,
+                    reason={
+                        "reason": "carousel_requires_two_real_media_paths",
+                        "media_paths_seen": media_paths,
+                    },
+                    trend=trend,
+                    style=style,
+                    content_type=content_type,
+                    caption=caption,
+                    media_path=media_path,
+                    linkage_context=linkage_context,
+                    publish_status="carousel_not_ready",
+                )
+
             publish_response = self.publisher.publish_carousel(
                 caption=caption,
-                media_paths=[media_path, media_path],
+                media_paths=media_paths,
             )
         else:
             publish_response = self.publisher.publish_single(
@@ -281,6 +324,7 @@ class PublishService:
             "created_at": _now_iso(),
             "linkage_context": _safe_dict(linkage_context),
             "media_path": media_path,
+            "media_paths": media_paths,
             "provider_result": publish_response,
         }
 
