@@ -4,6 +4,7 @@ import os
 import textwrap
 import uuid
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from .config import AceNextConfig
@@ -19,6 +20,8 @@ except Exception:
     ImageDraw = None
     ImageFont = None
 
+
+MEDIA_DIR = Path("ace_media")
 
 PALETTES = {
     "electric_blue": {
@@ -147,8 +150,12 @@ def _bridge_enabled(strategic_format: str = "image") -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
 def _wrap(text: str, width: int) -> list[str]:
-    lines = textwrap.wrap((text or "").strip(), width=width, break_long_words=False, break_on_hyphens=False)
+    lines = textwrap.wrap(_clean_text(text), width=width, break_long_words=False, break_on_hyphens=False)
     return lines or [""]
 
 
@@ -370,27 +377,275 @@ def evaluate_visual_quality(*, plan: dict[str, Any], identity: VisualIdentity, t
         return _evaluate_visual_quality_fallback(plan=payload_used, identity=identity, typography=typography)
 
 
+def _ensure_media_dir() -> Path:
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    return MEDIA_DIR
+
+
+def _write_placeholder_png(out: Path) -> None:
+    out.write_bytes(
+        bytes.fromhex(
+            "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C63F8FFFFFF7F0009FB03FD2A86E38A0000000049454E44AE426082"
+        )
+    )
+
+
+def _render_card_to_path(
+    *,
+    payload: dict[str, Any],
+    identity: VisualIdentity,
+    typography: TypographySpec,
+    contract,
+    template,
+    strategic_format: str,
+    filename_prefix: str,
+) -> str:
+    media_dir = _ensure_media_dir()
+    out = media_dir / f"{filename_prefix}_{uuid.uuid4().hex}.png"
+
+    if Image is None or ImageDraw is None:
+        _write_placeholder_png(out)
+        return str(out)
+
+    img = Image.new("RGB", (contract.canvas_width, contract.canvas_height), identity.background_color)
+    draw = ImageDraw.Draw(img)
+
+    brand_font = _load_font(typography.brand_size, bold=True)
+    eyebrow_font = _load_font(typography.eyebrow_size, bold=True)
+    headline_font = _load_font(typography.headline_size, bold=True)
+    hook_font = _load_font(typography.hook_size, bold=False)
+    body_font = _load_font(typography.body_size, bold=False)
+    support_font = _load_font(typography.support_size, bold=True)
+    cta_font = _load_font(typography.cta_size, bold=True)
+    watermark_font = _load_font(20, bold=True)
+
+    safe = contract.safe_zones
+    panel_left = safe.outer_margin
+    panel_top = safe.content_top
+    panel_right = contract.canvas_width - safe.outer_margin
+    panel_bottom = contract.canvas_height - safe.footer_height - 24
+
+    draw.rectangle((0, 0, contract.canvas_width, safe.header_height), fill=identity.header_band_color)
+    draw.text((safe.outer_margin, 52), "ACE Ω NEXT", fill=identity.text_on_dark, font=brand_font)
+
+    series_text = identity.series_name[:28]
+    if brand_font:
+        series_bbox = draw.textbbox((0, 0), series_text, font=brand_font)
+        series_width = series_bbox[2] - series_bbox[0]
+    else:
+        series_width = 180
+    draw.text(
+        (contract.canvas_width - safe.outer_margin - series_width, 52),
+        series_text,
+        fill=identity.watermark_color,
+        font=brand_font,
+    )
+
+    draw.rounded_rectangle(
+        (panel_left, panel_top, panel_right, panel_bottom),
+        radius=identity.panel_radius,
+        fill=identity.panel_color,
+        outline=identity.panel_border_color,
+        width=3,
+    )
+
+    draw.rounded_rectangle(
+        (panel_left + 20, panel_top + 22, panel_left + 38, panel_bottom - 22),
+        radius=10,
+        fill=identity.accent_color,
+    )
+
+    eyebrow = template.blocks["eyebrow"]
+    headline_block = template.blocks["headline"]
+    hook_block = template.blocks["hook"]
+    body_block = template.blocks["body"]
+    support_block = _resolve_support_block(template)
+    cta_block = template.blocks["cta"]
+
+    eyebrow_text = str(payload.get("eyebrow") or strategic_format.upper()).strip()[:24] or "VISUAL SIGNAL"
+    draw.rounded_rectangle(
+        (eyebrow.x, eyebrow.y, eyebrow.x + 232, eyebrow.y + 36),
+        radius=16,
+        fill=identity.accent_soft_color,
+    )
+    draw.text((eyebrow.x + 16, eyebrow.y + 8), eyebrow_text, fill=identity.accent_color, font=eyebrow_font)
+
+    headline_lines = _fit_lines(str(payload.get("headline") or ""), typography.headline_wrap, contract.max_headline_lines)
+    hook_lines = _fit_lines(str(payload.get("hook") or ""), typography.hook_wrap, contract.max_hook_lines)
+    body_lines = _fit_lines(str(payload.get("body") or ""), typography.body_wrap, contract.max_body_lines)
+    cta_lines = _fit_lines(str(payload.get("cta") or ""), 28, contract.max_cta_lines)
+
+    current_y = _draw_lines(
+        draw,
+        headline_lines,
+        x=headline_block.x,
+        y=headline_block.y,
+        font=headline_font,
+        fill=identity.text_primary,
+        line_gap=14,
+    )
+
+    current_y = _draw_lines(
+        draw,
+        hook_lines,
+        x=hook_block.x,
+        y=max(current_y + safe.headline_gap, hook_block.y),
+        font=hook_font,
+        fill=identity.accent_color,
+        line_gap=10,
+    )
+
+    current_y = _draw_lines(
+        draw,
+        body_lines,
+        x=body_block.x,
+        y=max(current_y + safe.hook_gap, body_block.y),
+        font=body_font,
+        fill=identity.text_secondary,
+        line_gap=10,
+    )
+
+    support_x = support_block.x if support_block is not None else body_block.x
+    support_y = support_block.y if support_block is not None else max(current_y + safe.body_gap, body_block.y)
+    support_width = support_block.width if support_block is not None else body_block.width
+
+    chip_y = max(current_y + safe.body_gap, support_y)
+    support_points = payload.get("support_points")
+    if not isinstance(support_points, list):
+        support_points = []
+
+    for point in support_points[: contract.max_support_points]:
+        chip_height = _draw_support_chip(
+            draw,
+            x=support_x,
+            y=chip_y,
+            text=str(point),
+            font=support_font,
+            identity=identity,
+            width=support_width,
+        )
+        chip_y += chip_height + safe.support_gap
+
+    cta_y = max(chip_y + 18, cta_block.y)
+    draw.rounded_rectangle(
+        (cta_block.x, cta_y, cta_block.x + cta_block.width, cta_y + 64),
+        radius=20,
+        fill=identity.accent_soft_color,
+        outline=identity.panel_border_color,
+        width=2,
+    )
+    _draw_lines(
+        draw,
+        cta_lines,
+        x=cta_block.x + 20,
+        y=cta_y + 14,
+        font=cta_font,
+        fill=identity.accent_color,
+        line_gap=6,
+    )
+
+    watermark = identity.watermark_text
+    if watermark_font:
+        watermark_bbox = draw.textbbox((0, 0), watermark, font=watermark_font)
+        watermark_w = watermark_bbox[2] - watermark_bbox[0]
+    else:
+        watermark_w = 180
+    draw.text(
+        (panel_right - watermark_w - 12, panel_bottom + 16),
+        watermark,
+        fill=identity.watermark_color,
+        font=watermark_font,
+    )
+
+    img.save(out)
+    return str(out)
+
+
+def _build_display_payload(contract, plan: dict[str, Any]) -> dict[str, Any]:
+    display = prepare_display_copy(plan, contract)
+    return {
+        "headline": display["headline"],
+        "hook": display["hook"],
+        "body": display["body"],
+        "support_points": display["support_points"],
+        "cta": display["cta"],
+        "eyebrow": str(plan.get("eyebrow") or "VISUAL SIGNAL"),
+    }
+
+
 def build_carousel_sequence(plan: dict[str, Any]) -> dict[str, Any]:
     hardened = _harden(plan, "carousel")
     payload_used = _safe_dict(hardened.get("hardened_payload")) or dict(plan)
     bridge = _bridge_bundle(plan=payload_used, strategic_format="carousel", capture_mode="safe")
 
+    identity = build_visual_identity(payload_used)
+    typography = build_typography_spec(payload_used)
     contract = build_visual_contract(payload_used)
-    display = prepare_display_copy(payload_used, contract)
-    support = display["support_points"]
+    template = resolve_visual_template(payload_used)
+    display = _build_display_payload(contract, payload_used)
 
+    support = list(display["support_points"])
     slides = [
         CarouselSlide(1, "cover", display["headline"], display["hook"], ""),
         CarouselSlide(2, "thesis", "A ideia central", display["body"], ""),
-        CarouselSlide(3, "support", support[0] if len(support) > 0 else "", support[1] if len(support) > 1 else "", ""),
+        CarouselSlide(
+            3,
+            "support",
+            support[0] if len(support) > 0 else display["hook"],
+            support[1] if len(support) > 1 else display["body"],
+            "",
+        ),
         CarouselSlide(4, "cta", "Leve isso para a prática", display["cta"], str(payload_used.get("first_comment") or "")),
     ]
+
+    media_paths: list[str] = []
+    for slide in slides:
+        slide_payload = {
+            "eyebrow": f"SLIDE {slide.index}",
+            "headline": slide.headline,
+            "hook": slide.body if slide.role != "cover" else slide.body,
+            "body": slide.body if slide.role == "cover" else "",
+            "support_points": [],
+            "cta": slide.cta or "Salve e releia depois.",
+        }
+
+        if slide.role == "cover":
+            slide_payload["hook"] = slide.body
+            slide_payload["body"] = payload_used.get("body") or ""
+            slide_payload["support_points"] = support[:2]
+            slide_payload["cta"] = display["cta"]
+        elif slide.role == "thesis":
+            slide_payload["hook"] = slide.body
+            slide_payload["body"] = payload_used.get("payoff") or payload_used.get("insight") or ""
+            slide_payload["support_points"] = support[:1]
+        elif slide.role == "support":
+            slide_payload["hook"] = slide.headline
+            slide_payload["body"] = slide.body
+            slide_payload["support_points"] = support[:2]
+            slide_payload["cta"] = "Continue a leitura."
+        else:
+            slide_payload["hook"] = slide.body
+            slide_payload["body"] = payload_used.get("body") or ""
+            slide_payload["support_points"] = []
+            slide_payload["cta"] = slide.cta or display["cta"]
+
+        slide_path = _render_card_to_path(
+            payload=slide_payload,
+            identity=identity,
+            typography=typography,
+            contract=contract,
+            template=template,
+            strategic_format="carousel",
+            filename_prefix=f"ace_next_carousel_{slide.index}",
+        )
+        media_paths.append(slide_path)
 
     return {
         "ok": True,
         "strategic_format": "carousel",
-        "template_id": resolve_visual_template(payload_used).template_id,
+        "template_id": template.template_id,
         "slides": [slide.to_dict() for slide in slides],
+        "media_paths": media_paths,
         "premium_visual_bridge": bridge,
         "premium_visual_enabled": bridge.get("enabled", False),
         "premium_visual_selected": bool(bridge.get("approved_for_premium_visual")),
@@ -407,8 +662,12 @@ def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
     payload_used = _safe_dict(hardened.get("hardened_payload")) or dict(plan)
     bridge = _bridge_bundle(plan=payload_used, strategic_format="story", capture_mode="safe")
 
+    identity = build_visual_identity(payload_used)
+    typography = build_typography_spec(payload_used)
     contract = build_visual_contract(payload_used)
-    display = prepare_display_copy(payload_used, contract)
+    template = resolve_visual_template(payload_used)
+    display = _build_display_payload(contract, payload_used)
+
     frames = [
         StoryFrame(1, "hook", display["hook"], "abertura"),
         StoryFrame(2, "thesis", display["headline"], "tese"),
@@ -416,11 +675,33 @@ def build_stories_sequence(plan: dict[str, Any]) -> dict[str, Any]:
         StoryFrame(4, "cta", display["cta"], "fechamento"),
     ]
 
+    media_paths: list[str] = []
+    for frame in frames:
+        frame_payload = {
+            "eyebrow": f"FRAME {frame.index}",
+            "headline": frame.text if frame.role in {"thesis", "cta"} else payload_used.get("headline") or "",
+            "hook": frame.text if frame.role == "hook" else payload_used.get("hook") or "",
+            "body": frame.text if frame.role == "body" else "",
+            "support_points": [],
+            "cta": display["cta"] if frame.role != "cta" else frame.text,
+        }
+        frame_path = _render_card_to_path(
+            payload=frame_payload,
+            identity=identity,
+            typography=typography,
+            contract=contract,
+            template=template,
+            strategic_format="story",
+            filename_prefix=f"ace_next_story_{frame.index}",
+        )
+        media_paths.append(frame_path)
+
     return {
         "ok": True,
         "strategic_format": "stories",
-        "template_id": resolve_visual_template(payload_used).template_id,
+        "template_id": template.template_id,
         "frames": [frame.to_dict() for frame in frames],
+        "media_paths": media_paths,
         "premium_visual_bridge": bridge,
         "premium_visual_enabled": bridge.get("enabled", False),
         "premium_visual_selected": bool(bridge.get("approved_for_premium_visual")),
@@ -452,164 +733,22 @@ def render_visual_foundation_card(
 
     if bridge.get("enabled") and bridge.get("approved_for_premium_visual"):
         render = _safe_dict(bridge.get("render"))
-        premium_path = render.get("screenshot_path") or render.get("html_path")
-        if isinstance(premium_path, str) and premium_path.strip():
-            return premium_path
+        for key in ("screenshot_path", "image_path", "path", "html_path"):
+            premium_path = render.get(key)
+            if isinstance(premium_path, str) and premium_path.strip():
+                return premium_path
 
     contract = build_visual_contract(payload_used)
     template = resolve_visual_template(payload_used)
-    display = prepare_display_copy(payload_used, contract)
+    display_payload = _build_display_payload(contract, payload_used)
 
     config.media_dir.mkdir(parents=True, exist_ok=True)
-    out = config.media_dir / f"ace_next_visual_{uuid.uuid4().hex}.png"
-
-    if Image is None or ImageDraw is None:
-        out.write_bytes(
-            bytes.fromhex(
-                "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C63F8FFFFFF7F0009FB03FD2A86E38A0000000049454E44AE426082"
-            )
-        )
-        return str(out)
-
-    img = Image.new("RGB", (contract.canvas_width, contract.canvas_height), identity.background_color)
-    draw = ImageDraw.Draw(img)
-
-    brand_font = _load_font(typography.brand_size, bold=True)
-    eyebrow_font = _load_font(typography.eyebrow_size, bold=True)
-    headline_font = _load_font(typography.headline_size, bold=True)
-    hook_font = _load_font(typography.hook_size, bold=False)
-    body_font = _load_font(typography.body_size, bold=False)
-    support_font = _load_font(typography.support_size, bold=True)
-    cta_font = _load_font(typography.cta_size, bold=True)
-    watermark_font = _load_font(20, bold=True)
-
-    safe = contract.safe_zones
-    panel_left = safe.outer_margin
-    panel_top = safe.content_top
-    panel_right = contract.canvas_width - safe.outer_margin
-    panel_bottom = safe.content_bottom
-
-    draw.rectangle((0, 0, contract.canvas_width, safe.header_height), fill=identity.header_band_color)
-    draw.text((safe.outer_margin, 52), "ACE Ω NEXT", fill=identity.text_on_dark, font=brand_font)
-
-    series_text = identity.series_name[:28]
-    series_bbox = draw.textbbox((0, 0), series_text, font=brand_font) if brand_font else (0, 0, 160, 28)
-    series_width = series_bbox[2] - series_bbox[0]
-    draw.text(
-        (contract.canvas_width - safe.outer_margin - series_width, 52),
-        series_text,
-        fill=identity.watermark_color,
-        font=brand_font,
+    return _render_card_to_path(
+        payload=display_payload,
+        identity=identity,
+        typography=typography,
+        contract=contract,
+        template=template,
+        strategic_format="image",
+        filename_prefix="ace_next_visual",
     )
-
-    draw.rounded_rectangle(
-        (panel_left, panel_top, panel_right, panel_bottom),
-        radius=identity.panel_radius,
-        fill=identity.panel_color,
-        outline=identity.panel_border_color,
-        width=3,
-    )
-
-    draw.rounded_rectangle(
-        (panel_left + 20, panel_top + 22, panel_left + 38, panel_bottom - 22),
-        radius=10,
-        fill=identity.accent_color,
-    )
-
-    eyebrow = template.blocks["eyebrow"]
-    headline = template.blocks["headline"]
-    hook = template.blocks["hook"]
-    body = template.blocks["body"]
-    support = _resolve_support_block(template)
-    cta = template.blocks["cta"]
-
-    eyebrow_text = payload_used.get("eyebrow") or "VISUAL SIGNAL"
-    draw.rounded_rectangle(
-        (eyebrow.x, eyebrow.y, eyebrow.x + 232, eyebrow.y + 36),
-        radius=16,
-        fill=identity.accent_soft_color,
-    )
-    draw.text((eyebrow.x + 16, eyebrow.y + 8), str(eyebrow_text)[:24], fill=identity.accent_color, font=eyebrow_font)
-
-    headline_lines = _fit_lines(display["headline"], typography.headline_wrap, contract.max_headline_lines)
-    hook_lines = _fit_lines(display["hook"], typography.hook_wrap, contract.max_hook_lines)
-    body_lines = _fit_lines(display["body"], typography.body_wrap, contract.max_body_lines)
-    cta_lines = _fit_lines(display["cta"], 28, contract.max_cta_lines)
-
-    current_y = _draw_lines(
-        draw,
-        headline_lines,
-        x=headline.x,
-        y=headline.y,
-        font=headline_font,
-        fill=identity.text_primary,
-        line_gap=14,
-    )
-
-    current_y = _draw_lines(
-        draw,
-        hook_lines,
-        x=hook.x,
-        y=max(current_y + safe.headline_gap, hook.y),
-        font=hook_font,
-        fill=identity.accent_color,
-        line_gap=10,
-    )
-
-    current_y = _draw_lines(
-        draw,
-        body_lines,
-        x=body.x,
-        y=max(current_y + safe.hook_gap, body.y),
-        font=body_font,
-        fill=identity.text_secondary,
-        line_gap=10,
-    )
-
-    support_x = support.x if support is not None else body.x
-    support_y = support.y if support is not None else max(current_y + safe.body_gap, body.y)
-    support_width = support.width if support is not None else body.width
-
-    chip_y = max(current_y + safe.body_gap, support_y)
-    for point in display["support_points"][: contract.max_support_points]:
-        chip_height = _draw_support_chip(
-            draw,
-            x=support_x,
-            y=chip_y,
-            text=point,
-            font=support_font,
-            identity=identity,
-            width=support_width,
-        )
-        chip_y += chip_height + safe.support_gap
-
-    cta_y = max(chip_y + 18, cta.y)
-    draw.rounded_rectangle(
-        (cta.x, cta_y, cta.x + cta.width, cta_y + 64),
-        radius=20,
-        fill=identity.accent_soft_color,
-        outline=identity.panel_border_color,
-        width=2,
-    )
-    _draw_lines(
-        draw,
-        cta_lines,
-        x=cta.x + 20,
-        y=cta_y + 14,
-        font=cta_font,
-        fill=identity.accent_color,
-        line_gap=6,
-    )
-
-    watermark = identity.watermark_text
-    watermark_bbox = draw.textbbox((0, 0), watermark, font=watermark_font) if watermark_font else (0, 0, 180, 24)
-    watermark_w = watermark_bbox[2] - watermark_bbox[0]
-    draw.text(
-        (panel_right - watermark_w - 12, panel_bottom + 16),
-        watermark,
-        fill=identity.watermark_color,
-        font=watermark_font,
-    )
-
-    img.save(out)
-    return str(out)
