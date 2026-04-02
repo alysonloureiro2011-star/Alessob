@@ -13,7 +13,13 @@ def _now_iso() -> str:
 
 
 def _safe_dict(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 class PublishService:
@@ -31,6 +37,8 @@ class PublishService:
             "latest_permalink": None,
             "latest_evidence_state": None,
             "latest_resolution_state": None,
+            "latest_receipt_id": None,
+            "latest_publish_status": None,
             "updated_at": None,
             "recent_episodes": [],
         }
@@ -44,8 +52,7 @@ class PublishService:
             if isinstance(data, dict):
                 base = self._default_state()
                 base.update(data)
-                if not isinstance(base.get("recent_episodes"), list):
-                    base["recent_episodes"] = []
+                base["recent_episodes"] = _safe_list(base.get("recent_episodes"))
                 return base
         except Exception:
             pass
@@ -54,14 +61,13 @@ class PublishService:
 
     def _write_state(self, payload: dict[str, Any]) -> None:
         state = self._read_state()
-        state.update(payload)
+        state.update(_safe_dict(payload))
         state["updated_at"] = _now_iso()
 
-        recent_episodes = state.get("recent_episodes") or []
-        if not isinstance(recent_episodes, list):
-            recent_episodes = []
-
+        recent_episodes = _safe_list(state.get("recent_episodes"))
         episode = {
+            "receipt_id": state.get("latest_receipt_id"),
+            "publish_status": state.get("latest_publish_status"),
             "media_id": state.get("latest_media_id"),
             "permalink": state.get("latest_permalink"),
             "evidence_state": state.get("latest_evidence_state"),
@@ -69,8 +75,15 @@ class PublishService:
             "updated_at": state.get("updated_at"),
         }
 
-        if episode["media_id"] or episode["permalink"] or episode["evidence_state"]:
+        if (
+            episode.get("receipt_id")
+            or episode.get("publish_status")
+            or episode.get("media_id")
+            or episode.get("permalink")
+        ):
             recent_episodes.append(episode)
+            state["recent_episodes"] = recent_episodes[-20:]
+        else:
             state["recent_episodes"] = recent_episodes[-20:]
 
         self.state_path.write_text(
@@ -78,11 +91,30 @@ class PublishService:
             encoding="utf-8",
         )
 
+    def _build_receipt_id(self) -> str:
+        return f"ace-{int(datetime.now(timezone.utc).timestamp())}"
+
     def last_publish(self) -> dict[str, Any]:
         return self._read_state()
 
-    def _build_receipt_id(self) -> str:
-        return f"ace-{int(datetime.now(timezone.utc).timestamp())}"
+    def _record_placeholder(
+        self,
+        *,
+        receipt_id: str,
+        publish_status: str,
+        resolution_state: str,
+    ) -> None:
+        self._write_state(
+            {
+                "source_of_truth": "placeholder",
+                "latest_receipt_id": receipt_id,
+                "latest_publish_status": publish_status,
+                "latest_media_id": None,
+                "latest_permalink": None,
+                "latest_evidence_state": "placeholder_only",
+                "latest_resolution_state": resolution_state,
+            }
+        )
 
     def publish_placeholder(
         self,
@@ -111,16 +143,53 @@ class PublishService:
             "media_path": media_path,
         }
 
-        self._write_state(
-            {
-                "source_of_truth": "placeholder",
-                "latest_media_id": None,
-                "latest_permalink": None,
-                "latest_evidence_state": "placeholder_only",
-                "latest_resolution_state": "not_published",
-            }
+        self._record_placeholder(
+            receipt_id=receipt_id,
+            publish_status="placeholder_recorded",
+            resolution_state="not_published",
         )
         return result
+
+    def _failure_result(
+        self,
+        *,
+        receipt_id: str,
+        reason: Any,
+        trend: str,
+        style: str,
+        content_type: str,
+        caption: str,
+        media_path: str | None,
+        linkage_context: dict[str, Any] | None = None,
+        publish_status: str = "publish_failed",
+    ) -> dict[str, Any]:
+        self._write_state(
+            {
+                "source_of_truth": "real_publish_failed",
+                "latest_receipt_id": receipt_id,
+                "latest_publish_status": publish_status,
+                "latest_media_id": None,
+                "latest_permalink": None,
+                "latest_evidence_state": "publish_failed",
+                "latest_resolution_state": "publish_failed",
+            }
+        )
+
+        return {
+            "ok": False,
+            "publish_status": publish_status,
+            "error": reason,
+            "receipt_id": receipt_id,
+            "media_id": None,
+            "permalink": None,
+            "content_type": content_type,
+            "style": style,
+            "caption": caption,
+            "trend": trend,
+            "created_at": _now_iso(),
+            "linkage_context": _safe_dict(linkage_context),
+            "media_path": media_path,
+        }
 
     def publish_real(
         self,
@@ -136,58 +205,28 @@ class PublishService:
         readiness = self.publisher.readiness()
 
         if not readiness.get("instagram_connected"):
-            result = {
-                "ok": False,
-                "publish_status": "publish_failed",
-                "error": "instagram_not_connected",
-                "receipt_id": receipt_id,
-                "media_id": None,
-                "permalink": None,
-                "content_type": content_type,
-                "style": style,
-                "caption": caption,
-                "trend": trend,
-                "created_at": _now_iso(),
-                "linkage_context": _safe_dict(linkage_context),
-                "media_path": media_path,
-            }
-            self._write_state(
-                {
-                    "source_of_truth": "real_publish_failed",
-                    "latest_media_id": None,
-                    "latest_permalink": None,
-                    "latest_evidence_state": "publish_failed",
-                    "latest_resolution_state": "publish_failed",
-                }
+            return self._failure_result(
+                receipt_id=receipt_id,
+                reason="instagram_not_connected",
+                trend=trend,
+                style=style,
+                content_type=content_type,
+                caption=caption,
+                media_path=media_path,
+                linkage_context=linkage_context,
             )
-            return result
 
         if not media_path:
-            result = {
-                "ok": False,
-                "publish_status": "publish_failed",
-                "error": "media_path_missing",
-                "receipt_id": receipt_id,
-                "media_id": None,
-                "permalink": None,
-                "content_type": content_type,
-                "style": style,
-                "caption": caption,
-                "trend": trend,
-                "created_at": _now_iso(),
-                "linkage_context": _safe_dict(linkage_context),
-                "media_path": media_path,
-            }
-            self._write_state(
-                {
-                    "source_of_truth": "real_publish_failed",
-                    "latest_media_id": None,
-                    "latest_permalink": None,
-                    "latest_evidence_state": "publish_failed",
-                    "latest_resolution_state": "publish_failed",
-                }
+            return self._failure_result(
+                receipt_id=receipt_id,
+                reason="media_path_missing",
+                trend=trend,
+                style=style,
+                content_type=content_type,
+                caption=caption,
+                media_path=media_path,
+                linkage_context=linkage_context,
             )
-            return result
 
         lowered = str(content_type or "").strip().lower()
 
@@ -204,31 +243,16 @@ class PublishService:
             )
 
         if not publish_response.get("ok"):
-            result = {
-                "ok": False,
-                "publish_status": "publish_failed",
-                "error": publish_response,
-                "receipt_id": receipt_id,
-                "media_id": None,
-                "permalink": None,
-                "content_type": content_type,
-                "style": style,
-                "caption": caption,
-                "trend": trend,
-                "created_at": _now_iso(),
-                "linkage_context": _safe_dict(linkage_context),
-                "media_path": media_path,
-            }
-            self._write_state(
-                {
-                    "source_of_truth": "real_publish_failed",
-                    "latest_media_id": None,
-                    "latest_permalink": None,
-                    "latest_evidence_state": "publish_failed",
-                    "latest_resolution_state": "publish_failed",
-                }
+            return self._failure_result(
+                receipt_id=receipt_id,
+                reason=publish_response,
+                trend=trend,
+                style=style,
+                content_type=content_type,
+                caption=caption,
+                media_path=media_path,
+                linkage_context=linkage_context,
             )
-            return result
 
         published_payload = _safe_dict(publish_response.get("published"))
         media_id = published_payload.get("id")
@@ -263,6 +287,8 @@ class PublishService:
         self._write_state(
             {
                 "source_of_truth": "real_publish",
+                "latest_receipt_id": receipt_id,
+                "latest_publish_status": "published_real_probe",
                 "latest_media_id": media_id,
                 "latest_permalink": permalink,
                 "latest_evidence_state": "linked_real_target" if media_id else "publish_attempt_recorded",
