@@ -46,7 +46,7 @@ def create_official_app() -> Flask:
                 "ok": False,
                 "error": str(e),
                 "fallback": True,
-                "source": fallback_name
+                "source": fallback_name,
             })
 
     def safe_simple(data):
@@ -56,7 +56,7 @@ def create_official_app() -> Flask:
             return jsonify({
                 "ok": False,
                 "error": str(e),
-                "fallback": True
+                "fallback": True,
             })
 
     def build_feedback(data: dict) -> dict:
@@ -76,7 +76,7 @@ def create_official_app() -> Flask:
     def home():
         return jsonify({
             "ok": True,
-            "service": "ACE Ω Runtime Online"
+            "service": "ACE Ω Runtime Online",
         })
 
     @app.route("/health")
@@ -122,32 +122,7 @@ def create_official_app() -> Flask:
                 "ok": False,
                 "error": str(e),
                 "fallback": True,
-                "source": "run"
-            })
-
-    @app.route("/run-test")
-    def run_test():
-        trend = request.args.get("trend", "verdade que ninguém fala")
-        real_flag = str(request.args.get("real", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        placeholder_flag = str(request.args.get("placeholder", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        probe_state = request.args.get("probe_state")
-
-        try:
-            result = runtime_surface.run(
-                trend=trend,
-                force_placeholder=placeholder_flag,
-                force_real_probe=real_flag,
-                probe_state=probe_state,
-                feedback_payload=None,
-            )
-            return safe_simple(result)
-
-        except Exception as e:
-            return jsonify({
-                "ok": False,
-                "error": str(e),
-                "fallback": True,
-                "source": "run-test"
+                "source": "run",
             })
 
     return app
