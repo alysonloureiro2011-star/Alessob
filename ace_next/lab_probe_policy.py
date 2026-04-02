@@ -39,14 +39,12 @@ def resolve_lab_probe_policy(
     env_flags = dict(env_flags or {})
     request_flags = dict(request_flags or {})
 
-    state = str(operational_state or INTERNAL_LAB).strip().lower()
+    state = str(operational_state or TECHNICAL_TEST).strip().lower()
     effective_state = _normalize_requested_state(requested_state, state)
 
-    allow_lab_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"), True)
-    allow_staging_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"), True)
-
-    # 🔥 FORÇANDO ARMAMENTO AUTOMÁTICO
-    explicit_probe_arm = True
+    explicit_probe_arm = _as_bool(request_flags.get("explicit_probe_arm"), requested_probe)
+    allow_lab_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"), False)
+    allow_staging_probe = _as_bool(env_flags.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"), False)
 
     render_requested = effective_state in RENDERABLE_STATES and effective_state not in {
         BLOCKED_QUALITY,
@@ -57,22 +55,23 @@ def resolve_lab_probe_policy(
     probe_eligible = False
     probe_block_reason = None
 
-    if effective_state not in PROBE_ELIGIBLE_STATES:
+    if not requested_probe:
+        probe_block_reason = "probe_not_requested"
+    elif effective_state not in PROBE_ELIGIBLE_STATES:
         probe_block_reason = "state_not_probe_eligible"
-
     elif effective_state == INTERNAL_LAB and not allow_lab_probe:
-        probe_block_reason = "lab_not_allowed"
-
+        probe_block_reason = "main_surface_probe_not_armed"
     elif effective_state == EDITORIAL_STAGING and not allow_staging_probe:
-        probe_block_reason = "staging_not_allowed"
-
+        probe_block_reason = "main_surface_probe_not_armed"
+    elif not explicit_probe_arm:
+        probe_block_reason = "request_probe_not_armed"
     else:
         probe_eligible = True
         probe_block_reason = None
 
     return {
         "ok": True,
-        "probe_requested": True,
+        "probe_requested": bool(requested_probe),
         "probe_eligible": probe_eligible,
         "probe_publish_executed": False,
         "probe_render_requested": render_requested,
@@ -80,7 +79,7 @@ def resolve_lab_probe_policy(
         "probe_state_requested": requested_state,
         "probe_state_effective": effective_state,
         "probe_block_reason": probe_block_reason,
-        "requested_real_publish": probe_eligible,
+        "requested_real_publish": bool(requested_probe and probe_eligible),
         "render_only_mode": bool(render_requested and not probe_eligible),
-        "double_arming_required": False,
+        "double_arming_required": True,
     }
