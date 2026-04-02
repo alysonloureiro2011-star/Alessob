@@ -23,16 +23,30 @@ def _enrich_visual_qa_with_staging_hardener(
         return visual
 
     metrics = safe_dict(visual.get("metrics"))
+
     hardened_payload = safe_dict(
         hardener.get("hardened_payload")
         or hardener.get("render_payload_used")
     )
-
     if hardened_payload:
         visual["hardened_visible_payload"] = hardened_payload
         metrics["render_payload_used"] = hardened_payload
 
-    metrics["staging_hardener"] = hardener
+    hierarchy_gate = safe_dict(hardener.get("hierarchy_gate"))
+    if hierarchy_gate:
+        visual["hierarchy_gate"] = hierarchy_gate
+
+    brand_dignity_score = safe_dict(hardener.get("brand_dignity_score"))
+    if brand_dignity_score:
+        visual["brand_dignity_score"] = brand_dignity_score
+
+    final_score = hardener.get("final_score")
+    if final_score is not None:
+        visual["final_score"] = final_score
+
+    selected_template_id = hardener.get("selected_template_id")
+    if selected_template_id:
+        visual["selected_template_id"] = selected_template_id
 
     hidden_overflow = _safe_list(
         hardener.get("hidden_overflow_for_caption")
@@ -52,6 +66,16 @@ def _enrich_visual_qa_with_staging_hardener(
     applied_rules = _safe_list(hardener.get("applied_rules"))
     if applied_rules:
         visual["hardening_rules_applied"] = applied_rules
+
+    metrics["staging_hardener"] = hardener
+    if hierarchy_gate:
+        metrics["hierarchy_gate"] = hierarchy_gate
+    if brand_dignity_score:
+        metrics["brand_dignity_score"] = brand_dignity_score
+    if final_score is not None:
+        metrics["premium_visual_final_score"] = final_score
+    if selected_template_id:
+        metrics["selected_template_id"] = selected_template_id
 
     visual["metrics"] = metrics
     visual["hardening_applied"] = True
@@ -159,8 +183,20 @@ def sovereign_gate_bridge_examples() -> dict[str, Any]:
             },
             visual_qa={
                 "final_score": 84,
-                "hierarchy_gate": {"approved": True, "final_score": 8.3, "breakdown": {"contrast": 8.2}},
-                "brand_dignity_score": {"approved": True, "final_score": 8.4, "breakdown": {"brand_fit": 8.5, "naturality": 8.2, "anti_commodity": 8.3}},
+                "hierarchy_gate": {
+                    "approved": True,
+                    "final_score": 8.3,
+                    "breakdown": {"contrast": 8.2},
+                },
+                "brand_dignity_score": {
+                    "approved": True,
+                    "final_score": 8.4,
+                    "breakdown": {
+                        "brand_fit": 8.5,
+                        "naturality": 8.2,
+                        "anti_commodity": 8.3,
+                    },
+                },
             },
             perceptual_qa={
                 "breakdown": {
@@ -184,6 +220,22 @@ def sovereign_gate_bridge_examples() -> dict[str, Any]:
                 },
                 "hidden_overflow_for_caption": [],
                 "target_state": "editorial_staging",
+                "final_score": 8.3,
+                "selected_template_id": "premium_editorial_v1",
+                "hierarchy_gate": {
+                    "approved": True,
+                    "final_score": 8.3,
+                    "breakdown": {"contrast": 8.2},
+                },
+                "brand_dignity_score": {
+                    "approved": True,
+                    "final_score": 8.4,
+                    "breakdown": {
+                        "brand_fit": 8.5,
+                        "naturality": 8.2,
+                        "anti_commodity": 8.3,
+                    },
+                },
             },
             force_placeholder=False,
         ),
