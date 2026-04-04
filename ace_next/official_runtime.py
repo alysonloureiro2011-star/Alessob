@@ -6,11 +6,8 @@ from typing import Any
 
 from .authorized_payload_resolver import resolve_authorized_payload
 from .config import AceNextConfig
-from .reflection_adapter_runtime import run_reflection_adapter
-from .serial_adapter_runtime import run_serial_adapter
-from .trend_input_guard import sanitize_trend_input
-from .trend_radar import TrendRadar
 from .dignity_adapter_runtime import run_dignity_adapter
+from .reflection_adapter_runtime import run_reflection_adapter
 from .runtime_adapters import (
     adapt_legacy_mission_decision,
     adapt_legacy_publish_result,
@@ -27,6 +24,9 @@ from .runtime_contracts import (
 )
 from .runtime_phase_absorption import build_runtime_phase_absorption
 from .runtime_registry import capability_registry_snapshot, resolve_capability
+from .serial_adapter_runtime import run_serial_adapter
+from .trend_input_guard import sanitize_trend_input
+from .trend_radar import TrendRadar
 from .visual_gate_adapter_runtime import run_visual_gate_adapter
 
 REAL_PROBE_ALLOWED_STATES = {"internal_lab", "editorial_staging"}
@@ -126,18 +126,6 @@ def _first_path(paths: Any) -> str | None:
 
 
 class OfficialRuntime:
-    """
-    ACE Ω - Runtime soberano oficial.
-
-    Princípios:
-    - um centro único
-    - zero rota paralela
-    - publish truth só vale com evidence real
-    - learning só sobe quando o ciclo prova receipt/media/evidence
-    - payload único antes dos gates
-    - sanitização de trend antes do planner
-    """
-
     def __init__(self, config: AceNextConfig) -> None:
         self.config = config
         self._boot = bootstrap_capabilities()
@@ -206,12 +194,17 @@ class OfficialRuntime:
     def _brand_env_flags(self) -> dict[str, Any]:
         return {
             "ACE_BRAND_SURFACE_MODE": os.environ.get("ACE_BRAND_SURFACE_MODE", "protected"),
-            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": safe_bool(os.environ.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"), False),
+            "ACE_ALLOW_MAIN_SURFACE_LAB_PROBE": safe_bool(
+                os.environ.get("ACE_ALLOW_MAIN_SURFACE_LAB_PROBE"),
+                False,
+            ),
             "ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING": safe_bool(
-                os.environ.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"), False
+                os.environ.get("ACE_ALLOW_MAIN_SURFACE_EDITORIAL_STAGING"),
+                False,
             ),
             "ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE": safe_bool(
-                os.environ.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"), True
+                os.environ.get("ACE_REQUIRE_HUMAN_REVIEW_FOR_BRAND_LIVE"),
+                True,
             ),
         }
 
@@ -261,7 +254,6 @@ class OfficialRuntime:
         ok, stored = self._call("load_instagram_auth", self.config)
         stored_dict = safe_dict(stored) if ok else {}
         meta = stored_dict.get("meta") if isinstance(stored_dict.get("meta"), dict) else {}
-
         saved_at_raw = stored_dict.get("saved_at")
         expires_at_raw = meta.get("expires_at")
         saved_at = None
@@ -298,6 +290,7 @@ class OfficialRuntime:
     def _token_needs_refresh(self, force: bool = False) -> tuple[bool, str]:
         if force:
             return True, "forced"
+
         if not self.config.ig_token or not self.config.ig_id:
             return False, "missing_token_or_ig_id"
 
@@ -324,16 +317,20 @@ class OfficialRuntime:
             age_hours = (now - saved_at).total_seconds() / 3600
             if age_hours < self._min_refresh_age_hours():
                 return False, "token_too_young"
+
         if not expires_at:
             return False, "expiry_unknown"
+
         remaining = expires_at - now
         if remaining <= timedelta(days=self._refresh_threshold_days()):
             return True, "refresh_threshold"
+
         return False, "healthy"
 
     def ensure_fresh_instagram_token(self, force: bool = False) -> dict[str, Any]:
         self.sync_instagram_auth()
         should_refresh, reason = self._token_needs_refresh(force=force)
+
         if not should_refresh:
             return {
                 "ok": True,
@@ -350,6 +347,7 @@ class OfficialRuntime:
         )
         refresh_dict = safe_dict(refresh) if ok_refresh else safe_dict(refresh)
         render_sync = {"ok": False, "persisted": False, "skipped": True}
+
         refreshed_token = refresh_dict.get("token") or safe_dict(refresh_dict.get("data")).get("access_token")
         if refreshed_token:
             ok_render, render_result = self._call(
@@ -430,7 +428,7 @@ class OfficialRuntime:
             "llm_orchestrator_status": self._llm_orchestrator_status(),
             "study_tags": STUDY_TAGS,
             "runtime_design": {
-                "mode": "thin_runtime_sovereign_rewrite_v1",
+                "mode": "sovereign_runtime_v2",
                 "contracts": True,
                 "registry": True,
                 "adapters": True,
@@ -495,13 +493,201 @@ class OfficialRuntime:
         }
 
     # ---------------------------------------------------------
-    # ADAPTERS / SAFE ENRICHMENT
+    # EDITORIAL / SERIAL / REFLECTION HELPERS
     # ---------------------------------------------------------
+    def _mission_approval_required(self) -> bool:
+        return safe_bool(os.environ.get("ACE_REQUIRE_MISSION_APPROVAL"), False)
+
+    def _planner_overrides_from_mission_decision(self, mission_decision: dict[str, Any] | None) -> dict[str, Any]:
+        mission_decision = safe_dict(mission_decision)
+        content_type = str(mission_decision.get("content_type") or "").strip().lower()
+        publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None
+        return {
+            "strategic_target_format": content_type or None,
+            "publish_format_now": publish_format_now,
+            "publish_style": None,
+            "goal": mission_decision.get("goal"),
+            "hypothesis": mission_decision.get("hypothesis"),
+            "planner_selected": mission_decision.get("planner_selected"),
+            "attention_priority": "save_share_replay_retention",
+            "clarity_density_policy": STUDY_TAGS["psychology_clt"],
+            "narrative_policy": STUDY_TAGS["stepps"],
+            "hook_policy": STUDY_TAGS["hook_attention"],
+            "naturalism_policy": STUDY_TAGS["naturalism"],
+        }
+
+    def _mission_decision(self, trend: str, env_flags: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        mission_control_state = {
+            "enabled": True,
+            "approval_required": self._mission_approval_required(),
+            "blocked": False,
+        }
+
+        ok, mission_decision = self._call(
+            "decide_mission",
+            trend,
+            format_hint=None,
+            signal_context={
+                "source": "official_runtime",
+                "mode": "run",
+                "study_tags": {
+                    "hook": STUDY_TAGS["hook_attention"],
+                    "stepps": STUDY_TAGS["stepps"],
+                    "mab": STUDY_TAGS["mab"],
+                },
+            },
+            brand_context={
+                "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+                "brand_live_allowed": False,
+            },
+            queue_state=self._runtime_queue_state(),
+            recent_signal_score=None,
+        )
+
+        mission_dict = adapt_legacy_mission_decision(mission_decision if ok else {})
+        raw_mission = safe_dict(mission_decision)
+
+        if not mission_dict:
+            mission_dict = {
+                "trend": trend,
+                "style": "unknown",
+                "content_type": "image",
+                "goal": "authority",
+                "confidence": 0.2,
+                "raw": {
+                    "ok": False,
+                    "should_act": True,
+                    "reason": safe_dict(mission_decision).get("error") or "mission_control_runtime_fallback",
+                    "decision_state": "fallback_allow",
+                    "hypothesis": "mission_control_unavailable_runtime_fallback",
+                    "planner_selected": "mission_control_runtime_fallback",
+                    "signal_strength": "unknown",
+                },
+            }
+            mission_control_state["fallback"] = True
+            mission_control_state["error"] = mission_dict["raw"].get("reason")
+
+        return (
+            {
+                "trend": mission_dict.get("trend") or trend,
+                "style": mission_dict.get("style") or raw_mission.get("style") or "unknown",
+                "content_type": mission_dict.get("content_type") or raw_mission.get("content_type") or "image",
+                "goal": mission_dict.get("goal") or raw_mission.get("goal") or "authority",
+                "confidence": mission_dict.get("confidence") or raw_mission.get("confidence") or 0.2,
+                "raw": raw_mission or mission_dict.get("raw") or {},
+            },
+            mission_control_state,
+        )
+
+    def _creative_plan(self, trend: str, mission_decision: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        overrides = self._planner_overrides_from_mission_decision(mission_decision)
+        recent_memory = self._recent_memory_for_planner(limit=5)
+
+        ok, plan = self._call(
+            "build_creative_plan",
+            trend,
+            overrides=overrides,
+            mission_decision=mission_decision.get("raw"),
+            recent_memory=recent_memory,
+        )
+
+        if ok:
+            plan_dict = self._to_dict(plan)
+            if plan_dict:
+                plan_dict.setdefault("study_tags", STUDY_TAGS)
+                plan_dict.setdefault("serial_continuity_hint", bool(recent_memory))
+                plan_dict.setdefault("attention_target", "save_share_replay_retention")
+                plan_dict.setdefault("ethical_boundary", "no_hidden_manipulation")
+                return True, plan_dict
+
+        return False, {
+            "topic_seed": trend,
+            "headline": trend,
+            "hook": f"o que há por trás de {trend}",
+            "payoff": f"clareza prática sobre {trend}",
+            "cta": "salve e compartilhe se fizer sentido",
+            "publish_style": mission_decision.get("style") or "official_next_visual_foundation_v1",
+            "publish_format_now": mission_decision.get("content_type") or "image",
+            "goal": mission_decision.get("goal") or "authority",
+            "hypothesis": safe_dict(mission_decision.get("raw")).get("hypothesis"),
+            "planner_selected": safe_dict(mission_decision.get("raw")).get("planner_selected") or "creative_planner_fallback",
+            "serial_continuity_hint": bool(recent_memory),
+            "study_tags": STUDY_TAGS,
+            "ethical_boundary": "no_hidden_manipulation",
+        }
+
+    def _editorial_brain_or_fallback(
+        self,
+        *,
+        trend: str,
+        recent_signal_score: float | None,
+        env_flags: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        recent_memory = self._recent_memory_for_planner(limit=5)
+        brain_cls = self._safe_import_symbol("ace_next.editorial_brain_v2", "EditorialBrainV2")
+        if brain_cls is None:
+            return {}, {}, {"ok": False, "used": False, "state": "editorial_brain_unavailable"}
+
+        try:
+            brain_result = safe_dict(
+                brain_cls().run(
+                    trend=trend,
+                    format_hint=None,
+                    recent_signal_score=recent_signal_score,
+                    queue_state=self._runtime_queue_state(),
+                    signal_context={"source": "official_runtime", "mode": "run"},
+                    brand_context={
+                        "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+                        "brand_live_allowed": False,
+                    },
+                    recent_memory=recent_memory,
+                )
+                or {}
+            )
+            mission = safe_dict(brain_result.get("mission_decision"))
+            creative_plan = safe_dict(brain_result.get("creative_plan"))
+            if mission and creative_plan:
+                mission.setdefault("raw", mission)
+                creative_plan.setdefault("study_tags", STUDY_TAGS)
+                creative_plan.setdefault("serial_continuity_hint", bool(recent_memory))
+                creative_plan.setdefault("attention_target", "save_share_replay_retention")
+                creative_plan.setdefault("ethical_boundary", "no_hidden_manipulation")
+                return mission, creative_plan, {
+                    "ok": True,
+                    "state": brain_result.get("brain_state") or "editorial_brain_v2_ready",
+                    "used": True,
+                    "result": brain_result,
+                }
+            return {}, {}, {"ok": False, "used": False, "state": "editorial_brain_result_incomplete"}
+        except Exception as exc:
+            return {}, {}, {"ok": False, "used": False, "state": f"editorial_brain_error: {type(exc).__name__}: {exc}"}
+
+    def _editorial_quality(self, plan_dict: dict[str, Any]) -> dict[str, Any]:
+        ok, result = self._call("evaluate_editorial_quality", plan_dict)
+        quality = self._to_dict(result) if ok else {}
+        if quality:
+            return quality
+        return {
+            "approved": False,
+            "breakdown": {},
+            "flags": ["editorial_qa_unavailable"],
+            "reasons": [safe_dict(result).get("error") or "editorial_qa_unavailable"],
+            "study_alignment": {
+                "clarity_density_control": True,
+                "stepps_narrative": True,
+                "anti_cliche": True,
+            },
+        }
+
     def _serial_continuity_summary(self, creative_plan: dict[str, Any]) -> dict[str, Any]:
         merged_data: dict[str, Any] = {}
         engine_state = None
+
         try:
-            build_serial_continuity = self._safe_import_symbol("ace_next.serial_continuity_engine", "build_serial_continuity")
+            build_serial_continuity = self._safe_import_symbol(
+                "ace_next.serial_continuity_engine",
+                "build_serial_continuity",
+            )
             if build_serial_continuity is not None:
                 engine_result = safe_dict(
                     build_serial_continuity(
@@ -510,8 +696,9 @@ class OfficialRuntime:
                     )
                     or {}
                 )
-                engine_state = "serial_continuity_engine_ready" if engine_result.get("ok") else "serial_continuity_engine_fallback"
-                merged_data.update(engine_result)
+                if engine_result:
+                    engine_state = "serial_continuity_engine_ready" if engine_result.get("ok") else "serial_continuity_engine_fallback"
+                    merged_data.update(engine_result)
         except Exception:
             engine_state = "serial_continuity_engine_error"
 
@@ -528,20 +715,18 @@ class OfficialRuntime:
             adapter_data = safe_dict(adapter_result.get("data"))
             if adapter_data:
                 merged_data.update(adapter_data)
-                creative_plan["serial_continuity"] = {
-                    **safe_dict(creative_plan.get("serial_continuity")),
-                    **merged_data,
-                }
+
+            if merged_data:
+                current_serial = safe_dict(creative_plan.get("serial_continuity"))
+                creative_plan["serial_continuity"] = {**current_serial, **merged_data}
                 if merged_data.get("next_episode_seed") and not creative_plan.get("series_next"):
                     creative_plan["series_next"] = merged_data.get("next_episode_seed")
+
             return {
                 "ok": bool(adapter_result.get("ok", True) or merged_data),
                 "state": adapter_result.get("state") or engine_state or "serial_adapter_ready",
                 "data": merged_data,
-                "meta": {
-                    **safe_dict(adapter_result.get("meta")),
-                    "engine_state": engine_state,
-                },
+                "meta": {**safe_dict(adapter_result.get("meta")), "engine_state": engine_state},
             }
         except Exception as exc:
             return {
@@ -550,6 +735,258 @@ class OfficialRuntime:
                 "data": merged_data,
                 "meta": {"error": f"{type(exc).__name__}: {exc}", "engine_state": engine_state},
             }
+
+    def _reflection_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        measurement: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            real_metrics = safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics"))
+            adapter_result = safe_dict(
+                run_reflection_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "real_metrics": real_metrics,
+                        "recommendation_engine": safe_dict(measurement.get("recommendation_engine")),
+                        "attention_metrics": safe_dict(measurement.get("attention_metrics")),
+                    }
+                )
+                or {}
+            )
+        except Exception as exc:
+            adapter_result = {
+                "ok": False,
+                "state": "reflection_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+        engine_cls = self._safe_import_symbol("ace_next.reflection_engine", "ReflectionEngine")
+        if engine_cls is not None:
+            try:
+                engine_result = safe_dict(
+                    engine_cls().run(
+                        creative_plan=creative_plan,
+                        real_metrics=safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics")),
+                        recommendation_engine=safe_dict(measurement.get("recommendation_engine")),
+                        attention_metrics=safe_dict(measurement.get("attention_metrics")),
+                    )
+                    or {}
+                )
+                if engine_result:
+                    adapter_result["engine_result"] = engine_result
+                    adapter_result["data"] = {**safe_dict(adapter_result.get("data")), **engine_result}
+            except Exception:
+                pass
+
+        return adapter_result
+
+    # ---------------------------------------------------------
+    # VISUAL / PAYLOAD / GATES
+    # ---------------------------------------------------------
+    def _visual_foundation(
+        self,
+        plan_dict: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        visual_identity: dict[str, Any] = {}
+        typography: dict[str, Any] = {}
+        visual_contract: dict[str, Any] = {}
+        visual_template: dict[str, Any] = {}
+        perceptual_qa: dict[str, Any] = {}
+        visual_qa: dict[str, Any] = {}
+
+        ok, identity_obj = self._call("build_visual_identity", plan_dict)
+        visual_identity = self._to_dict(identity_obj) if ok else {
+            "error": safe_dict(identity_obj).get("error") or "visual_identity_unavailable"
+        }
+
+        ok, typography_obj = self._call("build_typography_spec", plan_dict)
+        typography = self._to_dict(typography_obj) if ok else {
+            "error": safe_dict(typography_obj).get("error") or "typography_unavailable"
+        }
+
+        ok, contract_obj = self._call("build_visual_contract", plan_dict)
+        visual_contract = self._to_dict(contract_obj) if ok else {
+            "error": safe_dict(contract_obj).get("error") or "visual_contract_unavailable"
+        }
+
+        ok, template_obj = self._call("resolve_visual_template", plan_dict)
+        visual_template = self._to_dict(template_obj) if ok else {
+            "error": safe_dict(template_obj).get("error") or "visual_template_unavailable"
+        }
+
+        if (
+            visual_identity
+            and typography
+            and visual_contract
+            and visual_template
+            and "error" not in visual_identity
+            and "error" not in typography
+            and "error" not in visual_contract
+            and "error" not in visual_template
+        ):
+            ok, result = self._call(
+                "evaluate_perceptual_quality",
+                plan=plan_dict,
+                contract=contract_obj,
+                template=template_obj,
+                identity=identity_obj,
+                typography=typography_obj,
+            )
+            perceptual_qa = self._to_dict(result) if ok else {}
+
+            ok, result = self._call(
+                "evaluate_visual_quality",
+                plan=plan_dict,
+                identity=identity_obj,
+                typography=typography_obj,
+            )
+            visual_qa = self._to_dict(result) if ok else {}
+
+        if not perceptual_qa:
+            perceptual_qa = {
+                "approved": False,
+                "final_score": 0,
+                "breakdown": {},
+                "metrics": {"zero_overlap": False},
+                "reasons": ["perceptual_qa_unavailable"],
+                "recommendations": [],
+                "study_alignment": {
+                    "pattern_interrupt_visual": True,
+                    "visual_hierarchy": True,
+                    "safe_zones": True,
+                    "naturalism": True,
+                },
+            }
+
+        if not visual_qa:
+            visual_qa = {
+                "approved": False,
+                "final_score": 0,
+                "minimum_score": 75,
+                "breakdown": {},
+                "metrics": {"zero_overlap": False},
+                "reasons": ["visual_qa_unavailable"],
+                "recommendations": [],
+                "study_alignment": {
+                    "contrast": True,
+                    "typography_legibility": True,
+                    "visual_hierarchy": True,
+                },
+            }
+
+        return visual_identity, typography, visual_contract, visual_template, {
+            "perceptual_qa": perceptual_qa,
+            "visual_qa": visual_qa,
+        }
+
+    def _premium_visual(
+        self,
+        plan_dict: dict[str, Any],
+        visual_identity: dict[str, Any],
+        visual_contract: dict[str, Any],
+    ) -> dict[str, Any]:
+        ok, result = self._call(
+            "build_visual_premium_bridge",
+            creative_plan=plan_dict,
+            visual_identity=visual_identity,
+            visual_contract=visual_contract,
+            strategic_format=plan_dict.get("publish_format_now"),
+            template_id=None,
+            capture_mode="safe",
+        )
+        premium_visual = self._to_dict(result) if ok else {}
+        if premium_visual:
+            premium_visual.setdefault(
+                "study_alignment",
+                {
+                    "pattern_interrupt_visual": True,
+                    "playwright_official_path": True,
+                    "premium_layout_variation": True,
+                },
+            )
+            return premium_visual
+
+        return {
+            "ok": False,
+            "approved_for_premium_visual": False,
+            "premium_render_state": "premium_visual_bridge_unavailable",
+            "reasons": [safe_dict(result).get("error") or "premium_visual_bridge_unavailable"],
+            "hardening_applied": False,
+            "hardening_report": {},
+            "study_alignment": {
+                "pattern_interrupt_visual": True,
+                "playwright_official_path": True,
+                "premium_layout_variation": True,
+            },
+        }
+
+    def _resolve_authorized_payload(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        premium_visual: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        hardening_report = safe_dict(premium_visual.get("hardening_report"))
+        premium_metrics = safe_dict(premium_visual.get("metrics"))
+
+        hardened_payload = safe_dict(
+            hardening_report.get("hardened_payload")
+            or premium_visual.get("hardened_visible_payload")
+            or premium_metrics.get("render_payload_used")
+        )
+        render_payload_used = safe_dict(
+            hardening_report.get("render_payload_used")
+            or premium_metrics.get("render_payload_used")
+        )
+
+        resolution = resolve_authorized_payload(
+            creative_plan,
+            hardened_payload=hardened_payload or None,
+            render_payload_used=render_payload_used or None,
+            strategic_format=str(
+                creative_plan.get("publish_format_now")
+                or creative_plan.get("strategic_target_format")
+                or creative_plan.get("format_recommendation")
+                or "image"
+            ),
+            template_id=str(
+                premium_visual.get("selected_template_id")
+                or hardening_report.get("selected_template_id")
+                or creative_plan.get("template_id")
+                or ""
+            )
+            or None,
+            capture_mode="safe",
+        )
+
+        authorized_payload = safe_dict(resolution.get("authorized_payload"))
+        updated_plan = dict(creative_plan)
+
+        if authorized_payload:
+            updated_plan["headline"] = authorized_payload.get("headline") or updated_plan.get("headline")
+            updated_plan["hook"] = authorized_payload.get("hook") or updated_plan.get("hook")
+            updated_plan["body"] = authorized_payload.get("body") or updated_plan.get("body")
+            updated_plan["cta"] = authorized_payload.get("cta") or updated_plan.get("cta")
+            updated_plan["caption"] = authorized_payload.get("caption") or updated_plan.get("caption")
+            updated_plan["support_points"] = authorized_payload.get("support_points") or updated_plan.get("support_points") or []
+            updated_plan["publish_format_now"] = authorized_payload.get("format") or updated_plan.get("publish_format_now")
+            updated_plan["authorized_payload"] = authorized_payload
+            updated_plan["authority_payload_source"] = resolution.get("authorized_source")
+            updated_plan["authorized_payload_budget"] = resolution.get("budget")
+            updated_plan["authorized_payload_changed_fields"] = resolution.get("changed_fields") or []
+
+        merged_hardener = dict(hardening_report)
+        merged_hardener["authorized_payload"] = authorized_payload
+        merged_hardener["authority_payload_source"] = resolution.get("authorized_source")
+        merged_hardener["changed_fields"] = resolution.get("changed_fields") or []
+        merged_hardener["changed_fields_count"] = resolution.get("changed_fields_count")
+        merged_hardener["authorized_payload_budget"] = resolution.get("budget")
+        merged_hardener["hardening_report"] = safe_dict(resolution.get("hardening_report"))
+
+        return updated_plan, resolution, merged_hardener
 
     def _build_visual_gate_contract(
         self,
@@ -633,414 +1070,6 @@ class OfficialRuntime:
                 "meta": {"error": f"{type(exc).__name__}: {exc}"},
             }
 
-    def _reflection_adapter_summary(
-        self,
-        *,
-        creative_plan: dict[str, Any],
-        measurement: dict[str, Any],
-    ) -> dict[str, Any]:
-        try:
-            real_metrics = safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics"))
-            result = safe_dict(
-                run_reflection_adapter(
-                    {
-                        "creative_plan": creative_plan,
-                        "real_metrics": real_metrics,
-                        "recommendation_engine": safe_dict(measurement.get("recommendation_engine")),
-                        "attention_metrics": safe_dict(measurement.get("attention_metrics")),
-                    }
-                )
-                or {}
-            )
-            engine_cls = self._safe_import_symbol("ace_next.reflection_engine", "ReflectionEngine")
-            if engine_cls is not None:
-                try:
-                    engine_result = safe_dict(
-                        engine_cls().run(
-                            creative_plan=creative_plan,
-                            real_metrics=real_metrics,
-                            recommendation_engine=safe_dict(measurement.get("recommendation_engine")),
-                            attention_metrics=safe_dict(measurement.get("attention_metrics")),
-                        )
-                        or {}
-                    )
-                    if engine_result:
-                        result["engine_result"] = engine_result
-                        result["data"] = {**safe_dict(result.get("data")), **engine_result}
-                except Exception:
-                    pass
-            return result
-        except Exception as exc:
-            return {
-                "ok": False,
-                "state": "reflection_adapter_error",
-                "data": {},
-                "meta": {"error": f"{type(exc).__name__}: {exc}"},
-            }
-
-    # ---------------------------------------------------------
-    # PLANNING / STUDY-DRIVEN HELPERS
-    # ---------------------------------------------------------
-    def _mission_approval_required(self) -> bool:
-        return safe_bool(os.environ.get("ACE_REQUIRE_MISSION_APPROVAL"), False)
-
-    def _planner_overrides_from_mission_decision(self, mission_decision: dict[str, Any] | None) -> dict[str, Any]:
-        mission_decision = safe_dict(mission_decision)
-        content_type = str(mission_decision.get("content_type") or "").strip().lower()
-        publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None
-        return {
-            "strategic_target_format": content_type or None,
-            "publish_format_now": publish_format_now,
-            "publish_style": None,
-            "goal": mission_decision.get("goal"),
-            "hypothesis": mission_decision.get("hypothesis"),
-            "planner_selected": mission_decision.get("planner_selected"),
-            "attention_priority": "save_share_replay_retention",
-            "clarity_density_policy": STUDY_TAGS["psychology_clt"],
-            "narrative_policy": STUDY_TAGS["stepps"],
-            "hook_policy": STUDY_TAGS["hook_attention"],
-            "naturalism_policy": STUDY_TAGS["naturalism"],
-        }
-
-    def _mission_decision(self, trend: str, env_flags: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        mission_control_state = {
-            "enabled": True,
-            "approval_required": self._mission_approval_required(),
-            "blocked": False,
-        }
-        ok, mission_decision = self._call(
-            "decide_mission",
-            trend,
-            format_hint=None,
-            signal_context={
-                "source": "official_runtime",
-                "mode": "run",
-                "study_tags": {
-                    "hook": STUDY_TAGS["hook_attention"],
-                    "stepps": STUDY_TAGS["stepps"],
-                    "mab": STUDY_TAGS["mab"],
-                },
-            },
-            brand_context={
-                "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
-                "brand_live_allowed": False,
-            },
-            queue_state=self._runtime_queue_state(),
-            recent_signal_score=None,
-        )
-        mission_dict = adapt_legacy_mission_decision(mission_decision if ok else {})
-        raw_mission = safe_dict(mission_decision)
-        if not mission_dict:
-            mission_dict = {
-                "trend": trend,
-                "style": "unknown",
-                "content_type": "image",
-                "goal": "authority",
-                "confidence": 0.2,
-                "raw": {
-                    "ok": False,
-                    "should_act": True,
-                    "reason": safe_dict(mission_decision).get("error") or "mission_control_runtime_fallback",
-                    "decision_state": "fallback_allow",
-                    "hypothesis": "mission_control_unavailable_runtime_fallback",
-                    "planner_selected": "mission_control_runtime_fallback",
-                    "signal_strength": "unknown",
-                },
-            }
-            mission_control_state["fallback"] = True
-            mission_control_state["error"] = mission_dict["raw"].get("reason")
-
-        return (
-            {
-                "trend": mission_dict.get("trend") or trend,
-                "style": mission_dict.get("style") or raw_mission.get("style") or "unknown",
-                "content_type": mission_dict.get("content_type") or raw_mission.get("content_type") or "image",
-                "goal": mission_dict.get("goal") or raw_mission.get("goal") or "authority",
-                "confidence": mission_dict.get("confidence") or raw_mission.get("confidence") or 0.2,
-                "raw": raw_mission or mission_dict.get("raw") or {},
-            },
-            mission_control_state,
-        )
-
-    def _creative_plan(self, trend: str, mission_decision: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
-        overrides = self._planner_overrides_from_mission_decision(mission_decision)
-        recent_memory = self._recent_memory_for_planner(limit=5)
-        ok, plan = self._call(
-            "build_creative_plan",
-            trend,
-            overrides=overrides,
-            mission_decision=mission_decision.get("raw"),
-            recent_memory=recent_memory,
-        )
-        if ok:
-            plan_dict = self._to_dict(plan)
-            if plan_dict:
-                plan_dict.setdefault("study_tags", STUDY_TAGS)
-                plan_dict.setdefault("serial_continuity_hint", bool(recent_memory))
-                plan_dict.setdefault("attention_target", "save_share_replay_retention")
-                plan_dict.setdefault("ethical_boundary", "no_hidden_manipulation")
-                return True, plan_dict
-        return False, {
-            "topic_seed": trend,
-            "headline": trend,
-            "hook": f"o que há por trás de {trend}",
-            "payoff": f"clareza prática sobre {trend}",
-            "cta": "salve e compartilhe se fizer sentido",
-            "publish_style": mission_decision.get("style") or "official_next_visual_foundation_v1",
-            "publish_format_now": mission_decision.get("content_type") or "image",
-            "goal": mission_decision.get("goal") or "authority",
-            "hypothesis": safe_dict(mission_decision.get("raw")).get("hypothesis"),
-            "planner_selected": safe_dict(mission_decision.get("raw")).get("planner_selected") or "creative_planner_fallback",
-            "serial_continuity_hint": bool(recent_memory),
-            "study_tags": STUDY_TAGS,
-            "ethical_boundary": "no_hidden_manipulation",
-        }
-
-    def _editorial_brain_or_fallback(
-        self,
-        *,
-        trend: str,
-        recent_signal_score: float | None,
-        env_flags: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        recent_memory = self._recent_memory_for_planner(limit=5)
-        brain_cls = self._safe_import_symbol("ace_next.editorial_brain_v2", "EditorialBrainV2")
-        if brain_cls is not None:
-            try:
-                brain_result = safe_dict(
-                    brain_cls().run(
-                        trend=trend,
-                        format_hint=None,
-                        recent_signal_score=recent_signal_score,
-                        queue_state=self._runtime_queue_state(),
-                        signal_context={"source": "official_runtime", "mode": "run"},
-                        brand_context={
-                            "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
-                            "brand_live_allowed": False,
-                        },
-                        recent_memory=recent_memory,
-                    )
-                    or {}
-                )
-                mission = safe_dict(brain_result.get("mission_decision"))
-                creative_plan = safe_dict(brain_result.get("creative_plan"))
-                if mission and creative_plan:
-                    mission.setdefault("raw", mission)
-                    creative_plan.setdefault("study_tags", STUDY_TAGS)
-                    creative_plan.setdefault("serial_continuity_hint", bool(recent_memory))
-                    creative_plan.setdefault("attention_target", "save_share_replay_retention")
-                    creative_plan.setdefault("ethical_boundary", "no_hidden_manipulation")
-                    return mission, creative_plan, {
-                        "ok": True,
-                        "state": brain_result.get("brain_state") or "editorial_brain_v2_ready",
-                        "used": True,
-                        "result": brain_result,
-                    }
-            except Exception as exc:
-                return {}, {}, {"ok": False, "used": False, "state": f"editorial_brain_error: {type(exc).__name__}: {exc}"}
-
-        return {}, {}, {"ok": False, "used": False, "state": "editorial_brain_unavailable"}
-
-    def _editorial_quality(self, plan_dict: dict[str, Any]) -> dict[str, Any]:
-        ok, result = self._call("evaluate_editorial_quality", plan_dict)
-        quality = self._to_dict(result) if ok else {}
-        if quality:
-            return quality
-        return {
-            "approved": False,
-            "breakdown": {},
-            "flags": ["editorial_qa_unavailable"],
-            "reasons": [safe_dict(result).get("error") or "editorial_qa_unavailable"],
-            "study_alignment": {
-                "clarity_density_control": True,
-                "stepps_narrative": True,
-                "anti_cliche": True,
-            },
-        }
-
-    def _visual_foundation(
-        self,
-        plan_dict: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-        visual_identity = {}
-        typography = {}
-        visual_contract = {}
-        visual_template = {}
-        perceptual_qa = {}
-        visual_qa = {}
-
-        ok, identity_obj = self._call("build_visual_identity", plan_dict)
-        visual_identity = self._to_dict(identity_obj) if ok else {"error": safe_dict(identity_obj).get("error") or "visual_identity_unavailable"}
-
-        ok, typography_obj = self._call("build_typography_spec", plan_dict)
-        typography = self._to_dict(typography_obj) if ok else {"error": safe_dict(typography_obj).get("error") or "typography_unavailable"}
-
-        ok, contract_obj = self._call("build_visual_contract", plan_dict)
-        visual_contract = self._to_dict(contract_obj) if ok else {"error": safe_dict(contract_obj).get("error") or "visual_contract_unavailable"}
-
-        ok, template_obj = self._call("resolve_visual_template", plan_dict)
-        visual_template = self._to_dict(template_obj) if ok else {"error": safe_dict(template_obj).get("error") or "visual_template_unavailable"}
-
-        if (
-            visual_identity and typography and visual_contract and visual_template
-            and "error" not in visual_identity
-            and "error" not in typography
-            and "error" not in visual_contract
-            and "error" not in visual_template
-        ):
-            ok, result = self._call(
-                "evaluate_perceptual_quality",
-                plan=plan_dict,
-                contract=contract_obj,
-                template=template_obj,
-                identity=identity_obj,
-                typography=typography_obj,
-            )
-            perceptual_qa = self._to_dict(result) if ok else {}
-            ok, result = self._call(
-                "evaluate_visual_quality",
-                plan=plan_dict,
-                identity=identity_obj,
-                typography=typography_obj,
-            )
-            visual_qa = self._to_dict(result) if ok else {}
-
-        if not perceptual_qa:
-            perceptual_qa = {
-                "approved": False,
-                "final_score": 0,
-                "breakdown": {},
-                "metrics": {"zero_overlap": False},
-                "reasons": ["perceptual_qa_unavailable"],
-                "recommendations": [],
-                "study_alignment": {
-                    "pattern_interrupt_visual": True,
-                    "visual_hierarchy": True,
-                    "safe_zones": True,
-                    "naturalism": True,
-                },
-            }
-
-        if not visual_qa:
-            visual_qa = {
-                "approved": False,
-                "final_score": 0,
-                "minimum_score": 75,
-                "breakdown": {},
-                "metrics": {"zero_overlap": False},
-                "reasons": ["visual_qa_unavailable"],
-                "recommendations": [],
-                "study_alignment": {
-                    "contrast": True,
-                    "typography_legibility": True,
-                    "visual_hierarchy": True,
-                },
-            }
-
-        return visual_identity, typography, visual_contract, visual_template, {
-            "perceptual_qa": perceptual_qa,
-            "visual_qa": visual_qa,
-        }
-
-    def _premium_visual(
-        self,
-        plan_dict: dict[str, Any],
-        visual_identity: dict[str, Any],
-        visual_contract: dict[str, Any],
-    ) -> dict[str, Any]:
-        ok, result = self._call(
-            "build_visual_premium_bridge",
-            creative_plan=plan_dict,
-            visual_identity=visual_identity,
-            visual_contract=visual_contract,
-            strategic_format=plan_dict.get("publish_format_now"),
-            template_id=None,
-            capture_mode="safe",
-        )
-        premium_visual = self._to_dict(result) if ok else {}
-        if premium_visual:
-            premium_visual.setdefault(
-                "study_alignment",
-                {
-                    "pattern_interrupt_visual": True,
-                    "playwright_official_path": True,
-                    "premium_layout_variation": True,
-                },
-            )
-            return premium_visual
-        return {
-            "ok": False,
-            "approved_for_premium_visual": False,
-            "premium_render_state": "premium_visual_bridge_unavailable",
-            "reasons": [safe_dict(result).get("error") or "premium_visual_bridge_unavailable"],
-            "hardening_applied": False,
-            "hardening_report": {},
-            "study_alignment": {
-                "pattern_interrupt_visual": True,
-                "playwright_official_path": True,
-                "premium_layout_variation": True,
-            },
-        }
-
-    def _resolve_authorized_payload(
-        self,
-        *,
-        creative_plan: dict[str, Any],
-        premium_visual: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        hardening_report = safe_dict(premium_visual.get("hardening_report"))
-        hardened_payload = safe_dict(
-            hardening_report.get("hardened_payload")
-            or premium_visual.get("hardened_visible_payload")
-            or premium_visual.get("metrics", {}).get("render_payload_used")
-        )
-        render_payload_used = safe_dict(
-            hardening_report.get("render_payload_used")
-            or premium_visual.get("metrics", {}).get("render_payload_used")
-        )
-        resolution = resolve_authorized_payload(
-            creative_plan,
-            hardened_payload=hardened_payload or None,
-            render_payload_used=render_payload_used or None,
-            strategic_format=str(
-                creative_plan.get("publish_format_now")
-                or creative_plan.get("strategic_target_format")
-                or creative_plan.get("format_recommendation")
-                or "image"
-            ),
-            template_id=str(
-                premium_visual.get("selected_template_id")
-                or hardening_report.get("selected_template_id")
-                or creative_plan.get("template_id")
-                or ""
-            )
-            or None,
-            capture_mode="safe",
-        )
-        authorized_payload = safe_dict(resolution.get("authorized_payload"))
-        updated_plan = dict(creative_plan)
-        if authorized_payload:
-            updated_plan["headline"] = authorized_payload.get("headline") or updated_plan.get("headline")
-            updated_plan["hook"] = authorized_payload.get("hook") or updated_plan.get("hook")
-            updated_plan["body"] = authorized_payload.get("body") or updated_plan.get("body")
-            updated_plan["cta"] = authorized_payload.get("cta") or updated_plan.get("cta")
-            updated_plan["caption"] = authorized_payload.get("caption") or updated_plan.get("caption")
-            updated_plan["support_points"] = authorized_payload.get("support_points") or updated_plan.get("support_points") or []
-            updated_plan["publish_format_now"] = authorized_payload.get("format") or updated_plan.get("publish_format_now")
-            updated_plan["authorized_payload"] = authorized_payload
-            updated_plan["authority_payload_source"] = resolution.get("authorized_source")
-            updated_plan["semantic_anchors_preserved"] = resolution.get("semantic_anchors_preserved")
-        merged_hardener = {**hardening_report}
-        merged_hardener["authorized_payload"] = authorized_payload
-        merged_hardener["authority_payload_source"] = resolution.get("authorized_source")
-        merged_hardener["changed_fields"] = resolution.get("changed_fields") or []
-        merged_hardener["changed_fields_count"] = resolution.get("changed_fields_count")
-        merged_hardener["semantic_anchors_preserved"] = resolution.get("semantic_anchors_preserved") or hardening_report.get("semantic_anchors_preserved") or []
-        if resolution.get("moved_to_caption"):
-            merged_hardener["moved_to_caption"] = resolution.get("moved_to_caption")
-            merged_hardener["hidden_overflow_for_caption"] = resolution.get("moved_to_caption")
-        return updated_plan, resolution, merged_hardener
-
     def _authorization_fallback(
         self,
         *,
@@ -1119,8 +1148,13 @@ class OfficialRuntime:
         rubric_fn = self._symbol("evaluate_rubric_engine")
         brand_veto_fn = self._symbol("evaluate_brand_veto_gate")
         authorize_fn = self._symbol("authorize_publication")
+
         if not rubric_fn or not brand_veto_fn or not authorize_fn:
-            return self._authorization_fallback(force_placeholder=force_placeholder, reason="authorization_stack_import_error")
+            return self._authorization_fallback(
+                force_placeholder=force_placeholder,
+                reason="authorization_stack_import_error",
+            )
+
         try:
             rubric = rubric_fn(
                 plan=plan_dict,
@@ -1145,7 +1179,6 @@ class OfficialRuntime:
                 env_flags=env_flags,
                 request_flags=request_flags,
                 staging_hardener=staging_hardener,
-                authority_payload_source=safe_dict(staging_hardener).get("authority_payload_source"),
             )
             rubric_dict = self._to_dict(rubric)
             rubric_dict["stack_ok"] = True
@@ -1235,8 +1268,12 @@ class OfficialRuntime:
             and not request_flags.get("force_placeholder")
             and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
         )
+
         return brand_surface_policy, lab_probe_policy, explicit_probe_execution_allowed
 
+    # ---------------------------------------------------------
+    # REEL STACK / PREVIEWS / PUBLISH
+    # ---------------------------------------------------------
     def _run_reel_premium_stack_base(
         self,
         *,
@@ -1324,10 +1361,12 @@ class OfficialRuntime:
                 "cadence_55_60s": "300ms",
             },
         )
+
         subtitles = {
             "emphasis_mode": "short_emphasis_lines" if rhythm.get("subtitle_pacing_hint") == "short_emphasis_lines" else "balanced_lines",
             "naturalism_mode": "anti_plastic_subtitles",
         }
+
         post_production = safe_dict(post_cls().run(storyboard=storyboard, rhythm=rhythm, subtitles=subtitles))
         audio_direction = safe_dict(
             audio_cls().run(
@@ -1340,6 +1379,7 @@ class OfficialRuntime:
             "study_alignment",
             {"foley": True, "ducking": True, "prosody": True, "micro_breathing": True},
         )
+
         naturalism = safe_dict(
             naturalism_cls().run(
                 creative_plan=creative_plan,
@@ -1355,9 +1395,13 @@ class OfficialRuntime:
         )
         naturalism.setdefault("naturalism_state", "naturalism_engine_ready")
 
-        visual_score_10 = max(float(visual_qa.get("final_score", 0)) / 10.0, float(perceptual_qa.get("final_score", 0)) / 10.0)
+        visual_score_10 = max(
+            float(visual_qa.get("final_score", 0)) / 10.0,
+            float(perceptual_qa.get("final_score", 0)) / 10.0,
+        )
         audio_score_10 = 8.6 if audio_direction.get("state") == "audio_direction_layer_ready" else 6.0
         rhythm_score_10 = 8.6 if rhythm.get("rhythm_state") == "reel_rhythm_ready" else 6.0
+
         multimodal_qa = safe_dict(
             qa_cls().run(
                 visual_gate={"global_visual_score": visual_score_10},
@@ -1366,10 +1410,12 @@ class OfficialRuntime:
                 naturalism=naturalism,
             )
         )
+
         overall_quality_score = max(
             visual_score_10,
             8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10,
         )
+
         cinematic_gate = safe_dict(
             cinematic_cls().run(
                 multimodal_qa=multimodal_qa,
@@ -1385,6 +1431,7 @@ class OfficialRuntime:
                 },
             )
         )
+
         release_authority = safe_dict(
             release_cls().run(
                 cinematic_gate=cinematic_gate,
@@ -1392,6 +1439,7 @@ class OfficialRuntime:
                 operation_bridge={"operational_state": _normalize_release_operation_state(operational_state)},
             )
         )
+
         publish_guard = safe_dict(
             guard_cls().run(
                 release_authority=release_authority,
@@ -1454,11 +1502,21 @@ class OfficialRuntime:
 
     def _render_previews(self, plan_dict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         ok, result = self._call("build_carousel_sequence", plan_dict)
-        carousel_preview = self._to_dict(result) if ok else {"ok": False, "error": safe_dict(result).get("error") or "carousel_preview_unavailable"}
+        carousel_preview = self._to_dict(result) if ok else {
+            "ok": False,
+            "error": safe_dict(result).get("error") or "carousel_preview_unavailable",
+        }
+
         ok, result = self._call("build_stories_sequence", plan_dict)
-        stories_preview = self._to_dict(result) if ok else {"ok": False, "error": safe_dict(result).get("error") or "stories_preview_unavailable"}
+        stories_preview = self._to_dict(result) if ok else {
+            "ok": False,
+            "error": safe_dict(result).get("error") or "stories_preview_unavailable",
+        }
         return carousel_preview, stories_preview
 
+    # ---------------------------------------------------------
+    # MEASUREMENT / LEARNING
+    # ---------------------------------------------------------
     def _distribution_context_from_store(self) -> dict[str, Any]:
         symbol = self._symbol("DistributionTimingEngine")
         store_cls = self._symbol("PerformanceStore")
@@ -1514,7 +1572,10 @@ class OfficialRuntime:
             },
             "errors": [error_summary] if error_summary else [],
             "raw": {},
-            "study_alignment": {"attention_engineering": True, "like_is_auxiliary": True},
+            "study_alignment": {
+                "attention_engineering": True,
+                "like_is_auxiliary": True,
+            },
         }
 
         thompson_sampler_result = {
@@ -1583,7 +1644,11 @@ class OfficialRuntime:
                 "reasons": [],
                 "capability_ready": bool(self._symbol("resonance_engine")),
             },
-            "reward_prediction": {"ok": True, "reward_prediction_score": None, "reasons": []},
+            "reward_prediction": {
+                "ok": True,
+                "reward_prediction_score": None,
+                "reasons": [],
+            },
             "thompson_sampler": thompson_sampler_result,
             "decision_core_summary": {
                 "ok": True,
@@ -1630,8 +1695,14 @@ class OfficialRuntime:
                 "recommended_action": recommendation_engine.get("recommended_action"),
                 "next_best_step": recommendation_engine.get("next_best_step"),
             },
-            "experiment_registry": {"ok": bool(self._symbol("ExperimentRegistry")), "error": None if self._symbol("ExperimentRegistry") else "measurement_slim_runtime"},
-            "episodic_performance_memory": {"ok": False, "error": "measurement_slim_runtime"},
+            "experiment_registry": {
+                "ok": bool(self._symbol("ExperimentRegistry")),
+                "error": None if self._symbol("ExperimentRegistry") else "measurement_slim_runtime",
+            },
+            "episodic_performance_memory": {
+                "ok": False,
+                "error": "measurement_slim_runtime",
+            },
             "reflection_memory": {
                 "ok": True,
                 "status": "recorded",
@@ -1656,7 +1727,11 @@ class OfficialRuntime:
                     "can_change_visual_policy": False,
                     "can_autopublish_brand_live": False,
                 },
-                "study_alignment": {"stackelberg": True, "mab": True, "attention_priority": True},
+                "study_alignment": {
+                    "stackelberg": True,
+                    "mab": True,
+                    "attention_priority": True,
+                },
             },
             "performance_summary": {
                 "ok": True,
@@ -1678,6 +1753,7 @@ class OfficialRuntime:
         serial_continuity: dict[str, Any],
     ) -> dict[str, Any]:
         measurement = safe_dict(measurement)
+
         distribution_context = self._distribution_context_from_store()
         if distribution_context:
             measurement["distribution_timing_engine"] = distribution_context
@@ -1687,7 +1763,8 @@ class OfficialRuntime:
                 "recommended_timing_hypothesis": distribution_context.get("recommended_timing_hypothesis"),
             }
             measurement["distribution_state"] = {
-                "recommended_next_angle": distribution_context.get("recommended_next_angle") or "manter hipótese conservadora e reduzir ruído na promessa",
+                "recommended_next_angle": distribution_context.get("recommended_next_angle")
+                or "manter hipótese conservadora e reduzir ruído na promessa",
                 "recommended_next_format": distribution_context.get("recommended_next_format"),
                 "recommended_next_series_action": distribution_context.get("recommended_next_series_action"),
                 "recommended_timing_hypothesis": distribution_context.get("recommended_timing_hypothesis"),
@@ -1814,7 +1891,7 @@ class OfficialRuntime:
         )
 
     # ---------------------------------------------------------
-    # MAIN RUN
+    # MAIN CYCLE
     # ---------------------------------------------------------
     def _run_cycle_internal(
         self,
@@ -1836,13 +1913,12 @@ class OfficialRuntime:
             force_real_probe=runtime_request.force_real_probe,
             probe_state=runtime_request.probe_state,
             source="official_runtime",
-            mode="thin_runtime_sovereign_rewrite_v1",
+            mode="sovereign_runtime_v2",
         )
 
         trend_guard = sanitize_trend_input(runtime_request.trend)
         trend_for_radar = normalize_trend(
             trend_guard.get("sanitized_trend") or runtime_request.trend,
-            default="teste real",
         )
         radar = self.trend_radar.run(
             trend=trend_for_radar,
@@ -1859,9 +1935,9 @@ class OfficialRuntime:
             source="official_runtime",
         )
         effective_trend = radar.get("effective_trend") or trend_for_radar
+
         probe_state_requested = normalize_probe_state(runtime_request.probe_state)
         env_flags = self._brand_env_flags()
-
         request_flags = {
             "probe_requested": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
             "explicit_probe_arm": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
@@ -1928,16 +2004,19 @@ class OfficialRuntime:
         creative_plan["trend_input"] = effective_trend
         creative_plan["trend_input_guard"] = trend_guard
         creative_plan.setdefault("study_tags", STUDY_TAGS)
-        creative_plan.setdefault("study_axes_applied", [
-            "hook_opening_0_3s",
-            "pattern_interrupt_3_5s",
-            "micro_payoffs",
-            "curiosity_gap",
-            "cta_strength",
-            "naturalismo_real_v2",
-            "cinematic_authority",
-            "algorithmic_priority_watchtime_shares_saves_completion",
-        ])
+        creative_plan.setdefault(
+            "study_axes_applied",
+            [
+                "hook_opening_0_3s",
+                "pattern_interrupt_3_5s",
+                "micro_payoffs",
+                "curiosity_gap",
+                "cta_strength",
+                "naturalismo_real_v2",
+                "cinematic_authority",
+                "algorithmic_priority_watchtime_shares_saves_completion",
+            ],
+        )
 
         serial_adapter_summary = self._serial_continuity_summary(creative_plan)
         creative_plan = self.phase_absorption.apply_phase7_decision_memory(
@@ -1945,6 +2024,7 @@ class OfficialRuntime:
             measurement_summary={"previous_decision_memory_entries": previous_decision_memory_entries},
         )
         current_cycle_memory_override = bool(creative_plan.get("memory_override"))
+
         editorial_qa = self._editorial_quality(creative_plan)
 
         visual_identity, typography, visual_contract, visual_template, visual_bundle = self._visual_foundation(creative_plan)
@@ -1964,6 +2044,7 @@ class OfficialRuntime:
             authorized_payload=authorized_payload,
         )
         hierarchy_gate_adapter_data = safe_dict(visual_gate_adapter_summary.get("data"))
+
         dignity_adapter_summary = self._dignity_adapter_summary(
             creative_plan=creative_plan,
             visual_qa=visual_qa,
@@ -2006,6 +2087,7 @@ class OfficialRuntime:
             operational_state=operational_state,
             publish_truth_state="publish_truth_absent",
         )
+
         release_authority = safe_dict(prepublish_reel_stack.get("release_authority"))
         publish_guard = safe_dict(prepublish_reel_stack.get("publish_guard"))
 
@@ -2041,6 +2123,7 @@ class OfficialRuntime:
             }
 
         carousel_preview, stories_preview = self._render_previews(creative_plan)
+
         try:
             refresh_result = self.ensure_fresh_instagram_token(force=False)
         except Exception as exc:
@@ -2049,6 +2132,7 @@ class OfficialRuntime:
         render_path = None
         render_error = None
         publish_result: dict[str, Any] | None = None
+
         linkage_context = {
             "operational_state": operational_state,
             "brand_live_allowed": False,
@@ -2066,6 +2150,7 @@ class OfficialRuntime:
             or mission_decision.get("content_type")
             or "image"
         ).strip().lower()
+
         publish_guard_mode = publish_guard.get("mode")
         publish_guard_can_publish = bool(publish_guard.get("can_publish"))
 
@@ -2088,10 +2173,15 @@ class OfficialRuntime:
                     linkage_context=linkage_context,
                 )
             else:
-                publish_result = {"ok": False, "publish_status": "publish_service_unavailable", "error": "publish_service_unavailable"}
+                publish_result = {
+                    "ok": False,
+                    "publish_status": "publish_service_unavailable",
+                    "error": "publish_service_unavailable",
+                }
         else:
             should_render = bool(lab_probe_policy.get("probe_render_requested")) or publish_guard_can_publish
             requires_single_render = publish_format_now in {"image", "reel"}
+
             if should_render and requires_single_render:
                 ok, render_result = self._call(
                     "render_visual_foundation_card",
@@ -2126,7 +2216,7 @@ class OfficialRuntime:
 
             publish_linkage_ready = bool(linkage_context.get("publish_linkage_ready"))
             effective_real_publish = bool(
-                explicit_probe_execution_ALLOWED
+                explicit_probe_execution_allowed
                 and lab_probe_policy.get("probe_eligible")
                 and publish_guard_mode == "ready"
             )
@@ -2176,7 +2266,11 @@ class OfficialRuntime:
                         linkage_context=linkage_context,
                     )
                 else:
-                    publish_result = {"ok": False, "publish_status": "publish_service_unavailable", "error": "publish_service_unavailable"}
+                    publish_result = {
+                        "ok": False,
+                        "publish_status": "publish_service_unavailable",
+                        "error": "publish_service_unavailable",
+                    }
                 publish_status = str(safe_dict(publish_result).get("publish_status") or "")
                 lab_probe_policy["probe_publish_executed"] = publish_status == "published_real_probe"
             else:
@@ -2201,6 +2295,7 @@ class OfficialRuntime:
 
         publish_result = adapt_legacy_publish_result(publish_result)
         publish_truth_state = _publish_truth_state_from_result(publish_result)
+
         postpublish_reel_stack = self._run_reel_premium_stack(
             trend=effective_trend,
             creative_plan=creative_plan,
@@ -2210,6 +2305,7 @@ class OfficialRuntime:
             operational_state=operational_state,
             publish_truth_state=publish_truth_state,
         )
+
         measurement = self._measurement_summary(
             publish_result=publish_result,
             creative_plan=creative_plan,
@@ -2218,7 +2314,11 @@ class OfficialRuntime:
             visual_template=visual_template,
             serial_continuity=safe_dict(serial_adapter_summary.get("data")),
         )
-        reflection_adapter_summary = self._reflection_adapter_summary(creative_plan=creative_plan, measurement=measurement)
+
+        reflection_adapter_summary = self._reflection_adapter_summary(
+            creative_plan=creative_plan,
+            measurement=measurement,
+        )
         reflection_adapter_data = safe_dict(reflection_adapter_summary.get("data"))
         if reflection_adapter_data:
             measurement["reflection_memory"] = reflection_adapter_data
@@ -2231,6 +2331,7 @@ class OfficialRuntime:
         )
         measurement["previous_decision_memory_entries"] = previous_decision_memory_entries
         measurement["decision_memory_entries"] = current_decision_memory_entries
+
         next_cycle_memory = self.phase_absorption.apply_phase7_decision_memory(
             creative_plan=dict(creative_plan),
             measurement_summary=measurement,
