@@ -1,32 +1,55 @@
 from __future__ import annotations
-from typing import Any, Dict
+
+from typing import Any
+
+
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _hashtags_from_trend(trend: str) -> list[str]:
+    compact = "".join(ch for ch in trend.title() if ch.isalnum())
+    base = f"#{compact}" if compact else "#ACEOmega"
+    return [base, "#Retencao", "#Clareza", "#ConteudoPremium", "#Instagram"]
+
 
 class SeoSocialEngine:
     """
-    Gera metadados (título, descrição, hashtags) otimizados por plataforma.
+    Gera caption, description e hashtags.
+    Não publica. Só prepara metadata para o runtime.
     """
 
     def build_metadata(
         self,
         trend: str,
-        creative_plan: Dict[str, Any],
+        creative_plan: dict[str, Any],
         platform: str = "instagram",
-    ) -> Dict[str, Any]:
-        hashtags = [f"#{trend.replace(' ', '')}"]
-        title = creative_plan.get("headline") or trend
-        description = creative_plan.get("body") or f"Confira tudo sobre {trend}"
+    ) -> dict[str, Any]:
+        trend = _clean_text(trend)
+        plan = dict(creative_plan or {})
+
+        headline = _clean_text(plan.get("headline") or trend)
+        hook = _clean_text(plan.get("hook") or "")
+        body = _clean_text(plan.get("body") or "")
+        payoff = _clean_text(plan.get("payoff") or "")
+        cta = _clean_text(plan.get("cta") or "Salve e envie para alguém que precisa disto.")
+
+        description = _clean_text(" ".join(x for x in [hook, body, payoff] if x))
+        caption = _clean_text(" ".join(x for x in [headline, description, cta] if x))
+        hashtags = _hashtags_from_trend(trend)
 
         if platform == "youtube":
-            hashtags += ["#shorts", "#viral"]
+            hashtags = hashtags[:3] + ["#Shorts", "#Viral"]
         elif platform == "tiktok":
-            hashtags += ["#fyp", "#paravoce"]
+            hashtags = hashtags[:3] + ["#FYP", "#ParaVoce"]
         elif platform == "threads":
-            hashtags += ["#opiniao", "#discussao"]
+            hashtags = hashtags[:3] + ["#Discussao", "#Opiniao"]
 
         return {
             "ok": True,
-            "title": title,
-            "description": description,
-            "hashtags": hashtags[:5],
             "platform": platform,
+            "title": headline,
+            "description": description[:400],
+            "caption": caption[:500],
+            "hashtags": hashtags[:6],
         }
