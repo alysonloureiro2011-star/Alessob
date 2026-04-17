@@ -1,29 +1,23 @@
 from __future__ import annotations
-
 from typing import Any, Dict
 
-# Este módulo é um orquestrador de LLM simples. Ele pode ser estendido para usar GPT ou outros modelos.
 class LLMOrchestrator:
     """
-    Organiza chamadas a um modelo de linguagem para planejar conteúdo criativo.
+    Orquestra um modelo de linguagem para planejar o conteúdo.
+    Atualmente funciona como stub. Pode ser adaptado para usar OpenAI ou outro provedor.
     """
 
-    def __init__(self, provider: str | None = None):
-        """
-        provider: Nome do provedor de LLM (openai, anthropic etc.). Não usado no stub.
-        """
-        self.provider = provider
+    def __init__(self, provider: str | None = None) -> None:
+        self.provider = provider or "stub"
 
     def run_planner(self, trend: str, style_hint: str | None = None) -> Dict[str, Any]:
         """
-        Usa LLM para gerar um plano de conteúdo a partir da tendência.
-        No stub, retorna uma estrutura simplificada.
+        Gera um plano criativo básico. Ajuste conforme o provedor real.
         """
-        # Enquanto não há acesso real a LLM, usar um planejamento simples
         headline = f"Ideias sobre {trend}"
         hook = f"Descubra algo novo sobre {trend} que vai mudar sua forma de pensar!"
         body = f"Explore como {trend} impacta sua rotina e como implementar melhorias práticas."
-        cta = "Compartilhe e salve este post se você curtir!"
+        cta = "Compartilhe e salve este post se fizer sentido!"
         return {
             "ok": True,
             "creative_plan": {
@@ -36,13 +30,10 @@ class LLMOrchestrator:
                 "style": style_hint or "default",
                 "goal": "explore",
             },
-            "provider": self.provider or "stub",
+            "provider": self.provider,
         }
 
 def llm_orchestrator_status() -> Dict[str, Any]:
-    """
-    Retorna o status simplificado do orquestrador.
-    """
     return {
         "ok": True,
         "reason": "llm_orchestrator_stub",
