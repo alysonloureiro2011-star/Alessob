@@ -1,177 +1,36 @@
 from __future__ import annotations
 
-from collections import Counter
-from typing import Any
+from typing import Any, Dict, List
 
+class SeoSocialEngine:
+    """
+    Gera descrições, hashtags e metadados sociais para otimizar postagens em plataformas diversas.
+    """
 
-MAX_HASHTAGS = 8
+    def build_metadata(
+        self,
+        trend: str,
+        creative_plan: Dict[str, Any],
+        platform: str = "instagram",
+    ) -> Dict[str, Any]:
+        """
+        Produz hashtags e títulos otimizados para a plataforma solicitada.
+        """
+        hashtags = [f"#{trend.replace(' ', '')}"]
+        title = creative_plan.get("headline") or trend
+        description = creative_plan.get("body") or f"Confira tudo sobre {trend}"
 
+        if platform == "youtube":
+            hashtags += ["#shorts", "#viral"]
+        elif platform == "tiktok":
+            hashtags += ["#fyp", "#paravoce"]
+        elif platform == "threads":
+            hashtags += ["#opinião", "#discussão"]
 
-def _safe_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _safe_list(value: Any) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
-def _text(value: Any) -> str:
-    return " ".join(str(value or "").strip().split())
-
-
-def _normalize_token(value: Any) -> str:
-    text = _text(value).lower()
-    return "".join(ch for ch in text if ch.isalnum() or ch in {"_", "#"})
-
-
-def _extract_topic_terms(record: dict[str, Any]) -> list[str]:
-    creative_plan = _safe_dict(record.get("creative_plan"))
-    distribution_context = _safe_dict(creative_plan.get("distribution_context"))
-
-    raw_terms = [
-        creative_plan.get("topic_seed"),
-        creative_plan.get("headline"),
-        creative_plan.get("hook"),
-        creative_plan.get("payoff"),
-        creative_plan.get("cta"),
-        creative_plan.get("series_name"),
-        distribution_context.get("recommended_next_angle"),
-    ]
-
-    tokens: list[str] = []
-    for item in raw_terms:
-        text = _text(item)
-        if not text:
-            continue
-        for part in text.split():
-            clean = _normalize_token(part.replace("#", ""))
-            if len(clean) >= 4:
-                tokens.append(clean)
-    return tokens
-
-
-def _extract_metrics(record: dict[str, Any]) -> dict[str, float]:
-    real_metrics = _safe_dict(record.get("real_metrics"))
-    attention_metrics = _safe_dict(record.get("attention_metrics"))
-    breakdown = _safe_dict(attention_metrics.get("breakdown"))
-
-    def _float(value: Any) -> float:
-        try:
-            return float(value or 0)
-        except Exception:
-            return 0.0
-
-    return {
-        "share_rate": _float(real_metrics.get("share_rate") or breakdown.get("share_rate")),
-        "save_rate": _float(real_metrics.get("save_rate") or breakdown.get("save_rate")),
-        "completion_rate": _float(real_metrics.get("completion_rate") or breakdown.get("completion_rate")),
-        "retention_rate": _float(real_metrics.get("retention_rate") or breakdown.get("retention_rate")),
-    }
-
-
-def _score_record(record: dict[str, Any]) -> float:
-    metrics = _extract_metrics(record)
-    return round(
-        (metrics["share_rate"] * 0.32)
-        + (metrics["save_rate"] * 0.28)
-        + (metrics["completion_rate"] * 0.22)
-        + (metrics["retention_rate"] * 0.18),
-        4,
-    )
-
-
-def _build_hashtags(records: list[dict[str, Any]]) -> list[str]:
-    weighted_terms: list[str] = []
-
-    for record in records:
-        score = _score_record(record)
-        terms = _extract_topic_terms(record)
-        weight = 3 if score >= 0.6 else 2 if score >= 0.3 else 1
-        for _ in range(weight):
-            weighted_terms.extend(terms)
-
-    counts = Counter(weighted_terms)
-    hashtags: list[str] = []
-
-    for token, _ in counts.most_common(20):
-        if len(token) < 4:
-            continue
-        tag = f"#{token}"
-        if tag not in hashtags:
-            hashtags.append(tag)
-        if len(hashtags) >= MAX_HASHTAGS:
-            break
-
-    return hashtags
-
-
-def _build_caption_hooks(records: list[dict[str, Any]]) -> list[str]:
-    hooks: list[str] = []
-
-    for record in records[-10:]:
-        creative_plan = _safe_dict(record.get("creative_plan"))
-        for candidate in (
-            creative_plan.get("hook"),
-            creative_plan.get("headline"),
-            creative_plan.get("payoff"),
-        ):
-            text = _text(candidate)
-            if text and text not in hooks:
-                hooks.append(text)
-
-    return hooks[:5]
-
-
-def build_seo_social_engine(
-    *,
-    records: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    records = [_safe_dict(item) for item in _safe_list(records)]
-
-    hashtags = _build_hashtags(records)
-    caption_hooks = _build_caption_hooks(records)
-
-    if len(records) >= 7:
-        confidence = "high"
-    elif len(records) >= 4:
-        confidence = "medium"
-    else:
-        confidence = "low"
-
-    seo_mode = (
-        "evidence_guided"
-        if confidence in {"medium", "high"}
-        else "conservative"
-    )
-
-    return {
-        "ok": True,
-        "module": "seo_social_engine_v1",
-        "records_considered": len(records),
-        "confidence": confidence,
-        "seo_mode": seo_mode,
-        "recommended_hashtags": hashtags,
-        "recommended_caption_hooks": caption_hooks,
-        "recommended_description_policy": (
-            "abrir com hook forte, entregar clareza concreta e fechar com CTA de save/share"
-        ),
-        "recommended_metadata_policy": {
-            "instagram_first": True,
-            "title_density": "high_clarity_low_noise",
-            "cta_policy": "save_share_comment_if_real_value",
-            "hashtag_policy": "few_relevant_tags_no_spam",
-        },
-        "study_alignment": {
-            "seo_social_engine": True,
-            "distribution_ready": True,
-            "attention_priority": True,
-            "multiplatform_ready": True,
-        },
-        "notes": [
-            f"records={len(records)}",
-            f"confidence={confidence}",
-            f"seo_mode={seo_mode}",
-            f"hashtags={len(hashtags)}",
-            f"caption_hooks={len(caption_hooks)}",
-        ],
-    }
+        return {
+            "ok": True,
+            "title": title,
+            "description": description,
+            "hashtags": hashtags[:5],
+            "platform": platform,
+        }
