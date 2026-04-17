@@ -1,10 +1,9 @@
 from __future__ import annotations
-
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 class SeoSocialEngine:
     """
-    Gera descrições, hashtags e metadados sociais para otimizar postagens em plataformas diversas.
+    Gera metadados (título, descrição, hashtags) otimizados por plataforma.
     """
 
     def build_metadata(
@@ -13,9 +12,6 @@ class SeoSocialEngine:
         creative_plan: Dict[str, Any],
         platform: str = "instagram",
     ) -> Dict[str, Any]:
-        """
-        Produz hashtags e títulos otimizados para a plataforma solicitada.
-        """
         hashtags = [f"#{trend.replace(' ', '')}"]
         title = creative_plan.get("headline") or trend
         description = creative_plan.get("body") or f"Confira tudo sobre {trend}"
@@ -25,7 +21,7 @@ class SeoSocialEngine:
         elif platform == "tiktok":
             hashtags += ["#fyp", "#paravoce"]
         elif platform == "threads":
-            hashtags += ["#opinião", "#discussão"]
+            hashtags += ["#opiniao", "#discussao"]
 
         return {
             "ok": True,
