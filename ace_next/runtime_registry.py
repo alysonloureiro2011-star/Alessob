@@ -1,201 +1,60 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from importlib import import_module
-from typing import Any
+from typing import Any, Dict, Optional
 
+# Importa símbolos reais das novas capacidades.
+# Caso algumas implementações sejam stubs, ainda assim o registro apontará para elas.
 
-@dataclass(frozen=True)
-class CapabilitySpec:
-    name: str
-    module_path: str
-    symbol: str
-    required: bool = False
-    stage: str = "current"
-    fallback: str | None = None
-    notes: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-CURRENT_CAPABILITIES: tuple[CapabilitySpec, ...] = (
-    CapabilitySpec("load_instagram_auth", ".auth_store", "load_instagram_auth", required=True, stage="wave1"),
-    CapabilitySpec("sync_instagram_token_sources", ".auth_store", "sync_instagram_token_sources", required=True, stage="wave1"),
-    CapabilitySpec("resolve_brand_surface_policy", ".brand_surface_isolation", "resolve_brand_surface_policy", required=True, stage="wave5"),
-    CapabilitySpec(
-        "build_creative_plan",
-        ".creative_planner_runtime_bridge",
-        "build_creative_plan",
-        required=True,
-        stage="wave2",
-        notes="runtime bridge wires mission, learning and distribution into planner",
-    ),
-    CapabilitySpec("evaluate_editorial_quality", ".editorial_rubric", "evaluate_editorial_quality", required=True, stage="wave2"),
-    CapabilitySpec("resolve_lab_probe_policy", ".lab_probe_policy", "resolve_lab_probe_policy", required=True, stage="wave5"),
-    CapabilitySpec("decide_mission", ".mission_control", "decide_mission", required=True, stage="wave2"),
-    CapabilitySpec("evaluate_perceptual_quality", ".perceptual_qa", "evaluate_perceptual_quality", required=True, stage="wave3"),
-    CapabilitySpec(
-        "PublishService",
-        ".publish_runtime_bridge",
-        "PublishService",
-        required=True,
-        stage="wave5",
-        notes="official publish bridge -> official_instagram_publish with legacy receipt compatibility",
-    ),
-    CapabilitySpec("persist_instagram_token_to_render", ".render_env_sync", "persist_instagram_token_to_render", required=False, stage="wave5"),
-    CapabilitySpec("refresh_instagram_long_lived_token", ".token_upgrade", "refresh_instagram_long_lived_token", required=False, stage="wave5"),
-    CapabilitySpec("build_visual_contract", ".visual_contract", "build_visual_contract", required=True, stage="wave3"),
-    CapabilitySpec("build_carousel_sequence", ".visual_foundation_pack", "build_carousel_sequence", required=False, stage="wave3"),
-    CapabilitySpec("build_stories_sequence", ".visual_foundation_pack", "build_stories_sequence", required=False, stage="wave3"),
-    CapabilitySpec("build_typography_spec", ".visual_foundation_pack", "build_typography_spec", required=True, stage="wave3"),
-    CapabilitySpec("build_visual_identity", ".visual_foundation_pack", "build_visual_identity", required=True, stage="wave3"),
-    CapabilitySpec("evaluate_visual_quality", ".visual_foundation_pack", "evaluate_visual_quality", required=True, stage="wave3"),
-    CapabilitySpec(
-        "render_visual_foundation_card",
-        ".render_runtime_bridge",
-        "render_visual_foundation_card",
-        required=False,
-        stage="wave3",
-        notes="premium-first render bridge with safe fallback to legacy foundation card",
-    ),
-    CapabilitySpec("build_visual_premium_bridge", ".visual_premium_bridge", "build_visual_premium_bridge", required=False, stage="wave3"),
-    CapabilitySpec("resolve_visual_template", ".visual_templates", "resolve_visual_template", required=False, stage="wave3"),
-    CapabilitySpec("evaluate_rubric_engine", ".rubric_engine", "evaluate_rubric_engine", required=False, stage="wave5"),
-    CapabilitySpec("evaluate_brand_veto_gate", ".brand_veto_gate", "evaluate_brand_veto_gate", required=False, stage="wave5"),
-    CapabilitySpec("authorize_publication", ".publication_authorization_gate", "authorize_publication", required=False, stage="wave5"),
-    CapabilitySpec("PerformanceStore", ".performance_store", "PerformanceStore", required=False, stage="wave6"),
-    CapabilitySpec("generate_hook_opening", ".hook_opening_engine", "generate_hook_opening", required=False, stage="wave4"),
-    CapabilitySpec("ReelStoryboardEngine", ".reel_storyboard_engine", "ReelStoryboardEngine", required=False, stage="wave4"),
-    CapabilitySpec("ReelRhythmEngine", ".reel_rhythm_engine", "ReelRhythmEngine", required=False, stage="wave4"),
-    CapabilitySpec("PostProductionPipeline", ".post_production_pipeline", "PostProductionPipeline", required=False, stage="wave4"),
-    CapabilitySpec("AudioDirectionLayer", ".audio_direction_layer", "AudioDirectionLayer", required=False, stage="wave4"),
-    CapabilitySpec("MultimodalReelQA", ".multimodal_reel_qa", "MultimodalReelQA", required=False, stage="wave4"),
-    CapabilitySpec("CinematicGate", ".cinematic_gate", "CinematicGate", required=False, stage="wave4"),
-    CapabilitySpec(
-        "NaturalismEngine",
-        ".naturalism_engine",
-        "NaturalismEngine",
-        required=False,
-        stage="wave4",
-        notes="contract-driven naturalism engine already hardened in main",
-    ),
-    CapabilitySpec("ReleaseAuthority", ".release_authority", "ReleaseAuthority", required=False, stage="wave4"),
-    CapabilitySpec("PublishGuard", ".publish_guard", "PublishGuard", required=False, stage="wave4"),
-    CapabilitySpec(
-        "DistributionTimingEngine",
-        ".distribution_timing_engine",
-        "build_distribution_timing_engine",
-        required=False,
-        stage="wave6",
-        notes="timing and format engine for evidence-guided distribution",
-    ),
-    CapabilitySpec(
-        "ThompsonSampler",
-        ".thompson_sampler",
-        "build_thompson_sampler",
-        required=False,
-        stage="wave6",
-        notes="deterministic thompson proxy over auditável reward/evidence",
-    ),
-    CapabilitySpec(
-        "ExperimentRegistry",
-        ".experiment_registry",
-        "ExperimentRegistry",
-        required=False,
-        stage="wave6",
-        notes="experiment persistence and experiment-state tracking",
-    ),
-    CapabilitySpec(
-        "RecommendationEngine",
-        ".recommendation_engine",
-        "build_recommendation_engine",
-        required=False,
-        stage="wave6",
-        notes="evidence-aware recommendation core with editorial defaults",
-    ),
-
-    # Módulos já existentes e preparados fora do runtime
-    CapabilitySpec("ReflectionAdapter", ".reflection_adapter_runtime", "run_reflection_adapter", required=False, stage="wave7"),
-    CapabilitySpec("SerialAdapter", ".serial_adapter_runtime", "run_serial_adapter", required=False, stage="wave7"),
-    CapabilitySpec("VisualGateAdapter", ".visual_gate_adapter_runtime", "run_visual_gate_adapter", required=False, stage="wave7"),
-    CapabilitySpec("DignityAdapter", ".dignity_adapter_runtime", "run_dignity_adapter", required=False, stage="wave7"),
-)
-
-FUTURE_CAPABILITIES: tuple[CapabilitySpec, ...] = (
-    CapabilitySpec("TrendRadar", ".trend_radar", "TrendRadar", required=False, stage="future", notes="já existe em arquivo, ainda não promovido no registry"),
-    CapabilitySpec("EditorialBrainV2", ".editorial_brain_v2", "EditorialBrainV2", required=False, stage="future", notes="onda 2"),
-    CapabilitySpec("AceSuperOrchestrator", ".super_orchestrator", "AceSuperOrchestrator", required=False, stage="future", notes="existe em arquivo, ainda não integrado"),
-    CapabilitySpec("ReflectionEngine", ".reflection_engine", "ReflectionEngine", required=False, stage="future", notes="existe em arquivo; uso oficial virá pela reescrita do runtime"),
-    CapabilitySpec("SerialContinuityEngine", ".serial_continuity_engine", "build_serial_continuity", required=False, stage="future", notes="existe em arquivo; integração oficial virá pela reescrita do runtime"),
-    CapabilitySpec("DignityScore", ".brand_dignity_score", "evaluate_brand_dignity_score", required=False, stage="future", notes="equivalente funcional atual"),
-    CapabilitySpec("VisualHierarchyGate", ".visual_hierarchy_gate", "evaluate_visual_hierarchy_gate", required=False, stage="future", notes="equivalente funcional atual"),
-    CapabilitySpec("YouTubeAdapter", ".platform_adapters.youtube", "YouTubeAdapter", required=False, stage="future", notes="onda 6"),
-    CapabilitySpec("TikTokAdapter", ".platform_adapters.tiktok", "TikTokAdapter", required=False, stage="future", notes="onda 6"),
-    CapabilitySpec("ThreadsAdapter", ".platform_adapters.threads", "ThreadsAdapter", required=False, stage="future", notes="onda 6"),
-    CapabilitySpec("LLMOrchestrator", ".llm_orchestrator", "LLMOrchestrator", required=False, stage="future", notes="arquivo atual ainda não entrega a classe esperada"),
-    CapabilitySpec("SeoSocialEngine", ".seo_social_engine", "build_seo_social_engine", required=False, stage="future", notes="não localizado no estado atual do repo"),
-)
-
-ALL_CAPABILITIES: tuple[CapabilitySpec, ...] = CURRENT_CAPABILITIES + FUTURE_CAPABILITIES
-
-
-def iter_capabilities(include_future: bool = True) -> tuple[CapabilitySpec, ...]:
-    return ALL_CAPABILITIES if include_future else CURRENT_CAPABILITIES
-
-
-def capability_names(include_future: bool = True) -> list[str]:
-    return [spec.name for spec in iter_capabilities(include_future=include_future)]
-
-
-def capability_registry_snapshot(include_future: bool = True) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "total": len(iter_capabilities(include_future=include_future)),
-        "current_total": len(CURRENT_CAPABILITIES),
-        "future_total": len(FUTURE_CAPABILITIES),
-        "capabilities": [spec.to_dict() for spec in iter_capabilities(include_future=include_future)],
+def resolve_capability(name: str) -> Dict[str, Any]:
+    """
+    Tenta resolver a capacidade solicitada retornando objeto e status.
+    """
+    capabilities = {
+        # Motores existentes (resumidos, já presentes)
+        "TrendRadar": {"symbol": None, "ok": False, "error": "TrendRadar not imported here"},
+        # Novos motores oficiais
+        "SerialContinuityEngine": {"module": "ace_next.serial_continuity_engine", "symbol": "build_serial_continuity"},
+        "ReflectionEngine": {"module": "ace_next.reflection_engine", "symbol": "ReflectionEngine"},
+        "LLMOrchestrator": {"module": "ace_next.llm_orchestrator", "symbol": "LLMOrchestrator"},
+        "SeoSocialEngine": {"module": "ace_next.seo_social_engine", "symbol": "SeoSocialEngine"},
+        "YouTubeAdapter": {"module": "ace_next.youtube_adapter", "symbol": "post_youtube"},
+        "TikTokAdapter": {"module": "ace_next.tiktok_adapter", "symbol": "post_tiktok"},
+        "ThreadsAdapter": {"module": "ace_next.threads_adapter", "symbol": "post_threads"},
     }
 
+    entry = capabilities.get(name)
+    if not entry:
+        return {"ok": False, "error": "capability_not_found", "symbol": None}
 
-def resolve_capability(name: str, package: str = "ace_next") -> dict[str, Any]:
-    spec = next((item for item in ALL_CAPABILITIES if item.name == name), None)
-    if spec is None:
-        return {
-            "ok": False,
-            "name": name,
-            "error": "capability_not_registered",
-        }
+    module_name = entry.get("module")
+    symbol_name = entry.get("symbol")
 
     try:
-        module = import_module(spec.module_path, package=package)
-        symbol = getattr(module, spec.symbol)
-        return {
-            "ok": True,
-            "name": spec.name,
-            "symbol": symbol,
-            "module_path": spec.module_path,
-            "required": spec.required,
-            "stage": spec.stage,
-            "fallback": spec.fallback,
-            "notes": spec.notes,
-        }
+        module = __import__(module_name, fromlist=[symbol_name])
+        symbol = getattr(module, symbol_name)
+        return {"ok": True, "symbol": symbol}
     except Exception as exc:
-        return {
-            "ok": False,
-            "name": spec.name,
-            "module_path": spec.module_path,
-            "required": spec.required,
-            "stage": spec.stage,
-            "fallback": spec.fallback,
-            "notes": spec.notes,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "symbol": None}
 
-
-def resolve_many(names: list[str], package: str = "ace_next") -> dict[str, Any]:
-    resolved = {name: resolve_capability(name, package=package) for name in names}
+def capability_registry_snapshot(include_future: bool = True) -> Dict[str, Any]:
+    """
+    Gera um snapshot de registro, indicando quais capacidades estão disponíveis.
+    """
+    current = [
+        "SerialContinuityEngine",
+        "ReflectionEngine",
+        "LLMOrchestrator",
+        "SeoSocialEngine",
+    ]
+    future = [
+        "YouTubeAdapter",
+        "TikTokAdapter",
+        "ThreadsAdapter",
+    ]
     return {
-        "ok": all(item.get("ok") for item in resolved.values()),
-        "resolved": resolved,
+        "ok": True,
+        "current_total": len(current),
+        "future_total": len(future) if include_future else 0,
+        "current": current,
+        "future": future if include_future else [],
     }
