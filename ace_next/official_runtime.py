@@ -2086,3 +2086,264 @@ distribution_context = self._distribution_context_from_store()
                 "curiosity_gap",
                 "cta_strength",
                 "naturalismo_real_v2",
+
+"cinematic_authority",
+                "algorithmic_priority_watchtime_shares_saves_completion",
+            ],
+        )
+
+        serial_adapter_summary = self._serial_continuity_summary(creative_plan)
+        creative_plan = self.phase_absorption.apply_phase7_decision_memory(
+            creative_plan=creative_plan,
+            measurement_summary={"previous_decision_memory_entries": previous_decision_memory_entries},
+        )
+        current_cycle_memory_override = bool(creative_plan.get("memory_override"))
+
+        editorial_qa_pre_rewrite = self._editorial_quality(creative_plan)
+        rewrite_result = self._run_prepublish_rewrite(
+            trend=effective_trend,
+            creative_plan=creative_plan,
+            editorial_qa=editorial_qa_pre_rewrite,
+        )
+        creative_plan = safe_dict(rewrite_result.get("creative_plan")) or creative_plan
+        editorial_qa = self._editorial_quality(creative_plan)
+
+        visual_identity, typography, visual_contract, visual_template, visual_bundle = self._visual_foundation(creative_plan)
+        perceptual_qa = safe_dict(visual_bundle.get("perceptual_qa"))
+        visual_qa = safe_dict(visual_bundle.get("visual_qa"))
+        premium_visual = self._premium_visual(creative_plan, visual_identity, visual_contract)
+
+        creative_plan, authorized_payload_resolution, merged_staging_hardener = self._resolve_authorized_payload(
+            creative_plan=creative_plan,
+            premium_visual=premium_visual,
+        )
+        authorized_payload = safe_dict(authorized_payload_resolution.get("authorized_payload"))
+
+        visual_gate_adapter_summary = self._visual_gate_adapter_summary(
+            creative_plan=creative_plan,
+            visual_template=visual_template,
+            authorized_payload=authorized_payload,
+        )
+        hierarchy_gate_adapter_data = safe_dict(visual_gate_adapter_summary.get("data"))
+
+        dignity_adapter_summary = self._dignity_adapter_summary(
+            creative_plan=creative_plan,
+            visual_qa=visual_qa,
+            hierarchy_gate=hierarchy_gate_adapter_data,
+            visual_template=visual_template,
+        )
+        dignity_adapter_data = safe_dict(dignity_adapter_summary.get("data"))
+
+        rubric_engine, brand_veto_gate, publication_authorization_gate = self._run_authorization_stack(
+            force_placeholder=runtime_request.force_placeholder,
+            plan_dict=creative_plan,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            env_flags=env_flags,
+            request_flags=request_flags,
+            staging_hardener=merged_staging_hardener,
+        )
+
+        authorization_state = publication_authorization_gate.get("selected_state", "technical_test")
+        operational_state = authorization_state
+        block_reasons = list(publication_authorization_gate.get("reasons") or [])
+        if publication_authorization_gate.get("stack_ok") is False:
+            block_reasons.extend(publication_authorization_gate.get("block_reasons") or [])
+
+        brand_surface_policy, lab_probe_policy, explicit_probe_execution_allowed = self._brand_and_probe_policies(
+            authorization_state=authorization_state,
+            env_flags=env_flags,
+            request_flags=request_flags,
+            publication_authorization_gate=publication_authorization_gate,
+            probe_state_requested=probe_state_requested,
+        )
+
+        prepublish_reel_stack = self._run_reel_premium_stack(
+            trend=effective_trend,
+            creative_plan=creative_plan,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            publication_authorization_gate=publication_authorization_gate,
+            operational_state=operational_state,
+            publish_truth_state="publish_truth_absent",
+        )
+
+        release_authority = safe_dict(prepublish_reel_stack.get("release_authority"))
+        publish_guard = safe_dict(prepublish_reel_stack.get("publish_guard"))
+
+        if prepublish_reel_stack.get("ok"):
+            if str(release_authority.get("release_state", "")).startswith("BLOCKED_"):
+                block_reasons.append(release_authority.get("release_state"))
+            if publish_guard.get("mode") == "blocked":
+                block_reasons.append("blocked_by_publish_guard")
+
+        if prepublish_reel_stack.get("ok") and not publish_guard.get("can_publish"):
+            return {
+                "ok": False,
+                "state": "HALT_BLOCKED_BY_GATE",
+                "reason": "publish_guard_blocked",
+                "release_authority": release_authority,
+                "publish_guard": publish_guard,
+                "prepublish_reel_stack": prepublish_reel_stack,
+                "creative_plan": creative_plan,
+                "editorial_qa": editorial_qa,
+                "visual_qa": visual_qa,
+                "perceptual_qa": perceptual_qa,
+                "publication_authorization_gate": publication_authorization_gate,
+                "brand_surface_policy": brand_surface_policy,
+                "lab_probe_policy": lab_probe_policy,
+                "serial_adapter_summary": serial_adapter_summary,
+                "visual_gate_adapter_summary": visual_gate_adapter_summary,
+                "dignity_adapter_summary": dignity_adapter_summary,
+                "trend_input_guard": trend_guard,
+                "authorized_payload_resolution": authorized_payload_resolution,
+                "editorial_brain_summary": editorial_brain_summary,
+                "runtime": self.snapshot(),
+                "request_envelope": envelope.to_dict(),
+            }
+
+        carousel_preview, stories_preview = self._render_previews(creative_plan)
+
+        try:
+            refresh_result = self.ensure_fresh_instagram_token(force=False)
+        except Exception as exc:
+            refresh_result = {"ok": False, "error": f"token_refresh_error: {type(exc).__name__}: {exc}"}
+
+        render_path = None
+        render_error = None
+        publish_result: dict[str, Any] | None = None
+
+        linkage_context = {
+            "operational_state": operational_state,
+            "brand_live_allowed": False,
+            "probe": {},
+            "brand_surface_policy": brand_surface_policy,
+            "lab_probe_policy": lab_probe_policy,
+            "premium_gate": _gate_stage_summary(prepublish_reel_stack),
+            "study_tags": STUDY_TAGS,
+            "authorized_payload": authorized_payload,
+        }
+
+        publish_format_now = str(
+            creative_plan.get("publish_format_now")
+            or creative_plan.get("strategic_target_format")
+            or mission_decision.get("content_type")
+            or "image"
+        ).strip().lower()
+
+        publish_guard_mode = publish_guard.get("mode")
+        publish_guard_can_publish = bool(publish_guard.get("can_publish"))
+
+        if runtime_request.force_placeholder or publication_authorization_gate.get("can_publish_placeholder"):
+            linkage_context = self.phase_absorption.apply_phase8_publish_linkage_context(
+                linkage_context=linkage_context,
+                creative_plan=creative_plan,
+                carousel_preview=carousel_preview,
+                stories_preview=stories_preview,
+                render_path=render_path,
+            )
+            placeholder_media_path = render_path or _first_path(linkage_context.get("media_paths"))
+            if self.publish:
+                publish_result = self.publish.publish_placeholder(
+                    trend=effective_trend,
+                    style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
+                    content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
+                    caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
+                    media_path=placeholder_media_path,
+                    linkage_context=linkage_context,
+                )
+            else:
+                publish_result = {
+                    "ok": False,
+                    "publish_status": "publish_service_unavailable",
+                    "error": "publish_service_unavailable",
+                }
+        else:
+            should_render = bool(lab_probe_policy.get("probe_render_requested")) or publish_guard_can_publish
+            requires_single_render = publish_format_now in {"image", "reel"}
+
+            if should_render and requires_single_render:
+                ok, render_result = self._call(
+                    "render_visual_foundation_card",
+                    config=self.config,
+                    plan=creative_plan,
+                    identity=visual_identity if "error" not in visual_identity else None,
+                    typography=typography if "error" not in typography else None,
+                )
+                if ok and isinstance(render_result, str):
+                    render_path = render_result
+                    lab_probe_policy["probe_render_executed"] = True
+                    lab_probe_policy["render_path"] = render_path
+                else:
+                    render_error = safe_dict(render_result).get("error") or "render_error"
+                    block_reasons.append(render_error)
+                    lab_probe_policy["probe_render_executed"] = False
+                    lab_probe_policy["render_path"] = None
+
+            linkage_context = self.phase_absorption.apply_phase8_publish_linkage_context(
+                linkage_context=linkage_context,
+                creative_plan=creative_plan,
+                carousel_preview=carousel_preview,
+                stories_preview=stories_preview,
+                render_path=render_path,
+            )
+            linked_media_paths = linkage_context.get("media_paths") if isinstance(linkage_context.get("media_paths"), list) else []
+            primary_publish_path = render_path or _first_path(linked_media_paths)
+
+            if should_render and not requires_single_render:
+                lab_probe_policy["probe_render_executed"] = bool(primary_publish_path)
+                lab_probe_policy["render_path"] = primary_publish_path
+
+            publish_linkage_ready = bool(linkage_context.get("publish_linkage_ready"))
+            effective_real_publish = bool(
+                explicit_probe_execution_allowed
+                and lab_probe_policy.get("probe_eligible")
+                and publish_guard_mode == "ready"
+            )
+
+            if effective_real_publish and not publish_linkage_ready:
+                block_reasons.append("publish_linkage_not_ready")
+                publish_result = {
+                    "ok": False,
+                    "publish_status": "publish_linkage_not_ready",
+                    "error": {
+                        "reason": "publish_linkage_not_ready",
+                        "publish_format_now": publish_format_now,
+                        "media_paths": linked_media_paths,
+                        "render_path": render_path,
+                        "publish_linkage_state": linkage_context.get("publish_linkage_state"),
+                    },
+                    "operational_state": operational_state,
+                    "content_type": str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
+                    "style": str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
+                    "created_at": _now_iso(),
+                    "render_path": render_path,
+                    "media_paths": linked_media_paths,
+                }
+            elif effective_real_publish:
+                linkage_context["probe"] = {
+                    "requested": lab_probe_policy.get("probe_requested"),
+                    "requested_state": lab_probe_policy.get("probe_state_requested"),
+                    "effective_state": lab_probe_policy.get("probe_state_effective"),
+                    "eligible": True,
+                    "render_executed": bool(lab_probe_policy.get("probe_render_executed")),
+                    "publish_executed": False,
+                    "render_path": render_path,
+                    "media_paths": linked_media_paths,
+                    "render_error": render_error,
+                    "allow_real_publish": True,
+                    "probe_block_reason": None,
+                    "surface_mode": brand_surface_policy.get("surface_mode"),
+                    "publish_linkage_state": linkage_context.get("publish_linkage_state"),
+                }
+                if self.publish:
+                    publish_result = self.publish.publish_real(
+                        trend=effective_trend,
+                        style=str(creative_plan.get("publish_style") or mission_decision.get("style") or "official_next_visual_foundation_v1"),
+                        content_type=str(creative_plan.get("publish_format_now") or mission_decision.get("content_type") or "image"),
+                        caption=str(creative_plan.get("caption") or creative_plan.get("headline") or effective_trend),
+                        media_path=primary_publish_path,
+                        linkage_context=linkage_context,
+                    )
+else:
