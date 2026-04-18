@@ -1041,3 +1041,265 @@ if adapter_data:
             updated_plan["caption"] = authorized_payload.get("caption") or updated_plan.get("caption")
             updated_plan["support_points"] = authorized_payload.get("support_points") or updated_plan.get("support_points") or []
             updated_plan["publish_format_now"] = authorized_payload.get("format") or updated_plan.get("publish_format_now")
+
+
+updated_plan["authorized_payload"] = authorized_payload
+            updated_plan["authority_payload_source"] = resolution.get("authorized_source")
+            updated_plan["authorized_payload_budget"] = resolution.get("budget")
+            updated_plan["authorized_payload_changed_fields"] = resolution.get("changed_fields") or []
+
+        merged_hardener = dict(hardening_report)
+        merged_hardener["authorized_payload"] = authorized_payload
+        merged_hardener["authority_payload_source"] = resolution.get("authorized_source")
+        merged_hardener["changed_fields"] = resolution.get("changed_fields") or []
+        merged_hardener["changed_fields_count"] = resolution.get("changed_fields_count")
+        merged_hardener["authorized_payload_budget"] = resolution.get("budget")
+        merged_hardener["hardening_report"] = safe_dict(resolution.get("hardening_report"))
+
+        return updated_plan, resolution, merged_hardener
+
+    def _build_visual_gate_contract(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_template: dict[str, Any],
+        authorized_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = safe_dict(authorized_payload) or {
+            "headline": creative_plan.get("headline"),
+            "hook": creative_plan.get("hook"),
+            "body": creative_plan.get("body"),
+            "cta": creative_plan.get("cta"),
+            "support_points": creative_plan.get("support_points") or [],
+            "format": (
+                creative_plan.get("publish_format_now")
+                or creative_plan.get("strategic_target_format")
+                or "image"
+            ),
+        }
+        return {
+            "brand_system": {"text_contrast_policy": "premium_high_contrast"},
+            "template_spec": {
+                "template_id": visual_template.get("template_id"),
+                "premium_tier": visual_template.get("premium_tier"),
+                "html_ready": visual_template.get("html_ready"),
+                "block_order": visual_template.get("block_order"),
+                "strategic_format": payload.get("format") or "image",
+            },
+            "layout_payload": {"display_payload": payload},
+            "gate_payload": {"format": payload.get("format") or "image"},
+        }
+
+    def _visual_gate_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_template: dict[str, Any],
+        authorized_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            contract = self._build_visual_gate_contract(
+                creative_plan=creative_plan,
+                visual_template=visual_template,
+                authorized_payload=authorized_payload,
+            )
+            return safe_dict(run_visual_gate_adapter({"contract": contract}) or {})
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "visual_gate_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+    def _dignity_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        visual_qa: dict[str, Any],
+        hierarchy_gate: dict[str, Any],
+        visual_template: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return safe_dict(
+                run_dignity_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "visual_qa": visual_qa,
+                        "hierarchy_gate": hierarchy_gate,
+                        "template_meta": visual_template,
+                    }
+                )
+                or {}
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "dignity_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+    def _authorization_fallback(
+        self,
+        *,
+        force_placeholder: bool,
+        reason: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        rubric_engine = {
+            "approved_minimum_quality": False,
+            "eligible_for_brand_live": False,
+            "global_score": 0.0,
+            "global_score_100": 0,
+            "breakdown": {},
+            "floors": {},
+            "failed_floors": ["authorization_stack_unavailable"],
+            "reasons": [reason],
+            "weights": {},
+            "stack_ok": False,
+        }
+        brand_veto_gate = {
+            "approved": False,
+            "blocked": False,
+            "categories": {
+                "commodity": False,
+                "cheap_ai": False,
+                "template": False,
+                "prototype": False,
+                "brand_indignity": False,
+            },
+            "triggers": [],
+            "reasons": [reason],
+            "summary": "brand veto em fallback",
+            "stack_ok": False,
+        }
+        publication_authorization_gate = {
+            "selected_state": "technical_test" if force_placeholder else "internal_lab",
+            "supported_states": [
+                "technical_test",
+                "internal_lab",
+                "editorial_staging",
+                "brand_live",
+                "blocked_quality",
+                "blocked_brand",
+            ],
+            "can_publish_placeholder": bool(force_placeholder),
+            "can_publish_real": False,
+            "brand_live_blocked_by_default": True,
+            "brand_live_candidate": False,
+            "main_surface_allowed": False,
+            "requires_human_review": True,
+            "block_reasons": [reason] if not force_placeholder else [],
+            "reasons": [reason],
+            "summary": "authorization stack em fallback seguro",
+            "stack_ok": False,
+            "premium_classification": "internal_lab" if not force_placeholder else "technical_test",
+            "eligible_for_editorial_staging": False,
+            "eligible_for_brand_live_candidate": False,
+            "missing_for_brand_live": [],
+            "score_gap_to_brand_live": 0.0,
+            "next_quality_lift_targets": [],
+            "authority_payload_source": None,
+        }
+        return rubric_engine, brand_veto_gate, publication_authorization_gate
+
+    def _run_authorization_stack_base(
+        self,
+        *,
+        force_placeholder: bool,
+        plan_dict: dict[str, Any],
+        editorial_qa: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        env_flags: dict[str, Any],
+        request_flags: dict[str, Any],
+        staging_hardener: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        rubric_fn = self._symbol("evaluate_rubric_engine")
+        brand_veto_fn = self._symbol("evaluate_brand_veto_gate")
+        authorize_fn = self._symbol("authorize_publication")
+
+        if not rubric_fn or not brand_veto_fn or not authorize_fn:
+            return self._authorization_fallback(
+                force_placeholder=force_placeholder,
+                reason="authorization_stack_import_error",
+            )
+
+        try:
+            rubric = rubric_fn(
+                plan=plan_dict,
+                editorial_qa=editorial_qa,
+                visual_qa=visual_qa,
+                perceptual_qa=perceptual_qa,
+            )
+            brand_veto = brand_veto_fn(
+                plan=plan_dict,
+                editorial_qa=editorial_qa,
+                visual_qa=visual_qa,
+                perceptual_qa=perceptual_qa,
+                rubric=rubric,
+            )
+            authorization = authorize_fn(
+                force_placeholder=force_placeholder,
+                editorial_qa=editorial_qa,
+                visual_qa=visual_qa,
+                perceptual_qa=perceptual_qa,
+                rubric=rubric,
+                brand_veto=brand_veto,
+                env_flags=env_flags,
+                request_flags=request_flags,
+                staging_hardener=staging_hardener,
+            )
+            rubric_dict = self._to_dict(rubric)
+            rubric_dict["stack_ok"] = True
+            brand_veto_dict = self._to_dict(brand_veto)
+            brand_veto_dict["stack_ok"] = True
+            authorization_dict = self._to_dict(authorization)
+            authorization_dict["stack_ok"] = True
+            return rubric_dict, brand_veto_dict, authorization_dict
+        except Exception as exc:
+            return self._authorization_fallback(
+                force_placeholder=force_placeholder,
+                reason=f"authorization_stack_runtime_error: {type(exc).__name__}: {exc}",
+            )
+
+    def _run_authorization_stack(
+        self,
+        *,
+        force_placeholder: bool,
+        plan_dict: dict[str, Any],
+        editorial_qa: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        env_flags: dict[str, Any],
+        request_flags: dict[str, Any],
+        staging_hardener: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        return self.phase_absorption.apply_phase5_authorization_stack(
+            force_placeholder=force_placeholder,
+            plan_dict=plan_dict,
+            editorial_qa=editorial_qa,
+            visual_qa=visual_qa,
+            perceptual_qa=perceptual_qa,
+            env_flags=env_flags,
+            request_flags=request_flags,
+            staging_hardener=staging_hardener,
+            fallback_runner=self._run_authorization_stack_base,
+        )
+
+    def _brand_and_probe_policies(
+        self,
+        *,
+        authorization_state: str,
+        env_flags: dict[str, Any],
+        request_flags: dict[str, Any],
+        publication_authorization_gate: dict[str, Any],
+        probe_state_requested: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], bool]:
+        ok, probe_policy = self._call(
+            "resolve_lab_probe_policy",
+            operational_state=authorization_state,
+            requested_probe=request_flags["probe_requested"],
+            requested_state=probe_state_requested,
+            env_flags=env_flags,
+            request_flags=request_flags,
