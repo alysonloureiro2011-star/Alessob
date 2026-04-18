@@ -259,3 +259,263 @@ class OfficialRuntime:
         ok, stored = self._call("load_instagram_auth", self.config)
         stored_dict = safe_dict(stored) if ok else {}
 
+meta = stored_dict.get("meta") if isinstance(stored_dict.get("meta"), dict) else {}
+        saved_at_raw = stored_dict.get("saved_at")
+        expires_at_raw = meta.get("expires_at")
+        saved_at = None
+        expires_at = None
+
+        try:
+            if saved_at_raw:
+                saved_at = datetime.fromisoformat(str(saved_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            saved_at = None
+
+        try:
+            if expires_at_raw:
+                expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            expires_at = None
+
+        if not expires_at and saved_at:
+            expires_at = saved_at + timedelta(days=self._assumed_ttl_days())
+
+        remaining_days = None
+        if expires_at:
+            remaining_days = (expires_at - _now_utc()).total_seconds() / 86400
+
+        return {
+            "saved_at": saved_at.isoformat() if saved_at else None,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "remaining_days": remaining_days,
+            "refreshed_at": meta.get("refreshed_at"),
+            "source": meta.get("source"),
+            "auth_loader_ok": ok,
+        }
+
+    def _token_needs_refresh(self, force: bool = False) -> tuple[bool, str]:
+        if force:
+            return True, "forced"
+
+        if not self.config.ig_token or not self.config.ig_id:
+            return False, "missing_token_or_ig_id"
+
+        state = self._auth_state()
+        expires_at_raw = state.get("expires_at")
+        saved_at_raw = state.get("saved_at")
+        expires_at = None
+        saved_at = None
+
+        try:
+            if expires_at_raw:
+                expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            expires_at = None
+
+        try:
+            if saved_at_raw:
+                saved_at = datetime.fromisoformat(str(saved_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            saved_at = None
+
+        now = _now_utc()
+        if saved_at:
+            age_hours = (now - saved_at).total_seconds() / 3600
+            if age_hours < self._min_refresh_age_hours():
+                return False, "token_too_young"
+
+        if not expires_at:
+            return False, "expiry_unknown"
+
+        remaining = expires_at - now
+        if remaining <= timedelta(days=self._refresh_threshold_days()):
+            return True, "refresh_threshold"
+
+        return False, "healthy"
+
+    def ensure_fresh_instagram_token(self, force: bool = False) -> dict[str, Any]:
+        self.sync_instagram_auth()
+        should_refresh, reason = self._token_needs_refresh(force=force)
+
+        if not should_refresh:
+            return {
+                "ok": True,
+                "attempted": False,
+                "reason": reason,
+                "token_state": self._auth_state(),
+            }
+
+        ok_refresh, refresh = self._call(
+            "refresh_instagram_long_lived_token",
+            self.config,
+            current_token=self.config.ig_token or "",
+            current_user_id=self.config.ig_id,
+        )
+        refresh_dict = safe_dict(refresh) if ok_refresh else safe_dict(refresh)
+        render_sync = {"ok": False, "persisted": False, "skipped": True}
+
+        refreshed_token = refresh_dict.get("token") or safe_dict(refresh_dict.get("data")).get("access_token")
+        if refreshed_token:
+            ok_render, render_result = self._call(
+                "persist_instagram_token_to_render",
+                token=str(refreshed_token),
+                user_id=self.config.ig_id,
+            )
+            render_sync = safe_dict(render_result) if ok_render else safe_dict(render_result)
+            self.sync_instagram_auth()
+
+        return {
+            "ok": bool(refresh_dict.get("ok", ok_refresh)),
+            "attempted": True,
+            "reason": reason,
+            "refresh": refresh_dict,
+            "render_env_sync": render_sync,
+            "token_state": self._auth_state(),
+        }
+
+    def _boot_sync(self) -> None:
+        self.sync_instagram_auth()
+        try:
+            self.ensure_fresh_instagram_token(force=False)
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------
+    # SNAPSHOT / HEALTH
+    # ---------------------------------------------------------
+    def _performance_store_summary(self) -> dict[str, Any]:
+        symbol = self._symbol("PerformanceStore")
+        if symbol is None:
+            return {"ok": False, "error": self._resolve("PerformanceStore").get("error") or "measurement_stack_unavailable"}
+        try:
+            summary = symbol(self.config).summary()
+            return self._to_dict(summary)
+        except Exception as exc:
+            return {"ok": False, "error": f"performance_store_summary_error: {type(exc).__name__}: {exc}"}
+
+    def _llm_orchestrator_status(self) -> dict[str, Any]:
+        status_fn = self._safe_import_symbol("ace_next.llm_orchestrator", "llm_orchestrator_status")
+        if status_fn is None:
+            return {"ok": False, "reason": "llm_orchestrator_unavailable"}
+        try:
+            result = status_fn()
+            parsed = safe_dict(result)
+            parsed.setdefault("ok", True)
+            return parsed
+        except Exception as exc:
+            return {"ok": False, "reason": f"llm_orchestrator_status_error: {type(exc).__name__}: {exc}"}
+
+    def snapshot(self) -> dict[str, Any]:
+        sync = self.sync_instagram_auth()
+        token_state = self._auth_state()
+        env_flags = self._brand_env_flags()
+        return {
+            "timestamp": _now_iso(),
+            "token_present": bool(self.config.ig_token),
+            "ig_id_present": bool(self.config.ig_id),
+            "render_url": self.config.render_url,
+            "token_source": sync.get("token_source"),
+            "user_id_source": sync.get("user_id_source"),
+            "auth_path": sync.get("auth_path"),
+            "enable_real_publish": self.config.enable_real_publish,
+            "token_expires_at": token_state.get("expires_at"),
+            "token_remaining_days": token_state.get("remaining_days"),
+            "token_meta_source": token_state.get("source"),
+            "render_env_sync_enabled": bool(os.environ.get("ACE_RENDER_API_KEY")),
+            "real_probe_route_supported": True,
+            "real_probe_allowed_states": sorted(REAL_PROBE_ALLOWED_STATES),
+            "brand_live_allowed": False,
+            "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+            "brand_surface_flags": env_flags,
+            "performance_store": self._performance_store_summary(),
+            "registry_boot": self._boot,
+            "registry_snapshot": capability_registry_snapshot(include_future=True),
+            "last_run_summary": self._last_run_summary,
+            "llm_orchestrator_status": self._llm_orchestrator_status(),
+            "study_tags": STUDY_TAGS,
+            "runtime_design": {
+                "mode": "sovereign_runtime_v2",
+                "contracts": True,
+                "registry": True,
+                "adapters": True,
+                "bootstrap": True,
+                "legacy_compatibility": True,
+                "trend_input_guard": True,
+                "authorized_payload_resolver": True,
+                "super_orchestrator_compatible": True,
+                "repair_loop": True,
+            },
+        }
+
+    def compact_runtime_summary(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        return {
+            "timestamp": snap.get("timestamp"),
+            "token_present": snap.get("token_present"),
+            "ig_id_present": snap.get("ig_id_present"),
+            "enable_real_publish": snap.get("enable_real_publish"),
+            "brand_surface_mode": snap.get("brand_surface_mode"),
+            "real_probe_allowed_states": snap.get("real_probe_allowed_states"),
+            "performance_store": snap.get("performance_store"),
+            "last_run_summary": snap.get("last_run_summary"),
+        }
+
+    def probe_readiness_summary(self) -> dict[str, Any]:
+        readiness = self.sync_instagram_auth()
+        return {
+            "ok": True,
+            "instagram_connected": bool(self.config.ig_token and self.config.ig_id),
+            "token_present": bool(self.config.ig_token),
+            "ig_id_present": bool(self.config.ig_id),
+            "token_source": readiness.get("token_source"),
+            "user_id_source": readiness.get("user_id_source"),
+            "real_publish_enabled": bool(self.config.enable_real_publish),
+            "allowed_probe_states": sorted(REAL_PROBE_ALLOWED_STATES),
+        }
+
+    def quality_gap_summary(self) -> dict[str, Any]:
+        summary = safe_dict(self._last_run_summary)
+        return {
+            "ok": True,
+            "premium_classification": summary.get("premium_classification"),
+            "eligible_for_editorial_staging": summary.get("eligible_for_editorial_staging"),
+            "eligible_for_brand_live_candidate": summary.get("eligible_for_brand_live_candidate"),
+            "missing_for_brand_live": summary.get("missing_for_brand_live"),
+            "score_gap_to_brand_live": summary.get("score_gap_to_brand_live"),
+            "next_quality_lift_targets": summary.get("next_quality_lift_targets"),
+        }
+
+    def last_publish_compact_summary(self) -> dict[str, Any]:
+        if not self.publish:
+            return {"ok": False, "error": "publish_service_unavailable"}
+        last_publish = safe_dict(self.publish.last_publish())
+        return {
+            "ok": True,
+            "source_of_truth": last_publish.get("source_of_truth"),
+            "latest_media_id": last_publish.get("latest_media_id"),
+            "latest_permalink": last_publish.get("latest_permalink"),
+            "latest_evidence_state": last_publish.get("latest_evidence_state"),
+            "latest_resolution_state": last_publish.get("latest_resolution_state"),
+            "updated_at": last_publish.get("updated_at"),
+        }
+
+    # ---------------------------------------------------------
+    # EDITORIAL / SERIAL / REFLECTION HELPERS
+    # ---------------------------------------------------------
+    def _mission_approval_required(self) -> bool:
+        return safe_bool(os.environ.get("ACE_REQUIRE_MISSION_APPROVAL"), False)
+
+    def _planner_overrides_from_mission_decision(self, mission_decision: dict[str, Any] | None) -> dict[str, Any]:
+        mission_decision = safe_dict(mission_decision)
+        content_type = str(mission_decision.get("content_type") or "").strip().lower()
+        publish_format_now = content_type if content_type in {"image", "carousel", "story", "reel"} else None
+        return {
+            "strategic_target_format": content_type or None,
+            "publish_format_now": publish_format_now,
+            "publish_style": None,
+            "goal": mission_decision.get("goal"),
+            "hypothesis": mission_decision.get("hypothesis"),
+            "planner_selected": mission_decision.get("planner_selected"),
+            "attention_priority": "save_share_replay_retention",
+            "clarity_density_policy": STUDY_TAGS["psychology_clt"],
+            "narrative_policy": STUDY_TAGS["stepps"],
