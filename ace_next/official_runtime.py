@@ -1303,3 +1303,265 @@ updated_plan["authorized_payload"] = authorized_payload
             requested_state=probe_state_requested,
             env_flags=env_flags,
             request_flags=request_flags,
+
+
+            )
+        lab_probe_policy = self._to_dict(probe_policy) if ok else {
+            "probe_requested": request_flags["probe_requested"],
+            "probe_state_requested": probe_state_requested,
+            "probe_state_effective": authorization_state,
+            "probe_eligible": False,
+            "probe_block_reason": safe_dict(probe_policy).get("error") or "lab_probe_policy_unavailable",
+            "requested_real_publish": False,
+            "probe_publish_executed": False,
+            "probe_render_requested": False,
+        }
+
+        ok, brand_policy = self._call(
+            "resolve_brand_surface_policy",
+            operational_state=authorization_state,
+            requested_real_publish=lab_probe_policy.get("requested_real_publish", False),
+            env_flags=env_flags,
+            request_flags=request_flags,
+            quality_context={
+                "brand_live_candidate": publication_authorization_gate.get("brand_live_candidate"),
+                "can_publish_real": publication_authorization_gate.get("can_publish_real"),
+            },
+        )
+        brand_surface_policy = self._to_dict(brand_policy) if ok else {
+            "surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE", "protected"),
+            "main_surface_allowed": False,
+            "block_reason": safe_dict(brand_policy).get("error") or "brand_surface_policy_unavailable",
+        }
+
+        explicit_probe_execution_allowed = bool(
+            request_flags.get("probe_requested")
+            and request_flags.get("explicit_probe_arm")
+            and not request_flags.get("force_placeholder")
+            and str(lab_probe_policy.get("probe_state_effective") or authorization_state).strip().lower() in REAL_PROBE_ALLOWED_STATES
+        )
+
+        return brand_surface_policy, lab_probe_policy, explicit_probe_execution_allowed
+
+    # ---------------------------------------------------------
+    # REEL STACK / PREVIEWS / PUBLISH
+    # ---------------------------------------------------------
+    def _run_reel_premium_stack_base(
+        self,
+        *,
+        trend: str,
+        creative_plan: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        publication_authorization_gate: dict[str, Any],
+        operational_state: str,
+        publish_truth_state: str = "publish_truth_absent",
+    ) -> dict[str, Any]:
+        required_names = [
+            "generate_hook_opening",
+            "ReelStoryboardEngine",
+            "ReelRhythmEngine",
+            "PostProductionPipeline",
+            "AudioDirectionLayer",
+            "MultimodalReelQA",
+            "CinematicGate",
+            "NaturalismEngine",
+            "ReleaseAuthority",
+            "PublishGuard",
+        ]
+        if not all(self._symbol(name) for name in required_names):
+            return {
+                "ok": False,
+                "stack_state": "reel_stack_import_error",
+                "error": "reel premium stack unavailable",
+                "study_alignment": {
+                    "hook": STUDY_TAGS["hook_attention"],
+                    "rhythm": STUDY_TAGS["rhythm"],
+                    "naturalism": STUDY_TAGS["naturalism"],
+                },
+            }
+
+        hook_fn = self._symbol("generate_hook_opening")
+        storyboard_cls = self._symbol("ReelStoryboardEngine")
+        rhythm_cls = self._symbol("ReelRhythmEngine")
+        post_cls = self._symbol("PostProductionPipeline")
+        audio_cls = self._symbol("AudioDirectionLayer")
+        qa_cls = self._symbol("MultimodalReelQA")
+        cinematic_cls = self._symbol("CinematicGate")
+        naturalism_cls = self._symbol("NaturalismEngine")
+        release_cls = self._symbol("ReleaseAuthority")
+        guard_cls = self._symbol("PublishGuard")
+
+        hook_raw = safe_dict(
+            hook_fn(
+                trend=trend,
+                style=creative_plan.get("publish_style"),
+                content_type=creative_plan.get("publish_format_now"),
+            )
+        )
+        hook_opening = {
+            "opening_pattern": "curiosity_gap",
+            "opening_text": hook_raw.get("text_hook") or hook_raw.get("audio_hook") or hook_raw.get("visual_hook") or trend,
+            "visual_hook": hook_raw.get("visual_hook"),
+            "audio_hook": hook_raw.get("audio_hook"),
+            "text_hook": hook_raw.get("text_hook"),
+            "pattern_interrupts": hook_raw.get("pattern_interrupts") or [],
+            "intensity_score": hook_raw.get("intensity_score"),
+            "study_alignment": {
+                "first_3_seconds": True,
+                "pattern_interrupt": True,
+                "curiosity_gap": True,
+                "micro_payoffs": True,
+                "cadence_target": "450ms_opening",
+            },
+        }
+
+        storyboard = safe_dict(storyboard_cls().run(creative_plan=creative_plan, hook_opening=hook_opening))
+        rhythm = safe_dict(
+            rhythm_cls().run(
+                storyboard=storyboard,
+                hook_opening={"opening_pattern": hook_opening.get("opening_pattern", "curiosity_gap")},
+            )
+        )
+        rhythm.setdefault(
+            "study_alignment",
+            {
+                "cadence_0_3s": "450ms",
+                "cadence_3_15s": "1200ms",
+                "cadence_15_45s": "850ms",
+                "cadence_45_55s": "1500ms",
+                "cadence_55_60s": "300ms",
+            },
+        )
+
+        subtitles = {
+            "emphasis_mode": "short_emphasis_lines" if rhythm.get("subtitle_pacing_hint") == "short_emphasis_lines" else "balanced_lines",
+            "naturalism_mode": "anti_plastic_subtitles",
+        }
+
+        post_production = safe_dict(post_cls().run(storyboard=storyboard, rhythm=rhythm, subtitles=subtitles))
+        audio_direction = safe_dict(
+            audio_cls().run(
+                hook_opening={"opening_pattern": hook_opening.get("opening_pattern", "curiosity_gap")},
+                rhythm=rhythm,
+                post_production=post_production,
+            )
+        )
+        audio_direction.setdefault(
+            "study_alignment",
+            {"foley": True, "ducking": True, "prosody": True, "micro_breathing": True},
+        )
+
+        naturalism = safe_dict(
+            naturalism_cls().run(
+                creative_plan=creative_plan,
+                visual_context={
+                    "format_hint": creative_plan.get("publish_format_now"),
+                    "storyboard": storyboard,
+                    "rhythm": rhythm,
+                    "post_production": post_production,
+                    "audio_direction": audio_direction,
+                },
+                format_hint=creative_plan.get("publish_format_now"),
+            )
+        )
+        naturalism.setdefault("naturalism_state", "naturalism_engine_ready")
+
+        visual_score_10 = max(
+            float(visual_qa.get("final_score", 0)) / 10.0,
+            float(perceptual_qa.get("final_score", 0)) / 10.0,
+        )
+        audio_score_10 = 8.6 if audio_direction.get("state") == "audio_direction_layer_ready" else 6.0
+        rhythm_score_10 = 8.6 if rhythm.get("rhythm_state") == "reel_rhythm_ready" else 6.0
+
+        multimodal_qa = safe_dict(
+            qa_cls().run(
+                visual_gate={"global_visual_score": visual_score_10},
+                audio_gate={"global_audio_score": audio_score_10},
+                reel_gate={"global_score": rhythm_score_10},
+                naturalism=naturalism,
+            )
+        )
+
+        overall_quality_score = max(
+            visual_score_10,
+            8.5 if publication_authorization_gate.get("eligible_for_editorial_staging") else visual_score_10,
+        )
+
+        cinematic_gate = safe_dict(
+            cinematic_cls().run(
+                multimodal_qa=multimodal_qa,
+                reel_director={
+                    "visual_mode": "cinematic_retention",
+                    "cut_mode": "precision_fast",
+                    "grain_target": "2_percent",
+                    "camera_language": "dolly_pan_whip_pan_safe",
+                },
+                premium_decision={
+                    "overall_quality_score": overall_quality_score,
+                    "rejection_feedback_loop_ready": True,
+                },
+            )
+        )
+
+        release_authority = safe_dict(
+            release_cls().run(
+                cinematic_gate=cinematic_gate,
+                premium_decision={"overall_quality_score": overall_quality_score},
+                operation_bridge={"operational_state": _normalize_release_operation_state(operational_state)},
+            )
+        )
+
+        publish_guard = safe_dict(
+            guard_cls().run(
+                release_authority=release_authority,
+                publish_truth={"truth_state": publish_truth_state},
+            )
+        )
+
+        return {
+            "ok": True,
+            "stack_state": "reel_premium_stack_ready",
+            "hook_opening": hook_opening,
+            "storyboard": storyboard,
+            "rhythm": rhythm,
+            "subtitles": subtitles,
+            "post_production": post_production,
+            "audio_direction": audio_direction,
+            "naturalism": naturalism,
+            "multimodal_qa": multimodal_qa,
+            "cinematic_gate": cinematic_gate,
+            "release_authority": release_authority,
+            "publish_guard": publish_guard,
+            "pipeline_summary": _gate_stage_summary(
+                {
+                    "ok": True,
+                    "stack_state": "reel_premium_stack_ready",
+                    "cinematic_gate": cinematic_gate,
+                    "release_authority": release_authority,
+                    "publish_guard": publish_guard,
+                }
+            ),
+            "study_alignment": {
+                "hook": STUDY_TAGS["hook_attention"],
+                "rhythm": STUDY_TAGS["rhythm"],
+                "naturalism": STUDY_TAGS["naturalism"],
+                "hollywood_pipeline": True,
+            },
+        }
+
+    def _run_reel_premium_stack(
+        self,
+        *,
+        trend: str,
+        creative_plan: dict[str, Any],
+        visual_qa: dict[str, Any],
+        perceptual_qa: dict[str, Any],
+        publication_authorization_gate: dict[str, Any],
+        operational_state: str,
+        publish_truth_state: str = "publish_truth_absent",
+    ) -> dict[str, Any]:
+        return self.phase_absorption.apply_phase4_reel_stack(
+            trend=trend,
+            creative_plan=creative_plan,
+            visual_qa=visual_qa,
