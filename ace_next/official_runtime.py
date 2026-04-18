@@ -519,3 +519,264 @@ meta = stored_dict.get("meta") if isinstance(stored_dict.get("meta"), dict) else
             "attention_priority": "save_share_replay_retention",
             "clarity_density_policy": STUDY_TAGS["psychology_clt"],
             "narrative_policy": STUDY_TAGS["stepps"],
+
+            "hook_policy": STUDY_TAGS["hook_attention"],
+            "naturalism_policy": STUDY_TAGS["naturalism"],
+        }
+
+    def _mission_decision(self, trend: str, env_flags: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        mission_control_state = {
+            "enabled": True,
+            "approval_required": self._mission_approval_required(),
+            "blocked": False,
+        }
+
+        ok, mission_decision = self._call(
+            "decide_mission",
+            trend,
+            format_hint=None,
+            signal_context={
+                "source": "official_runtime",
+                "mode": "run",
+                "study_tags": {
+                    "hook": STUDY_TAGS["hook_attention"],
+                    "stepps": STUDY_TAGS["stepps"],
+                    "mab": STUDY_TAGS["mab"],
+                },
+            },
+            brand_context={
+                "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+                "brand_live_allowed": False,
+            },
+            queue_state=self._runtime_queue_state(),
+            recent_signal_score=None,
+        )
+
+        mission_dict = adapt_legacy_mission_decision(mission_decision if ok else {})
+        raw_mission = safe_dict(mission_decision)
+
+        if not mission_dict:
+            mission_dict = {
+                "trend": trend,
+                "style": "unknown",
+                "content_type": "image",
+                "goal": "authority",
+                "confidence": 0.2,
+                "raw": {
+                    "ok": False,
+                    "should_act": True,
+                    "reason": safe_dict(mission_decision).get("error") or "mission_control_runtime_fallback",
+                    "decision_state": "fallback_allow",
+                    "hypothesis": "mission_control_unavailable_runtime_fallback",
+                    "planner_selected": "mission_control_runtime_fallback",
+                    "signal_strength": "unknown",
+                },
+            }
+            mission_control_state["fallback"] = True
+            mission_control_state["error"] = mission_dict["raw"].get("reason")
+
+        return (
+            {
+                "trend": mission_dict.get("trend") or trend,
+                "style": mission_dict.get("style") or raw_mission.get("style") or "unknown",
+                "content_type": mission_dict.get("content_type") or raw_mission.get("content_type") or "image",
+                "goal": mission_dict.get("goal") or raw_mission.get("goal") or "authority",
+                "confidence": mission_dict.get("confidence") or raw_mission.get("confidence") or 0.2,
+                "raw": raw_mission or mission_dict.get("raw") or {},
+            },
+            mission_control_state,
+        )
+
+    def _creative_plan(self, trend: str, mission_decision: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        overrides = self._planner_overrides_from_mission_decision(mission_decision)
+        recent_memory = self._recent_memory_for_planner(limit=5)
+
+        ok, plan = self._call(
+            "build_creative_plan",
+            trend,
+            overrides=overrides,
+            mission_decision=mission_decision.get("raw"),
+            recent_memory=recent_memory,
+        )
+
+        if ok:
+            plan_dict = self._to_dict(plan)
+            if plan_dict:
+                plan_dict.setdefault("study_tags", STUDY_TAGS)
+                plan_dict.setdefault("serial_continuity_hint", bool(recent_memory))
+                plan_dict.setdefault("attention_target", "save_share_replay_retention")
+                plan_dict.setdefault("ethical_boundary", "no_hidden_manipulation")
+                return True, plan_dict
+
+        return False, {
+            "topic_seed": trend,
+            "headline": trend,
+            "hook": f"o que há por trás de {trend}",
+            "payoff": f"clareza prática sobre {trend}",
+            "cta": "salve e compartilhe se fizer sentido",
+            "publish_style": mission_decision.get("style") or "official_next_visual_foundation_v1",
+            "publish_format_now": mission_decision.get("content_type") or "image",
+            "goal": mission_decision.get("goal") or "authority",
+            "hypothesis": safe_dict(mission_decision.get("raw")).get("hypothesis"),
+            "planner_selected": safe_dict(mission_decision.get("raw")).get("planner_selected") or "creative_planner_fallback",
+            "serial_continuity_hint": bool(recent_memory),
+            "study_tags": STUDY_TAGS,
+            "ethical_boundary": "no_hidden_manipulation",
+        }
+
+    def _editorial_brain_or_fallback(
+        self,
+        *,
+        trend: str,
+        recent_signal_score: float | None,
+        env_flags: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        recent_memory = self._recent_memory_for_planner(limit=5)
+        brain_cls = self._safe_import_symbol("ace_next.editorial_brain_v2", "EditorialBrainV2")
+        if brain_cls is None:
+            return {}, {}, {"ok": False, "used": False, "state": "editorial_brain_unavailable"}
+
+        try:
+            brain_result = safe_dict(
+                brain_cls().run(
+                    trend=trend,
+                    format_hint=None,
+                    recent_signal_score=recent_signal_score,
+                    queue_state=self._runtime_queue_state(),
+                    signal_context={"source": "official_runtime", "mode": "run"},
+                    brand_context={
+                        "brand_surface_mode": env_flags.get("ACE_BRAND_SURFACE_MODE"),
+                        "brand_live_allowed": False,
+                    },
+                    recent_memory=recent_memory,
+                )
+                or {}
+            )
+            mission = safe_dict(brain_result.get("mission_decision"))
+            creative_plan = safe_dict(brain_result.get("creative_plan"))
+            if mission and creative_plan:
+                mission.setdefault("raw", mission)
+                creative_plan.setdefault("study_tags", STUDY_TAGS)
+                creative_plan.setdefault("serial_continuity_hint", bool(recent_memory))
+                creative_plan.setdefault("attention_target", "save_share_replay_retention")
+                creative_plan.setdefault("ethical_boundary", "no_hidden_manipulation")
+                return mission, creative_plan, {
+                    "ok": True,
+                    "state": brain_result.get("brain_state") or "editorial_brain_v2_ready",
+                    "used": True,
+                    "result": brain_result,
+                }
+            return {}, {}, {"ok": False, "used": False, "state": "editorial_brain_result_incomplete"}
+        except Exception as exc:
+            return {}, {}, {"ok": False, "used": False, "state": f"editorial_brain_error: {type(exc).__name__}: {exc}"}
+
+    def _editorial_quality(self, plan_dict: dict[str, Any]) -> dict[str, Any]:
+        ok, result = self._call("evaluate_editorial_quality", plan_dict)
+        quality = self._to_dict(result) if ok else {}
+        if quality:
+            return quality
+        return {
+            "approved": False,
+            "breakdown": {},
+            "flags": ["editorial_qa_unavailable"],
+            "reasons": [safe_dict(result).get("error") or "editorial_qa_unavailable"],
+            "study_alignment": {
+                "clarity_density_control": True,
+                "stepps_narrative": True,
+                "anti_cliche": True,
+            },
+        }
+
+    def _llm_orchestrator_instance(self):
+        cls = self._safe_import_symbol("ace_next.llm_orchestrator", "LLMOrchestrator")
+        if cls is None:
+            return None
+        try:
+            return cls()
+        except Exception:
+            return None
+
+    def _seo_social_engine_instance(self):
+        cls = self._safe_import_symbol("ace_next.seo_social_engine", "SeoSocialEngine")
+        if cls is None:
+            return None
+        try:
+            return cls()
+        except Exception:
+            return None
+
+    def _run_prepublish_rewrite(
+        self,
+        *,
+        trend: str,
+        creative_plan: dict[str, Any],
+        editorial_qa: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.prepublish_rewrite_engine is None:
+            return {
+                "ok": False,
+                "rewrite_needed": False,
+                "rewrite_applied": False,
+                "post_rewrite_state": "rewrite_module_unavailable",
+                "creative_plan": creative_plan,
+                "seo_social": {},
+            }
+
+        try:
+            result = self.prepublish_rewrite_engine.rewrite(
+                creative_plan=creative_plan,
+                trend=trend,
+                editorial_qa=editorial_qa,
+                llm_orchestrator=self._llm_orchestrator_instance(),
+                seo_social_engine=self._seo_social_engine_instance(),
+                platform="instagram",
+            )
+            result = safe_dict(result)
+            result["creative_plan"] = safe_dict(result.get("creative_plan")) or creative_plan
+            result["seo_social"] = safe_dict(result.get("seo_social"))
+            return result
+        except Exception as exc:
+            return {
+                "ok": False,
+                "rewrite_needed": False,
+                "rewrite_applied": False,
+                "post_rewrite_state": "rewrite_error",
+                "rewrite_error": f"{type(exc).__name__}: {exc}",
+                "creative_plan": creative_plan,
+                "seo_social": {},
+            }
+
+    def _serial_continuity_summary(self, creative_plan: dict[str, Any]) -> dict[str, Any]:
+        merged_data: dict[str, Any] = {}
+        engine_state = None
+
+        try:
+            build_serial_continuity = self._safe_import_symbol(
+                "ace_next.serial_continuity_engine",
+                "build_serial_continuity",
+            )
+            if build_serial_continuity is not None:
+                engine_result = safe_dict(
+                    build_serial_continuity(
+                        creative_plan,
+                        recent_memory=self._recent_memory_for_planner(limit=5),
+                    )
+                    or {}
+                )
+                if engine_result:
+                    engine_state = "serial_continuity_engine_ready" if engine_result.get("ok") else "serial_continuity_engine_fallback"
+                    merged_data.update(engine_result)
+        except Exception:
+            engine_state = "serial_continuity_engine_error"
+
+        try:
+            adapter_result = safe_dict(
+                run_serial_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "recent_memory": self._recent_memory_for_planner(limit=5),
+                    }
+                )
+                or {}
+            )
+            adapter_data = safe_dict(adapter_result.get("data"))
