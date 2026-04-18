@@ -1827,3 +1827,262 @@ perceptual_qa=perceptual_qa,
         serial_continuity: dict[str, Any],
     ) -> dict[str, Any]:
         measurement = safe_dict(measurement)
+distribution_context = self._distribution_context_from_store()
+        if distribution_context:
+            measurement["distribution_timing_engine"] = distribution_context
+            measurement["performance_summary"] = {
+                **safe_dict(measurement.get("performance_summary")),
+                "distribution_mode": distribution_context.get("distribution_mode"),
+                "recommended_timing_hypothesis": distribution_context.get("recommended_timing_hypothesis"),
+            }
+            measurement["distribution_state"] = {
+                "recommended_next_angle": distribution_context.get("recommended_next_angle")
+                or "manter hipótese conservadora e reduzir ruído na promessa",
+                "recommended_next_format": distribution_context.get("recommended_next_format"),
+                "recommended_next_series_action": distribution_context.get("recommended_next_series_action"),
+                "recommended_timing_hypothesis": distribution_context.get("recommended_timing_hypothesis"),
+            }
+            creative_plan["distribution_context"] = {
+                **safe_dict(creative_plan.get("distribution_context")),
+                **distribution_context,
+            }
+            if distribution_context.get("recommended_timing_hypothesis") and not creative_plan.get("timing_hypothesis"):
+                creative_plan["timing_hypothesis"] = distribution_context.get("recommended_timing_hypothesis")
+
+        reward_prediction = safe_dict(measurement.get("reward_prediction"))
+        thompson_builder = self._symbol("ThompsonSampler")
+        if thompson_builder is not None:
+            try:
+                thompson_result = safe_dict(
+                    thompson_builder(
+                        record={
+                            "creative_plan": creative_plan,
+                            "visual_template": visual_template,
+                            "real_metrics": safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics")),
+                        },
+                        reward_prediction=reward_prediction,
+                        conservative_mode=True,
+                    )
+                    or {}
+                )
+                if thompson_result:
+                    measurement["thompson_sampler"] = thompson_result
+                    measurement["decision_core_summary"] = {
+                        **safe_dict(measurement.get("decision_core_summary")),
+                        "selected_variant": thompson_result.get("selected_variant"),
+                        "confidence_level": thompson_result.get("confidence_level"),
+                        "experiment_decision_state": thompson_result.get("decision_state"),
+                    }
+            except Exception:
+                pass
+
+        recommendation_builder = self._symbol("RecommendationEngine")
+        if recommendation_builder is not None:
+            try:
+                recommendation_result = safe_dict(
+                    recommendation_builder(
+                        evidence_interpreter=safe_dict(measurement.get("evidence_interpreter")),
+                        experiment_resolution=safe_dict(measurement.get("experiment_resolution")),
+                        resonance_engine=safe_dict(measurement.get("resonance_engine")),
+                        reward_prediction=reward_prediction,
+                        attention_metrics=safe_dict(measurement.get("attention_metrics")),
+                        operational_state=operational_state,
+                        episodic_memory=safe_dict(measurement.get("episodic_performance_memory")),
+                        serial_continuity=serial_continuity,
+                        distribution_context=safe_dict(creative_plan.get("distribution_context")),
+                        publish_result=publish_result,
+                        real_metrics=safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics")),
+                    )
+                    or {}
+                )
+                if recommendation_result:
+                    measurement["recommendation_engine"] = recommendation_result
+                    measurement["recommendation_state"] = recommendation_result.get("recommended_action")
+                    measurement["wave10_summary"] = {
+                        **safe_dict(measurement.get("wave10_summary")),
+                        "recommended_action": recommendation_result.get("recommended_action"),
+                    }
+                    measurement["wave11_summary"] = {
+                        **safe_dict(measurement.get("wave11_summary")),
+                        "recommended_action": recommendation_result.get("recommended_action"),
+                        "next_best_step": recommendation_result.get("next_best_step"),
+                    }
+            except Exception:
+                pass
+
+        experiment_summary = self._experiment_registry_summary(
+            {
+                "creative_plan": creative_plan,
+                "attention_metrics": safe_dict(measurement.get("attention_metrics")),
+                "real_metrics": safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics")),
+                "visual_template": visual_template,
+                "reward_prediction": reward_prediction,
+                "thompson_sampler": safe_dict(measurement.get("thompson_sampler")),
+                "resonance_engine": safe_dict(measurement.get("resonance_engine")),
+                "evidence_interpreter": safe_dict(measurement.get("evidence_interpreter")),
+                "experiment_resolution": safe_dict(measurement.get("experiment_resolution")),
+                "recommendation_engine": safe_dict(measurement.get("recommendation_engine")),
+                "publish_result": publish_result,
+                "episodic_performance_memory": safe_dict(measurement.get("episodic_performance_memory")),
+                "serial_continuity": serial_continuity,
+                "distribution_context": safe_dict(creative_plan.get("distribution_context")),
+                "operational_state": operational_state,
+            }
+        )
+        if experiment_summary.get("ok"):
+            measurement["experiment_registry"] = experiment_summary
+
+        return measurement
+
+    def _measurement_summary(
+        self,
+        *,
+        publish_result: dict[str, Any] | None,
+        creative_plan: dict[str, Any],
+        mission_decision: dict[str, Any],
+        operational_state: str,
+        visual_template: dict[str, Any],
+        serial_continuity: dict[str, Any],
+    ) -> dict[str, Any]:
+        base_measurement = self._measurement_summary_base(
+            publish_result=publish_result,
+            creative_plan=creative_plan,
+            mission_decision=mission_decision,
+        )
+        enriched = self._enrich_measurement_with_current_engines(
+            measurement=base_measurement,
+            creative_plan=creative_plan,
+            mission_decision=mission_decision,
+            publish_result=safe_dict(publish_result),
+            operational_state=operational_state,
+            visual_template=visual_template,
+            serial_continuity=serial_continuity,
+        )
+        return self.phase_absorption.apply_phase6_measurement_summary(
+            base_measurement=enriched,
+            publish_result=publish_result,
+        )
+
+    # ---------------------------------------------------------
+    # MAIN CYCLE
+    # ---------------------------------------------------------
+    def _run_cycle_internal(
+        self,
+        *,
+        trend: str,
+        force_placeholder: bool = False,
+        force_real_probe: bool = False,
+        probe_state: str | None = None,
+    ) -> dict[str, Any]:
+        runtime_request = build_runtime_request(
+            trend=trend,
+            force_placeholder=force_placeholder,
+            force_real_probe=force_real_probe,
+            probe_state=probe_state or "auto",
+        )
+        envelope = build_runtime_execution_envelope(
+            trend=runtime_request.trend,
+            force_placeholder=runtime_request.force_placeholder,
+            force_real_probe=runtime_request.force_real_probe,
+            probe_state=runtime_request.probe_state,
+            source="official_runtime",
+            mode="sovereign_runtime_v2",
+        )
+
+        trend_guard = sanitize_trend_input(runtime_request.trend)
+        trend_for_radar = normalize_trend(
+            trend_guard.get("sanitized_trend") or runtime_request.trend,
+        )
+        radar = self.trend_radar.run(
+            trend=trend_for_radar,
+            recent_signal_score=None,
+            signal_context={
+                "source": "official_runtime",
+                "mode": "run",
+                "trend_guard": {
+                    "changed": trend_guard.get("changed"),
+                    "warnings": trend_guard.get("warnings"),
+                    "confidence": trend_guard.get("confidence"),
+                },
+            },
+            source="official_runtime",
+        )
+        effective_trend = radar.get("effective_trend") or trend_for_radar
+
+        probe_state_requested = normalize_probe_state(runtime_request.probe_state)
+        env_flags = self._brand_env_flags()
+        request_flags = {
+            "probe_requested": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
+            "explicit_probe_arm": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
+            "explicit_main_surface_publish": bool(runtime_request.force_real_probe) and not runtime_request.force_placeholder,
+            "brand_live_arm": False,
+            "human_review_approved": False,
+            "force_placeholder": bool(runtime_request.force_placeholder),
+        }
+
+        brain_mission, brain_plan, editorial_brain_summary = self._editorial_brain_or_fallback(
+            trend=effective_trend,
+            recent_signal_score=radar.get("recent_signal_score"),
+            env_flags=env_flags,
+        )
+        if brain_mission and brain_plan:
+            mission_decision = {
+                "trend": brain_mission.get("trend") or effective_trend,
+                "style": brain_mission.get("style") or "unknown",
+                "content_type": brain_mission.get("content_type") or "image",
+                "goal": brain_mission.get("goal") or "authority",
+                "confidence": brain_mission.get("confidence") or 0.2,
+                "raw": safe_dict(brain_mission.get("raw") or brain_mission),
+                **{k: v for k, v in brain_mission.items() if k not in {"raw"}},
+            }
+            mission_control_state = {
+                "enabled": True,
+                "approval_required": self._mission_approval_required(),
+                "blocked": False,
+                "source": "editorial_brain_v2",
+            }
+            plan_ok = True
+            creative_plan = brain_plan
+        else:
+            mission_decision, mission_control_state = self._mission_decision(effective_trend, env_flags)
+            plan_ok, creative_plan = self._creative_plan(effective_trend, mission_decision)
+
+        if mission_control_state.get("approval_required") and not bool(safe_dict(mission_decision.get("raw")).get("should_act", True)):
+            mission_control_state["blocked"] = True
+            return {
+                "ok": True,
+                "mode": "blocked_by_mission_control",
+                "authorization_state": "blocked_by_mission_control",
+                "operational_state": "blocked_by_mission_control",
+                "brand_live_allowed": False,
+                "trend": effective_trend,
+                "trend_radar": radar,
+                "trend_input_guard": trend_guard,
+                "mission_decision": mission_decision,
+                "mission_control_state": mission_control_state,
+                "editorial_brain_summary": editorial_brain_summary,
+                "block_reasons": [safe_dict(mission_decision.get("raw")).get("reason")],
+                "runtime": self.snapshot(),
+                "publish_result": None,
+                "last_publish": self.publish.last_publish() if self.publish else None,
+                "request_envelope": envelope.to_dict(),
+            }
+
+        previous_decision_memory_entries = [
+            safe_dict(item)
+            for item in (self._last_run_summary.get("decision_memory_entries") or [])
+            if isinstance(item, dict) and safe_dict(item)
+        ]
+
+        creative_plan["trend_input"] = effective_trend
+        creative_plan["trend_input_guard"] = trend_guard
+        creative_plan.setdefault("study_tags", STUDY_TAGS)
+        creative_plan.setdefault(
+            "study_axes_applied",
+            [
+                "hook_opening_0_3s",
+                "pattern_interrupt_3_5s",
+                "micro_payoffs",
+                "curiosity_gap",
+                "cta_strength",
+                "naturalismo_real_v2",
