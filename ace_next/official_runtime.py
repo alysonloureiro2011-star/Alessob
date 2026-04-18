@@ -780,3 +780,264 @@ meta = stored_dict.get("meta") if isinstance(stored_dict.get("meta"), dict) else
                 or {}
             )
             adapter_data = safe_dict(adapter_result.get("data"))
+
+if adapter_data:
+                merged_data.update(adapter_data)
+
+            if merged_data:
+                current_serial = safe_dict(creative_plan.get("serial_continuity"))
+                creative_plan["serial_continuity"] = {**current_serial, **merged_data}
+                if merged_data.get("next_episode_seed") and not creative_plan.get("series_next"):
+                    creative_plan["series_next"] = merged_data.get("next_episode_seed")
+
+            return {
+                "ok": bool(adapter_result.get("ok", True) or merged_data),
+                "state": adapter_result.get("state") or engine_state or "serial_adapter_ready",
+                "data": merged_data,
+                "meta": {**safe_dict(adapter_result.get("meta")), "engine_state": engine_state},
+            }
+        except Exception as exc:
+            return {
+                "ok": bool(merged_data),
+                "state": engine_state or "serial_adapter_error",
+                "data": merged_data,
+                "meta": {"error": f"{type(exc).__name__}: {exc}", "engine_state": engine_state},
+            }
+
+    def _reflection_adapter_summary(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        measurement: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            real_metrics = safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics"))
+            adapter_result = safe_dict(
+                run_reflection_adapter(
+                    {
+                        "creative_plan": creative_plan,
+                        "real_metrics": real_metrics,
+                        "recommendation_engine": safe_dict(measurement.get("recommendation_engine")),
+                        "attention_metrics": safe_dict(measurement.get("attention_metrics")),
+                    }
+                )
+                or {}
+            )
+        except Exception as exc:
+            adapter_result = {
+                "ok": False,
+                "state": "reflection_adapter_error",
+                "data": {},
+                "meta": {"error": f"{type(exc).__name__}: {exc}"},
+            }
+
+        engine_cls = self._safe_import_symbol("ace_next.reflection_engine", "ReflectionEngine")
+        if engine_cls is not None:
+            try:
+                engine_result = safe_dict(
+                    engine_cls().run(
+                        creative_plan=creative_plan,
+                        real_metrics=safe_dict(safe_dict(measurement.get("performance_ingest")).get("real_metrics")),
+                        recommendation_engine=safe_dict(measurement.get("recommendation_engine")),
+                        attention_metrics=safe_dict(measurement.get("attention_metrics")),
+                    )
+                    or {}
+                )
+                if engine_result:
+                    adapter_result["engine_result"] = engine_result
+                    adapter_result["data"] = {**safe_dict(adapter_result.get("data")), **engine_result}
+            except Exception:
+                pass
+
+        return adapter_result
+
+    # ---------------------------------------------------------
+    # VISUAL / PAYLOAD / GATES
+    # ---------------------------------------------------------
+    def _visual_foundation(
+        self,
+        plan_dict: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        visual_identity: dict[str, Any] = {}
+        typography: dict[str, Any] = {}
+        visual_contract: dict[str, Any] = {}
+        visual_template: dict[str, Any] = {}
+        perceptual_qa: dict[str, Any] = {}
+        visual_qa: dict[str, Any] = {}
+
+        ok, identity_obj = self._call("build_visual_identity", plan_dict)
+        visual_identity = self._to_dict(identity_obj) if ok else {
+            "error": safe_dict(identity_obj).get("error") or "visual_identity_unavailable"
+        }
+
+        ok, typography_obj = self._call("build_typography_spec", plan_dict)
+        typography = self._to_dict(typography_obj) if ok else {
+            "error": safe_dict(typography_obj).get("error") or "typography_unavailable"
+        }
+
+        ok, contract_obj = self._call("build_visual_contract", plan_dict)
+        visual_contract = self._to_dict(contract_obj) if ok else {
+            "error": safe_dict(contract_obj).get("error") or "visual_contract_unavailable"
+        }
+
+        ok, template_obj = self._call("resolve_visual_template", plan_dict)
+        visual_template = self._to_dict(template_obj) if ok else {
+            "error": safe_dict(template_obj).get("error") or "visual_template_unavailable"
+        }
+
+        if (
+            visual_identity
+            and typography
+            and visual_contract
+            and visual_template
+            and "error" not in visual_identity
+            and "error" not in typography
+            and "error" not in visual_contract
+            and "error" not in visual_template
+        ):
+            ok, result = self._call(
+                "evaluate_perceptual_quality",
+                plan=plan_dict,
+                contract=contract_obj,
+                template=template_obj,
+                identity=identity_obj,
+                typography=typography_obj,
+            )
+            perceptual_qa = self._to_dict(result) if ok else {}
+
+            ok, result = self._call(
+                "evaluate_visual_quality",
+                plan=plan_dict,
+                identity=identity_obj,
+                typography=typography_obj,
+            )
+            visual_qa = self._to_dict(result) if ok else {}
+
+        if not perceptual_qa:
+            perceptual_qa = {
+                "approved": False,
+                "final_score": 0,
+                "breakdown": {},
+                "metrics": {"zero_overlap": False},
+                "reasons": ["perceptual_qa_unavailable"],
+                "recommendations": [],
+                "study_alignment": {
+                    "pattern_interrupt_visual": True,
+                    "visual_hierarchy": True,
+                    "safe_zones": True,
+                    "naturalism": True,
+                },
+            }
+
+        if not visual_qa:
+            visual_qa = {
+                "approved": False,
+                "final_score": 0,
+                "minimum_score": 75,
+                "breakdown": {},
+                "metrics": {"zero_overlap": False},
+                "reasons": ["visual_qa_unavailable"],
+                "recommendations": [],
+                "study_alignment": {
+                    "contrast": True,
+                    "typography_legibility": True,
+                    "visual_hierarchy": True,
+                },
+            }
+
+        return visual_identity, typography, visual_contract, visual_template, {
+            "perceptual_qa": perceptual_qa,
+            "visual_qa": visual_qa,
+        }
+
+    def _premium_visual(
+        self,
+        plan_dict: dict[str, Any],
+        visual_identity: dict[str, Any],
+        visual_contract: dict[str, Any],
+    ) -> dict[str, Any]:
+        ok, result = self._call(
+            "build_visual_premium_bridge",
+            creative_plan=plan_dict,
+            visual_identity=visual_identity,
+            visual_contract=visual_contract,
+            strategic_format=plan_dict.get("publish_format_now"),
+            template_id=None,
+            capture_mode="safe",
+        )
+        premium_visual = self._to_dict(result) if ok else {}
+        if premium_visual:
+            premium_visual.setdefault(
+                "study_alignment",
+                {
+                    "pattern_interrupt_visual": True,
+                    "playwright_official_path": True,
+                    "premium_layout_variation": True,
+                },
+            )
+            return premium_visual
+
+        return {
+            "ok": False,
+            "approved_for_premium_visual": False,
+            "premium_render_state": "premium_visual_bridge_unavailable",
+            "reasons": [safe_dict(result).get("error") or "premium_visual_bridge_unavailable"],
+            "hardening_applied": False,
+            "hardening_report": {},
+            "study_alignment": {
+                "pattern_interrupt_visual": True,
+                "playwright_official_path": True,
+                "premium_layout_variation": True,
+            },
+        }
+
+    def _resolve_authorized_payload(
+        self,
+        *,
+        creative_plan: dict[str, Any],
+        premium_visual: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        hardening_report = safe_dict(premium_visual.get("hardening_report"))
+        premium_metrics = safe_dict(premium_visual.get("metrics"))
+
+        hardened_payload = safe_dict(
+            hardening_report.get("hardened_payload")
+            or premium_visual.get("hardened_visible_payload")
+            or premium_metrics.get("render_payload_used")
+        )
+        render_payload_used = safe_dict(
+            hardening_report.get("render_payload_used")
+            or premium_metrics.get("render_payload_used")
+        )
+
+        resolution = resolve_authorized_payload(
+            creative_plan,
+            hardened_payload=hardened_payload or None,
+            render_payload_used=render_payload_used or None,
+            strategic_format=str(
+                creative_plan.get("publish_format_now")
+                or creative_plan.get("strategic_target_format")
+                or creative_plan.get("format_recommendation")
+                or "image"
+            ),
+            template_id=str(
+                premium_visual.get("selected_template_id")
+                or hardening_report.get("selected_template_id")
+                or creative_plan.get("template_id")
+                or ""
+            )
+            or None,
+            capture_mode="safe",
+        )
+
+        authorized_payload = safe_dict(resolution.get("authorized_payload"))
+        updated_plan = dict(creative_plan)
+
+        if authorized_payload:
+            updated_plan["headline"] = authorized_payload.get("headline") or updated_plan.get("headline")
+            updated_plan["hook"] = authorized_payload.get("hook") or updated_plan.get("hook")
+            updated_plan["body"] = authorized_payload.get("body") or updated_plan.get("body")
+            updated_plan["cta"] = authorized_payload.get("cta") or updated_plan.get("cta")
+            updated_plan["caption"] = authorized_payload.get("caption") or updated_plan.get("caption")
+            updated_plan["support_points"] = authorized_payload.get("support_points") or updated_plan.get("support_points") or []
+            updated_plan["publish_format_now"] = authorized_payload.get("format") or updated_plan.get("publish_format_now")
