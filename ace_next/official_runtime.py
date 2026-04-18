@@ -1565,3 +1565,265 @@ updated_plan["authorized_payload"] = authorized_payload
             trend=trend,
             creative_plan=creative_plan,
             visual_qa=visual_qa,
+
+            
+perceptual_qa=perceptual_qa,
+            publication_authorization_gate=publication_authorization_gate,
+            operational_state=operational_state,
+            publish_truth_state=publish_truth_state,
+            fallback_runner=self._run_reel_premium_stack_base,
+        )
+
+    def _render_previews(self, plan_dict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        ok, result = self._call("build_carousel_sequence", plan_dict)
+        carousel_preview = self._to_dict(result) if ok else {
+            "ok": False,
+            "error": safe_dict(result).get("error") or "carousel_preview_unavailable",
+        }
+
+        ok, result = self._call("build_stories_sequence", plan_dict)
+        stories_preview = self._to_dict(result) if ok else {
+            "ok": False,
+            "error": safe_dict(result).get("error") or "stories_preview_unavailable",
+        }
+        return carousel_preview, stories_preview
+
+    # ---------------------------------------------------------
+    # MEASUREMENT / LEARNING
+    # ---------------------------------------------------------
+    def _distribution_context_from_store(self) -> dict[str, Any]:
+        symbol = self._symbol("DistributionTimingEngine")
+        store_cls = self._symbol("PerformanceStore")
+        if symbol is None or store_cls is None:
+            return {}
+        try:
+            records = store_cls(self.config).list_records(limit=60)
+            result = symbol(records=records)
+            return safe_dict(result)
+        except Exception:
+            return {}
+
+    def _experiment_registry_summary(self, record: dict[str, Any]) -> dict[str, Any]:
+        registry_cls = self._safe_import_symbol("ace_next.experiment_registry", "ExperimentRegistry")
+        build_record = self._safe_import_symbol("ace_next.experiment_registry", "build_experiment_record")
+        if registry_cls is None or build_record is None:
+            return {"ok": False, "error": "experiment_registry_runtime_unavailable"}
+        try:
+            registry = registry_cls(self.config)
+            experiment_record = build_record(record=record)
+            summary = registry.upsert_experiment(experiment_record)
+            return {
+                "ok": True,
+                "summary": safe_dict(summary),
+                "latest_record": experiment_record,
+            }
+        except Exception as exc:
+            return {"ok": False, "error": f"experiment_registry_error: {type(exc).__name__}: {exc}"}
+
+    def _measurement_summary_base(
+        self,
+        *,
+        publish_result: dict[str, Any] | None,
+        creative_plan: dict[str, Any],
+        mission_decision: dict[str, Any],
+    ) -> dict[str, Any]:
+        publish_result = safe_dict(publish_result)
+        receipt_id = publish_result.get("receipt_id")
+        media_id = publish_result.get("media_id")
+        permalink = publish_result.get("permalink")
+        publish_status = publish_result.get("publish_status")
+        error_summary = _short_error_summary(publish_result.get("error"))
+
+        performance_ingest = {
+            "ok": True,
+            "attempted": bool(media_id),
+            "collection_success": False,
+            "source_status": "not_collected_yet",
+            "real_metrics": {"source_status": "not_collected_yet"},
+            "attention_inputs": {
+                "priority_metrics": ["save_rate", "share_rate", "retention", "replay_proxy"],
+                "secondary_metrics": ["engagement_rate", "like_rate"],
+            },
+            "errors": [error_summary] if error_summary else [],
+            "raw": {},
+            "study_alignment": {
+                "attention_engineering": True,
+                "like_is_auxiliary": True,
+            },
+        }
+
+        thompson_sampler_result = {
+            "ok": True,
+            "selected_variant": None,
+            "confidence_level": "low",
+            "decision_state": "collecting",
+            "posterior_mean": None,
+            "winner_candidate": False,
+            "reasons": [],
+            "study_alignment": {"mab": True},
+            "capability_ready": bool(self._symbol("ThompsonSampler")),
+        }
+
+        recommendation_engine = {
+            "ok": True,
+            "recommended_action": "measure_now" if media_id else "publish_or_improve",
+            "action_priority": "medium",
+            "recommendation_reason": "measurement_slim_mode",
+            "next_best_step": "coletar métricas reais após publicação" if media_id else "melhorar qualidade premium antes de publicar",
+            "safe_to_repeat": True,
+            "safe_to_promote_to_editorial_staging": False,
+            "requires_human_review": True,
+            "strategy_inputs": {
+                "goal": creative_plan.get("goal") or mission_decision.get("goal"),
+                "format": creative_plan.get("publish_format_now") or mission_decision.get("content_type"),
+                "timing_ready": bool(self._symbol("DistributionTimingEngine")),
+                "seo_ready": bool(self._safe_import_symbol("ace_next.seo_social_engine", "build_seo_social_engine")),
+            },
+        }
+
+        return {
+            "post_performance_contract": {
+                "ok": True,
+                "publish_receipt_bridge": {
+                    "publish_status": publish_status,
+                    "receipt_id": receipt_id,
+                    "media_id": media_id,
+                    "permalink": permalink,
+                    "content_type": publish_result.get("content_type"),
+                    "style": publish_result.get("style"),
+                    "created_at": publish_result.get("created_at"),
+                },
+                "evidence_bridge": {
+                    "has_real_receipt": bool(receipt_id),
+                    "has_media_id": bool(media_id),
+                    "has_permalink": bool(permalink),
+                    "evidence_bridge_state": "linked_real_target" if receipt_id and media_id else "receipt_only" if receipt_id else "no_receipt",
+                },
+            },
+            "performance_ingest": performance_ingest,
+            "attention_metrics": {
+                "ok": True,
+                "source_status": "not_collected_yet",
+                "breakdown": {},
+                "available_inputs": ["save_rate", "share_rate", "retention", "replay_proxy"],
+                "notes": [
+                    "like é auxiliar",
+                    "priorizar atenção real",
+                    "learning deve influenciar hook/formato/estilo/timing",
+                ],
+            },
+            "resonance_engine": {
+                "ok": True,
+                "resonance_score": None,
+                "reasons": [],
+                "capability_ready": bool(self._symbol("resonance_engine")),
+            },
+            "reward_prediction": {
+                "ok": True,
+                "reward_prediction_score": None,
+                "reasons": [],
+            },
+            "thompson_sampler": thompson_sampler_result,
+            "decision_core_summary": {
+                "ok": True,
+                "selected_variant": thompson_sampler_result.get("selected_variant"),
+                "confidence_level": thompson_sampler_result.get("confidence_level"),
+                "experiment_decision_state": thompson_sampler_result.get("decision_state"),
+                "reasons": ["measurement_slim_mode"],
+                "study_alignment": {"mab": True, "stackelberg": True},
+            },
+            "evidence_interpreter": {
+                "ok": True,
+                "evidence_state": "linked_real_target" if receipt_id and media_id else "receipt_only" if receipt_id else "no_receipt",
+                "evidence_strength": "low" if receipt_id else "none",
+                "evidence_ready_for_resolution": False,
+                "evidence_reasons": [],
+                "bridge_state": "linked_real_target" if receipt_id and media_id else "receipt_only" if receipt_id else "no_receipt",
+            },
+            "experiment_resolution": {
+                "ok": True,
+                "resolution_state": "collecting",
+                "can_resolve": False,
+                "winner_candidate": False,
+                "loser_candidate": False,
+                "keep_collecting": True,
+                "confidence_level": "low",
+                "resolution_reason": "measurement_slim_mode",
+                "promotion_readiness": "not_ready",
+            },
+            "recommendation_engine": recommendation_engine,
+            "wave10_summary": {
+                "ok": True,
+                "evidence_state": "collecting",
+                "resolution_state": "collecting",
+                "recommended_action": recommendation_engine.get("recommended_action"),
+            },
+            "wave11_summary": {
+                "ok": True,
+                "brand_live_allowed": False,
+                "evidence_state": "collecting",
+                "has_receipt": bool(receipt_id),
+                "has_media_id": bool(media_id),
+                "has_permalink": bool(permalink),
+                "can_resolve": False,
+                "recommended_action": recommendation_engine.get("recommended_action"),
+                "next_best_step": recommendation_engine.get("next_best_step"),
+            },
+            "experiment_registry": {
+                "ok": bool(self._symbol("ExperimentRegistry")),
+                "error": None if self._symbol("ExperimentRegistry") else "measurement_slim_runtime",
+            },
+            "episodic_performance_memory": {
+                "ok": False,
+                "error": "measurement_slim_runtime",
+            },
+            "reflection_memory": {
+                "ok": True,
+                "status": "recorded",
+                "notes": [],
+                "guardrails": {
+                    "can_change_brand_policy": False,
+                    "can_change_editorial_policy": False,
+                    "can_change_visual_policy": False,
+                    "can_authorize_brand_live": False,
+                    "can_autopublish": False,
+                },
+            },
+            "learning_loop": {
+                "ok": True,
+                "error": None,
+                "insight_control": {
+                    "can_record": True,
+                    "can_consolidate": False,
+                    "can_suggest": True,
+                    "can_change_brand_policy": False,
+                    "can_change_editorial_policy": False,
+                    "can_change_visual_policy": False,
+                    "can_autopublish_brand_live": False,
+                },
+                "study_alignment": {
+                    "stackelberg": True,
+                    "mab": True,
+                    "attention_priority": True,
+                },
+            },
+            "performance_summary": {
+                "ok": True,
+                "mode": "measurement_slim_runtime",
+                "next_decision_targets": ["hook", "format", "style", "timing"],
+            },
+            "performance_store": self._performance_store_summary(),
+        }
+
+    def _enrich_measurement_with_current_engines(
+        self,
+        *,
+        measurement: dict[str, Any],
+        creative_plan: dict[str, Any],
+        mission_decision: dict[str, Any],
+        publish_result: dict[str, Any],
+        operational_state: str,
+        visual_template: dict[str, Any],
+        serial_continuity: dict[str, Any],
+    ) -> dict[str, Any]:
+        measurement = safe_dict(measurement)
